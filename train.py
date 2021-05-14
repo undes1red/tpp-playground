@@ -1,9 +1,4 @@
-'''
-Q: Do we add any spatial things here?
-A: No. Currently we just have temporal things. Spatial features will be done in the near future.
-'''
-
-# In the training data, we should place a special events in all training sequences happening at time 0.
+# The model training script
 
 import argparse
 import time
@@ -12,10 +7,10 @@ from tqdm import tqdm
 
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
+import src.utils
 
+from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
 from src.optimizer.optim import ScheduledOptim
 from src.data.dataset import TPPDataset
@@ -169,31 +164,44 @@ def main():
     '''
 
     parser = argparse.ArgumentParser()
+    # The Ultimate
+    parser.add_argument('--seed', type=int, default=42, 
+                        help='The global random seed.')
+    parser.add_argument('--cuda', action='store_true', 
+                        help="Set it to true if you want to use GPU.")
 
-    # Directory containing train, test and dev files.
-    parser.add_argument('--data_path', default=None)
-    parser.add_argument('--seed', type=int, default=42)
+    # Model save
+    parser.add_argument('--data_path', default=None, help='Input dataset file path.')
+    parser.add_argument('--log', default=None, help='Log file path.')
+    parser.add_argument('--save_model', default=None, help='Saved checkpoint file path.')
+    parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
 
-    parser.add_argument('--epoch', type=int, default=10)
-    parser.add_argument('-b', '--batch_size', type=int, default=2048)
+    # Training procedure related hyperparameters
+    parser.add_argument('--epoch', type=int, default=10, help='Epoch number')
+    parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
 
+    # Model-related hyperparameters
     parser.add_argument('--d_history', type=int, default=32)
     parser.add_argument('--d_intensity', type=int, default=64)
     parser.add_argument('--dropout', type=float, default=0.)
     parser.add_argument('--rnn_layers', type=int, default=1)
     parser.add_argument('--mlp_layers', type=int, default=3)
     parser.add_argument('--n_warmup_steps', type=int, default=2000)
-    parser.add_argument('--lr', type=float, default=0.1)
 
-    parser.add_argument('--log', default=None)
-    parser.add_argument('--save_model', default=None)
-    parser.add_argument('--save_mode', type=str,
-                        choices=['all', 'best'], default='best')
-
-    parser.add_argument('-no_cuda', action='store_true')
+    # Optimizer-related hyperparameters
+    parser.add_argument('--custom_op', action='store_true', help='Set it to true if you want to use your own optimizer or that from third-party packages.')
+    parser.add_argument('--op_name', type=str, default='AdamW', help='The name of optimizer. All optimizer parameters are in default.')
+    parser.add_argument('--lr', type=float, default=0.1, help='Input learning rate. The real learning rate could change due to the lr scheduler.')
 
     opt = parser.parse_args()
-    opt.cuda = not opt.no_cuda
+    # optimizer
+    if opt.custom_op:
+        import torch_optimizer as top
+        if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
+            raise Exception(f'The given optimizer {opt.op_name} is not found in neither PyTorch nor pytorch_optimizer. Please check your optimizer settings and try again.')
+    else:
+        if not hasattr(optim, opt.op_name):
+            raise Exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
 
     # Reproducibility
     torch.manual_seed(opt.seed)
@@ -206,6 +214,7 @@ def main():
     if not opt.log and not opt.save_model:
         print('No experiment result will be saved.')
 
+    # Cuda
     opt.device = torch.device(
         'cuda' if opt.cuda and torch.cuda.is_available() else 'cpu')
 
@@ -217,13 +226,6 @@ def main():
 
     #========= Loading Dataset =========#
 
-    '''
-    Here only one choice exists: The input dir path, which contains following files:
-    1. train.csv/train.json: Training data.
-    2. test.csv/test.json: Test data. For prediction.
-    3. dev.csv/dev.json: Evaluation data. For evaluation.
-    '''
-
     if opt.data_path:
         training_data, evaluation_data, test_data = prepare_dataloaders(opt)
     else:
@@ -231,6 +233,7 @@ def main():
 
     print(opt)
 
+    # Load model
     TPP = TemporalModel(
         d_history=opt.d_history,
         d_intensity=opt.d_intensity,
@@ -239,9 +242,15 @@ def main():
         mlp_layers=opt.mlp_layers
     ).to(opt.device)
 
+    # Load optimizer
+    if hasattr(optim, opt.op_name):
+        optimizer = getattr(optim, opt.op_name)
+    else:
+        optimizer = top.get(opt.op_name)
+
     optimizer = ScheduledOptim(
-        optim.AdamW(TPP.parameters(), betas=(0.9, 0.98), eps=1e-09),
-        opt.lr, opt.d_intensity, opt.n_warmup_steps)
+            optimizer(TPP.parameters()),
+            opt.lr, opt.d_intensity, opt.n_warmup_steps)
 
     train(TPP, training_data, evaluation_data,
           test_data, optimizer, opt.device, opt)
