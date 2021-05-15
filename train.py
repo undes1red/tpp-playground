@@ -8,12 +8,13 @@ from tqdm import tqdm
 import pandas as pd
 import torch
 import torch.optim as optim
+import torch.optim.lr_scheduler as lrs
 import src.utils
 
 from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
 from src.optimizer.optim import ScheduledOptim
-from src.data.dataset import TPPDataset
+from src.data.dataset import CustomDataset
 
 
 def cal_performance(intensity, intensity_integral):
@@ -39,7 +40,7 @@ def train_epoch(model, training_data, optimizer, device):
     fact, total_loss, training_set_length = 0, 0, len(training_data)
 
     desc = '  - (Training)   '
-    for batch in tqdm(training_data, mininterval=2, desc=desc, leave=False):
+    for batch in tqdm(training_data, desc=desc, leave=False):
         # forward
         optimizer.zero_grad()
         intensity_integral, intensity = model(
@@ -68,7 +69,7 @@ def eval_epoch(model, evaluation_data, device):
     fact, total_loss, evaluation_set_length = 0, 0, len(evaluation_data)
 
     desc = '  - (Evaluation) '
-    for batch in tqdm(evaluation_data, mininterval=2, desc=desc, leave=False):
+    for batch in tqdm(evaluation_data, desc=desc, leave=False):
         # forward
         intensity_integral, intensity = model(
             batch[0].to(device), batch[1].to(device))
@@ -103,11 +104,11 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
             log_vf.write('epoch,loss,gap\n')
             log_ef.write('epoch,loss,gap\n')
 
-    def print_performances(header, loss, start_time):
+    def print_performances(header, loss, start_time, optimizer):
         print('  - {header:12} loss_value: {loss: 8.5f} ppl: {ppl: 8.5f}, '
-              'elapse: {elapse:3.3f} min'.format(
+              'elapse: {elapse:3.3f} min, average lr: {lr:2.5f}'.format(
                   header=f"({header})", loss=loss, ppl=min(loss, 100),
-                  elapse=(time.time() - start_time)/60))
+                  elapse=(time.time() - start_time)/60, lr=optimizer.get_lr()))
 
     eva_losses = []
     warmup_epoches = opt.n_warmup_steps / len(training_data)
@@ -117,15 +118,15 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 
         start = time.time()
         train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
-        print_performances('Training', train_loss, start)
+        print_performances('Training', train_loss, start, optimizer)
 
         start = time.time()
         eva_loss, fact_ev = eval_epoch(model, evaluation_data, device)
-        print_performances('Evaluation', eva_loss, start)
+        print_performances('Evaluation', eva_loss, start, optimizer)
 
         start = time.time()
         test_loss, fact_test = eval_epoch(model, test_data, device)
-        print_performances('Test', test_loss, start)
+        print_performances('Test', test_loss, start, optimizer)
 
         if epoch_i > warmup_epoches:
             eva_losses += [eva_loss]
@@ -160,7 +161,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 def main():
     ''' 
     Usage:
-    See run.sh for an example. Check all arguments via 'python3 train.py --help'
+    See scripts files in directory scripts/ for examples. Check all arguments via 'python3 train.py --help'
     '''
 
     parser = argparse.ArgumentParser()
@@ -190,11 +191,12 @@ def main():
 
     # Optimizer-related hyperparameters
     parser.add_argument('--custom_op', action='store_true', help='Set it to true if you want to use your own optimizer or that from third-party packages.')
-    parser.add_argument('--op_name', type=str, default='AdamW', help='The name of optimizer. All optimizer parameters are in default.')
+    parser.add_argument('--op_name', type=str, default='AdamW', help='The name of optimizer. All optimizer hyperparameters are set as default.')
+    parser.add_argument('--lrs_name', type=str, default='StepLR', help='The name of learning rate scheduler. All scheduler hyperparameters are set as default.')
     parser.add_argument('--lr', type=float, default=0.1, help='Input learning rate. The real learning rate could change due to the lr scheduler.')
 
     opt = parser.parse_args()
-    # optimizer
+    # optimizer and learning rate scheduler
     if opt.custom_op:
         import torch_optimizer as top
         if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
@@ -202,6 +204,12 @@ def main():
     else:
         if not hasattr(optim, opt.op_name):
             raise Exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
+
+    if not hasattr(optim.lr_scheduler, opt.lrs_name):
+        raise Exception(f'The given learning rate scheduler {opt.lrs_name} is not found. Please check the name of learning rate scheduler and try again.')
+    
+    if torch.__version__ == '1.4.0' and opt.lrs_name == 'LambdaLR':
+        raise Exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler will fail to run. Please update PyTorch version to 1.5.0 or above.')
 
     # Reproducibility
     torch.manual_seed(opt.seed)
@@ -243,17 +251,16 @@ def main():
     ).to(opt.device)
 
     # Load optimizer
+    optimizer = None
     if hasattr(optim, opt.op_name):
-        optimizer = getattr(optim, opt.op_name)
+        optimizer = getattr(optim, opt.op_name)(TPP.parameters(), opt.lr)
     else:
-        optimizer = top.get(opt.op_name)
-
-    optimizer = ScheduledOptim(
-            optimizer(TPP.parameters()),
-            opt.lr, opt.d_intensity, opt.n_warmup_steps)
+        optimizer = top.get(opt.op_name)(TPP.parameters(), opt.lr)
+    scheduler = getattr(lrs, opt.lrs_name)(optimizer, step_size = 5000, gamma = 0.75)
+    sched_optimizer = ScheduledOptim(optimizer, scheduler)
 
     train(TPP, training_data, evaluation_data,
-          test_data, optimizer, opt.device, opt)
+          test_data, sched_optimizer, opt.device, opt)
 
 
 def prepare_dataloaders(opt):
@@ -282,9 +289,9 @@ def prepare_dataloaders(opt):
     opt.max_token_seq_len = len(data_raw['train'].iloc[0].history)
 
     #========= Preparing Model =========#
-    train = TPPDataset(data_raw['train'])
-    evaluate = TPPDataset(data_raw['evaluate'])
-    test = TPPDataset(data_raw['test'])
+    train = CustomDataset(data_raw['train'])
+    evaluate = CustomDataset(data_raw['evaluate'])
+    test = CustomDataset(data_raw['test'])
 
     train_iterator = DataLoader(train, shuffle = True, batch_size=batch_size, num_workers=4)
     evaluation_iterator = DataLoader(
