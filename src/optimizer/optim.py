@@ -5,10 +5,13 @@ from .. import utils
 class ScheduledOptim():
     '''A simple wrapper class for learning rate scheduling'''
 
-    def __init__(self, optimizer, scheduler = None):
+    def __init__(self, optimizer, scheduler = True, num_warmup_steps = None, num_training_steps = None, num_cycles = 0.5, last_epoch = -1):
         self._optimizer = optimizer
-        self._scheduler = scheduler
-
+        if scheduler:
+            self._scheduler = utils.get_lr_sheduler(optimizer = self._optimizer, num_warmup_steps = num_warmup_steps, num_training_steps = num_training_steps
+                                                    , num_cycles = num_cycles, last_epoch = last_epoch)
+        else:
+            self._scheduler = None
 
     def step_and_update_lr(self):
         "Step with the inner optimizer"
@@ -16,7 +19,6 @@ class ScheduledOptim():
 
         if self._scheduler:
             self._scheduler.step()
-
 
     def zero_grad(self):
         "Zero out the gradients with the inner optimizer"

@@ -8,8 +8,8 @@ from tqdm import tqdm
 import pandas as pd
 import torch
 import torch.optim as optim
-import torch.optim.lr_scheduler as lrs
-import src.utils
+
+from src.utils import training_steps
 
 from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
@@ -166,7 +166,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     # The Ultimate
-    parser.add_argument('--seed', type=int, default=42, 
+    parser.add_argument('--seed', type=int, default=42,
                         help='The global random seed.')
     parser.add_argument('--cuda', action='store_true', 
                         help="Set it to true if you want to use GPU.")
@@ -192,8 +192,10 @@ def main():
     # Optimizer-related hyperparameters
     parser.add_argument('--custom_op', action='store_true', help='Set it to true if you want to use your own optimizer or that from third-party packages.')
     parser.add_argument('--op_name', type=str, default='AdamW', help='The name of optimizer. All optimizer hyperparameters are set as default.')
-    parser.add_argument('--lrs_name', type=str, default='StepLR', help='The name of learning rate scheduler. All scheduler hyperparameters are set as default.')
+    parser.add_argument('--lr_sched', action='store_true', help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\'t come into effect.')
     parser.add_argument('--lr', type=float, default=0.1, help='Input learning rate. The real learning rate could change due to the lr scheduler.')
+    parser.add_argument('--num_cycles', type=float, default=0.5)
+    parser.add_argument('--last_epoch', type=int, default=-1)
 
     opt = parser.parse_args()
     # optimizer and learning rate scheduler
@@ -204,11 +206,8 @@ def main():
     else:
         if not hasattr(optim, opt.op_name):
             raise Exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
-
-    if not hasattr(optim.lr_scheduler, opt.lrs_name):
-        raise Exception(f'The given learning rate scheduler {opt.lrs_name} is not found. Please check the name of learning rate scheduler and try again.')
     
-    if torch.__version__ == '1.4.0' and opt.lrs_name == 'LambdaLR':
+    if torch.__version__ == '1.4.0':
         raise Exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler will fail to run. Please update PyTorch version to 1.5.0 or above.')
 
     # Reproducibility
@@ -235,7 +234,7 @@ def main():
     #========= Loading Dataset =========#
 
     if opt.data_path:
-        training_data, evaluation_data, test_data = prepare_dataloaders(opt)
+        training_data, evaluation_data, test_data, training_size = prepare_dataloaders(opt)
     else:
         raise ValueError("Wrong input data path.")
 
@@ -256,8 +255,11 @@ def main():
         optimizer = getattr(optim, opt.op_name)(TPP.parameters(), opt.lr)
     else:
         optimizer = top.get(opt.op_name)(TPP.parameters(), opt.lr)
-    scheduler = getattr(lrs, opt.lrs_name)(optimizer, step_size = 5000, gamma = 0.75)
-    sched_optimizer = ScheduledOptim(optimizer, scheduler)
+    
+    # Due to the complexity of learning rate scheduler, the scheduler is fixed. If you want to use another learning rate scheduler, plz modify it in src.optim.
+    sched_optimizer = ScheduledOptim(optimizer, scheduler = opt.lr_sched, num_warmup_steps = opt.n_warmup_steps, 
+                                     num_training_steps = training_steps(training_size, opt.epoch, opt.batch_size),
+                                     num_cycles = opt.num_cycles, last_epoch = opt.last_epoch)
 
     train(TPP, training_data, evaluation_data,
           test_data, sched_optimizer, opt.device, opt)
@@ -292,13 +294,14 @@ def prepare_dataloaders(opt):
     train = CustomDataset(data_raw['train'])
     evaluate = CustomDataset(data_raw['evaluate'])
     test = CustomDataset(data_raw['test'])
+    size = len(train)
 
     train_iterator = DataLoader(train, shuffle = True, batch_size=batch_size, num_workers=4)
     evaluation_iterator = DataLoader(
         evaluate, batch_size=batch_size, num_workers=4)
     test_iterator = DataLoader(test, batch_size=batch_size, num_workers=4)
 
-    return train_iterator, evaluation_iterator, test_iterator
+    return train_iterator, evaluation_iterator, test_iterator, size
 
 
 if __name__ == '__main__':
