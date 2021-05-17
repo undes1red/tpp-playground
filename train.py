@@ -9,13 +9,14 @@ import pandas as pd
 import torch
 import torch.optim as optim
 
-from src.utils import training_steps
+from src.utils import training_steps, getLogger
 
 from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
 from src.optimizer.optim import ScheduledOptim
 from src.data.dataset import CustomDataset
 
+logger = getLogger(__name__)
 
 def cal_performance(intensity, intensity_integral):
     ''' 
@@ -96,8 +97,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
         log_eva_file = os.path.join(opt.log, 'evaluate.log')
         log_test_file = os.path.join(opt.log, 'test.log')
 
-        print('[Info] Training performance will be written to file: {} , {} and {}'.format(
-            log_train_file, log_eva_file, log_test_file))
+        logger.info(f'Training performance will be written to file: {log_train_file} , {log_eva_file} and {log_test_file}')
 
         with open(log_train_file, 'w') as log_tf, open(log_eva_file, 'w') as log_vf, open(log_test_file, 'w') as log_ef:
             log_tf.write('epoch,loss,gap\n')
@@ -105,7 +105,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
             log_ef.write('epoch,loss,gap\n')
 
     def print_performances(header, loss, start_time, optimizer):
-        print('  - {header:12} loss_value: {loss: 8.5f} ppl: {ppl: 8.5f}, '
+        logger.info('{header:12} loss_value: {loss: 8.5f} ppl: {ppl: 8.5f}, '
               'elapse: {elapse:3.3f} min, average lr: {lr:2.5f}'.format(
                   header=f"({header})", loss=loss, ppl=min(loss, 100),
                   elapse=(time.time() - start_time)/60, lr=optimizer.get_lr()))
@@ -114,7 +114,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
     warmup_epoches = opt.n_warmup_steps / len(training_data)
 
     for epoch_i in range(opt.epoch):
-        print('[ Epoch', epoch_i, ']')
+        logger.info('[ Epoch ' + str(epoch_i + 1) + ' ]')
 
         start = time.time()
         train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
@@ -143,7 +143,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
                 model_name = os.path.join(opt.save_model, 'checkpoint.chkpt')
                 if eva_loss <= min(eva_losses):
                     torch.save(checkpoint, model_name)
-                    print('    - [Info] The checkpoint file has been updated.')
+                    logger.info('    - The checkpoint file has been updated.')
 
         if log_train_file and log_eva_file and log_test_file:
             with open(log_train_file, 'a') as log_tf, open(log_eva_file, 'a') as log_vf, open(log_test_file, 'a') as log_ef:
@@ -202,13 +202,13 @@ def main():
     if opt.custom_op:
         import torch_optimizer as top
         if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
-            raise Exception(f'The given optimizer {opt.op_name} is not found in neither PyTorch nor pytorch_optimizer. Please check your optimizer settings and try again.')
+            raise logger.exception(f'The given optimizer {opt.op_name} is not found in neither PyTorch nor pytorch_optimizer. Please check your optimizer settings and try again.')
     else:
         if not hasattr(optim, opt.op_name):
-            raise Exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
+            raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
     
     if torch.__version__ == '1.4.0':
-        raise Exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler will fail to run. Please update PyTorch version to 1.5.0 or above.')
+        raise logger.exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler will fail to run. Please update PyTorch version to 1.5.0 or above.')
 
     # Reproducibility
     torch.manual_seed(opt.seed)
@@ -219,7 +219,7 @@ def main():
     torch.autograd.set_detect_anomaly(True)
 
     if not opt.log and not opt.save_model:
-        print('No experiment result will be saved.')
+        logger.warning('No experiment result will be saved.')
 
     # Cuda
     opt.device = torch.device(
@@ -236,9 +236,9 @@ def main():
     if opt.data_path:
         training_data, evaluation_data, test_data, training_size = prepare_dataloaders(opt)
     else:
-        raise ValueError("Wrong input data path.")
+        raise logger.exception("Wrong input data path.")
 
-    print(opt)
+    logger.info(opt)
 
     # Load model
     TPP = TemporalModel(
