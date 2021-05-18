@@ -52,7 +52,7 @@ class path(argparse.Action):
 
 
 def print_performances(procedure, num_format = None, **kwargs):
-    if len(num_format) != len(kwargs):
+    if num_format is None or len(num_format) != len(kwargs):
         num_format = [':5.2f'] * len(kwargs)
 
     info = f'{procedure:12} '
