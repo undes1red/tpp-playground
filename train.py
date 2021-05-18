@@ -9,30 +9,15 @@ import pandas as pd
 import torch
 import torch.optim as optim
 
-from src.utils import training_steps, getLogger
+from src.utils import training_steps, getLogger, path, print_performances
 
 from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
 from src.optimizer.optim import ScheduledOptim
+from src.optimizer.loss import loss_f
 from src.data.dataset import CustomDataset
 
 logger = getLogger(__name__)
-
-def cal_performance(intensity, intensity_integral):
-    ''' 
-        The most important thing: How to make intensity always positive? 
-        Or, if not positive, give this model maximum penalty. Hope this can take some effects.
-    '''
-    intensity, intensity_integral = intensity.squeeze(), intensity_integral.squeeze()
-
-    log_intensity = torch.log(intensity)
-    log_p = log_intensity - intensity_integral
-
-    loss = -log_p
-    loss = torch.clamp(loss, max=10)
-    loss = torch.sum(loss, dim=0)
-    return loss
-
 
 def train_epoch(model, training_data, optimizer, device):
     ''' Epoch operation in training phase'''
@@ -48,13 +33,12 @@ def train_epoch(model, training_data, optimizer, device):
             batch[0].to(device), batch[1].to(device))
 
         # backward and update parameters
-        loss = cal_performance(
+        loss = loss_f(
             intensity=intensity, intensity_integral=intensity_integral
         )
         loss.backward()
         optimizer.step_and_update_lr()
 
-        # note keeping
         total_loss += loss.item()
         fact += batch[2].sum()
 
@@ -74,11 +58,10 @@ def eval_epoch(model, evaluation_data, device):
         # forward
         intensity_integral, intensity = model(
             batch[0].to(device), batch[1].to(device))
-        loss = cal_performance(
+        loss = loss_f(
             intensity=intensity, intensity_integral=intensity_integral
         )
 
-        # note keeping
         total_loss += loss.item()
         fact += batch[2].sum()
 
@@ -97,18 +80,12 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
         log_eva_file = os.path.join(opt.log, 'evaluate.log')
         log_test_file = os.path.join(opt.log, 'test.log')
 
-        logger.info(f'Training performance will be written to file: {log_train_file} , {log_eva_file} and {log_test_file}')
+        logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
 
         with open(log_train_file, 'w') as log_tf, open(log_eva_file, 'w') as log_vf, open(log_test_file, 'w') as log_ef:
             log_tf.write('epoch,loss,gap\n')
             log_vf.write('epoch,loss,gap\n')
             log_ef.write('epoch,loss,gap\n')
-
-    def print_performances(header, loss, start_time, optimizer):
-        logger.info('{header:12} loss_value: {loss: 8.5f} ppl: {ppl: 8.5f}, '
-              'elapse: {elapse:3.3f} min, average lr: {lr:2.5f}'.format(
-                  header=f"({header})", loss=loss, ppl=min(loss, 100),
-                  elapse=(time.time() - start_time)/60, lr=optimizer.get_lr()))
 
     eva_losses = []
     warmup_epoches = opt.n_warmup_steps / len(training_data)
@@ -118,15 +95,18 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 
         start = time.time()
         train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
-        print_performances('Training', train_loss, start, optimizer)
+        print_performances(procedure='Training', absolute_loss=train_loss, relative_loss=train_loss-fact_tr, elapse=(time.time() - start)/60,
+                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
 
         start = time.time()
         eva_loss, fact_ev = eval_epoch(model, evaluation_data, device)
-        print_performances('Evaluation', eva_loss, start, optimizer)
+        print_performances(procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev, elapse=(time.time() - start)/60,
+                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
 
         start = time.time()
         test_loss, fact_test = eval_epoch(model, test_data, device)
-        print_performances('Test', test_loss, start, optimizer)
+        print_performances(procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, elapse=(time.time() - start)/60,
+                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
 
         if epoch_i > warmup_epoches:
             eva_losses += [eva_loss]
@@ -172,9 +152,9 @@ def main():
                         help="Set it to true if you want to use GPU.")
 
     # Model save
-    parser.add_argument('--data_path', default=None, help='Input dataset file path.')
-    parser.add_argument('--log', default=None, help='Log file path.')
-    parser.add_argument('--save_model', default=None, help='Saved checkpoint file path.')
+    parser.add_argument('--data_path', action=path, default=None, help='Input dataset file path.')
+    parser.add_argument('--log', action=path, default=None, help='Log file path.')
+    parser.add_argument('--save_model', action=path, default=None, help='Saved checkpoint file path.')
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
 
     # Training procedure related hyperparameters
@@ -208,7 +188,7 @@ def main():
             raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
     
     if torch.__version__ == '1.4.0':
-        raise logger.exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler will fail to run. Please update PyTorch version to 1.5.0 or above.')
+        raise logger.exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler including LambdaLR will fail to run. Please update PyTorch version to 1.5.0 or above.')
 
     # Reproducibility
     torch.manual_seed(opt.seed)
@@ -256,7 +236,8 @@ def main():
     else:
         optimizer = top.get(opt.op_name)(TPP.parameters(), opt.lr)
     
-    # Due to the complexity of learning rate scheduler, the scheduler is fixed. If you want to use another learning rate scheduler, plz modify it in src.optim.
+    # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
+    # If you want to use another learning rate scheduler, plz modify it in src.optim.
     sched_optimizer = ScheduledOptim(optimizer, scheduler = opt.lr_sched, num_warmup_steps = opt.n_warmup_steps, 
                                      num_training_steps = training_steps(training_size, opt.epoch, opt.batch_size),
                                      num_cycles = opt.num_cycles, last_epoch = opt.last_epoch)
@@ -288,8 +269,6 @@ def prepare_dataloaders(opt):
         raise TypeError(
             f"Wrong datafile format. Please check your data file in {opt.data_path}")
 
-    opt.max_token_seq_len = len(data_raw['train'].iloc[0].history)
-
     #========= Preparing Model =========#
     train = CustomDataset(data_raw['train'])
     evaluate = CustomDataset(data_raw['evaluate'])
@@ -297,8 +276,7 @@ def prepare_dataloaders(opt):
     size = len(train)
 
     train_iterator = DataLoader(train, shuffle = True, batch_size=batch_size, num_workers=4)
-    evaluation_iterator = DataLoader(
-        evaluate, batch_size=batch_size, num_workers=4)
+    evaluation_iterator = DataLoader(evaluate, batch_size=batch_size, num_workers=4)
     test_iterator = DataLoader(test, batch_size=batch_size, num_workers=4)
 
     return train_iterator, evaluation_iterator, test_iterator, size
