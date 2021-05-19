@@ -7,7 +7,7 @@ import os
 import torch.optim.lr_scheduler as lrs
 
 # Logger settings
-def getLogger(name):
+def getEventLogger(name):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     # create console handler and set level to debug
@@ -22,7 +22,26 @@ def getLogger(name):
 
     return logger
 
-logger = getLogger(__name__)
+def getFileLogger(name, file):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    # create console handler and set level to debug
+    ch = logging.FileHandler(file, mode = 'w')
+    ch.setLevel(logging.DEBUG)
+    # create formatter
+    formatter = logging.Formatter('%(message)s')
+    # add formatter to ch
+    ch.setFormatter(formatter)
+    # add ch to logger
+    logger.addHandler(ch)
+
+    return logger
+
+def getLogger(name, file = None):
+    if file:
+        return getFileLogger(name, file)
+    else:
+        return getEventLogger(name)
 
 def add(a, b):
     return a + b
@@ -51,7 +70,7 @@ class path(argparse.Action):
         setattr(namespace, self.dest, os.path.abspath(values))
 
 
-def print_performances(procedure, num_format = None, **kwargs):
+def print_performances(logger, procedure, num_format = None, **kwargs):
     if num_format is None or len(num_format) != len(kwargs):
         num_format = [':5.2f'] * len(kwargs)
 
@@ -59,3 +78,25 @@ def print_performances(procedure, num_format = None, **kwargs):
     for idx, key in enumerate(kwargs.keys()):
         info += ' ,' + key + ': {' + key + num_format[idx] + '}'
     logger.info(info.format_map(kwargs))
+
+
+class FileLogger(object):
+    def __init__(self, print_item, **kwargs):
+        self.loggers = dict()
+        for name, path in kwargs.items():
+            self.loggers[name] = getLogger(name, path)
+        self.print_item = print_item
+
+        # Initial info
+        for logger in self.loggers.values():
+            logger.info(', '.join(self.print_item))
+
+    def print(self, logger_name, num_format = None, **kwargs):
+        logger = self.loggers[logger_name]
+        if num_format is None or len(num_format) != len(kwargs):
+            num_format = [':5.2f'] * len(kwargs)
+
+        info = ''
+        for idx, key in enumerate(self.print_item):
+            info += '{' + key + num_format[idx] + '}, '
+        logger.info(info.format_map(kwargs))

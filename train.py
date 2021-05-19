@@ -3,13 +3,14 @@
 import argparse
 import time
 import os
+import math
 from tqdm import tqdm
 
 import pandas as pd
 import torch
 import torch.optim as optim
 
-from src.utils import training_steps, getLogger, path, print_performances
+from src.utils import training_steps, getLogger, path, print_performances, FileLogger
 
 from torch.utils.data import DataLoader
 from src.model.model import TemporalModel
@@ -81,35 +82,32 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
         log_test_file = os.path.join(opt.log, 'test.log')
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
+        log_item = ['Epoch', 'Loss', 'Gap']
+        log_format = ['', ':8.5f', ':8.5f']
 
-        with open(log_train_file, 'w') as log_tf, open(log_eva_file, 'w') as log_vf, open(log_test_file, 'w') as log_ef:
-            log_tf.write('epoch,loss,gap\n')
-            log_vf.write('epoch,loss,gap\n')
-            log_ef.write('epoch,loss,gap\n')
+        file_logger = FileLogger(log_item, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
-    eva_losses = []
     warmup_epoches = opt.n_warmup_steps / len(training_data)
+    num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f']
+    eva_losses_min = math.inf
 
     for epoch_i in range(opt.epoch):
         logger.info('[ Epoch ' + str(epoch_i + 1) + ' ]')
 
         start = time.time()
         train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
-        print_performances(procedure='Training', absolute_loss=train_loss, relative_loss=train_loss-fact_tr, elapse=(time.time() - start)/60,
-                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
+        print_performances(logger = logger, procedure='Training', absolute_loss=train_loss, relative_loss=train_loss-fact_tr, 
+                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
 
         start = time.time()
         eva_loss, fact_ev = eval_epoch(model, evaluation_data, device)
-        print_performances(procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev, elapse=(time.time() - start)/60,
-                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
+        print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev,
+                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
 
         start = time.time()
         test_loss, fact_test = eval_epoch(model, test_data, device)
-        print_performances(procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, elapse=(time.time() - start)/60,
-                               average_lr=optimizer.get_lr(), num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f'])
-
-        if epoch_i > warmup_epoches:
-            eva_losses += [eva_loss]
+        print_performances(logger = logger, procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, 
+                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
 
         checkpoint = {'epoch': epoch_i, 'settings': opt,
                       'model': model.state_dict()}
@@ -121,21 +119,18 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
                 torch.save(checkpoint, model_name)
             elif opt.save_mode == 'best':
                 model_name = os.path.join(opt.save_model, 'checkpoint.chkpt')
-                if eva_loss <= min(eva_losses):
+                if eva_loss < eva_losses_min and epoch_i > warmup_epoches:
+                    eva_losses_min = eva_loss
                     torch.save(checkpoint, model_name)
                     logger.info('    - The checkpoint file has been updated.')
 
-        if log_train_file and log_eva_file and log_test_file:
-            with open(log_train_file, 'a') as log_tf, open(log_eva_file, 'a') as log_vf, open(log_test_file, 'a') as log_ef:
-                log_tf.write('{epoch},{loss: 8.5f},{gap: 8.5f}\n'.format(
-                    epoch=epoch_i, loss=train_loss,
-                    gap=train_loss - fact_tr))
-                log_vf.write('{epoch},{loss: 8.5f},{gap: 8.5f}\n'.format(
-                    epoch=epoch_i, loss=eva_loss,
-                    gap=eva_loss - fact_ev))
-                log_ef.write('{epoch},{loss: 8.5f},{gap: 8.5f}\n'.format(
-                    epoch=epoch_i, loss=test_loss,
-                    gap=eva_loss - fact_test))
+        if file_logger:
+            file_logger.print(logger_name = 'training_log', num_format = log_format, 
+                              Epoch = epoch_i, Loss = train_loss, Gap = train_loss - fact_tr)
+            file_logger.print(logger_name = 'evaluation_log', num_format = log_format, 
+                              Epoch = epoch_i, Loss = eva_loss, Gap = eva_loss - fact_ev)
+            file_logger.print(logger_name = 'test_log', num_format = log_format, 
+                              Epoch = epoch_i, Loss = test_loss, Gap = test_loss - fact_test)
 
 
 def main():
