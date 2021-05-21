@@ -1,113 +1,58 @@
 # The model training script
 
-import argparse
-import time
-import os
-import math
-from tqdm import tqdm
-
-import pandas as pd
+import argparse, time, os, math, random
 import torch
-import torch.optim as optim
 
-from src.utils import training_steps, getLogger, path, print_performances, FileLogger
+from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix
 
-from torch.utils.data import DataLoader
-from src.model.model import TemporalModel
+from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
-from src.optimizer.loss import loss_f
-from src.data.dataset import CustomDataset
+from src.optimizer.loss import train_epoch, eval_epoch
+from src.data.dataloader import prepare_dataloaders
 
 logger = getLogger(__name__)
-
-def train_epoch(model, training_data, optimizer, device):
-    ''' Epoch operation in training phase'''
-
-    model.train()
-    fact, total_loss, training_set_length = 0, 0, len(training_data)
-
-    desc = '  - (Training)   '
-    for batch in tqdm(training_data, desc=desc, leave=False):
-        # forward
-        optimizer.zero_grad()
-        intensity_integral, intensity = model(
-            batch[0].to(device), batch[1].to(device))
-
-        # backward and update parameters
-        loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
-        )
-        loss.backward()
-        optimizer.step_and_update_lr()
-
-        total_loss += loss.item()
-        fact += batch[2].sum()
-
-    loss_per_train = total_loss / training_set_length
-    fact = fact / training_set_length
-    return loss_per_train, fact
-
-
-def eval_epoch(model, evaluation_data, device):
-    ''' Epoch operation in evaluation phase '''
-
-    model.eval()
-    fact, total_loss, evaluation_set_length = 0, 0, len(evaluation_data)
-
-    desc = '  - (Evaluation) '
-    for batch in tqdm(evaluation_data, desc=desc, leave=False):
-        # forward
-        intensity_integral, intensity = model(
-            batch[0].to(device), batch[1].to(device))
-        loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
-        )
-
-        total_loss += loss.item()
-        fact += batch[2].sum()
-
-    loss_per_eval = total_loss / evaluation_set_length
-    fact = fact / evaluation_set_length
-    return loss_per_eval, fact
-
 
 def train(model, training_data, evaluation_data, test_data, optimizer, device, opt):
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
+    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'epoch', 'd_history', 'd_intensity', 'rnn_layers', 'mlp_layers')
+    if not os.path.exists(os.path.join(opt.save_model, 'output' + folder_suffix)):
+        os.mkdir(os.path.join(opt.save_model, 'output' + folder_suffix))
 
     if opt.log:
-        log_train_file = os.path.join(opt.log, 'train.log')
-        log_eva_file = os.path.join(opt.log, 'evaluate.log')
-        log_test_file = os.path.join(opt.log, 'test.log')
+        log_folder = 'log' + folder_suffix
+        if not os.path.exists(os.path.join(opt.log, log_folder)):
+            os.mkdir(os.path.join(opt.log, log_folder))
+        log_train_file = os.path.join(opt.log, log_folder, 'train.log')
+        log_eva_file = os.path.join(opt.log, log_folder, 'evaluate.log')
+        log_test_file = os.path.join(opt.log, log_folder, 'test.log')
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
+        # These log_items defined here should match corresponding logger's print() method.
         log_item = ['Epoch', 'Loss', 'Gap']
         log_format = ['', ':8.5f', ':8.5f']
 
         file_logger = FileLogger(log_item, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
     warmup_epoches = opt.n_warmup_steps / len(training_data)
-    num_format = [':8.5f', ':8.5f', ':3.3f', ':2.5f']
+    num_format = [':8.5f', ':8.5f', ':2.5f']
     eva_losses_min = math.inf
 
     for epoch_i in range(opt.epoch):
         logger.info('[ Epoch ' + str(epoch_i + 1) + ' ]')
 
-        start = time.time()
         train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
         print_performances(logger = logger, procedure='Training', absolute_loss=train_loss, relative_loss=train_loss-fact_tr, 
-                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
+                           average_lr=optimizer.get_lr(), num_format = num_format)
 
-        start = time.time()
         eva_loss, fact_ev = eval_epoch(model, evaluation_data, device)
         print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev,
-                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
+                           average_lr=optimizer.get_lr(), num_format = num_format)
 
-        start = time.time()
         test_loss, fact_test = eval_epoch(model, test_data, device)
         print_performances(logger = logger, procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, 
-                           elapse=(time.time() - start)/60, average_lr=optimizer.get_lr(), num_format = num_format)
+                           average_lr=optimizer.get_lr(), num_format = num_format)
 
         checkpoint = {'epoch': epoch_i, 'settings': opt,
                       'model': model.state_dict()}
@@ -118,7 +63,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
                     opt.save_model, ('_tr_loss_{tr_loss:3.3f}' + '_ev_loss_{eva_loss:3.3f}' + '.chkpt').format(tr_loss=train_loss, eva_loss=eva_loss))
                 torch.save(checkpoint, model_name)
             elif opt.save_mode == 'best':
-                model_name = os.path.join(opt.save_model, 'checkpoint.chkpt')
+                model_name = os.path.join(opt.save_model, 'output' + folder_suffix, 'checkpoint.chkpt')
                 if eva_loss < eva_losses_min and epoch_i > warmup_epoches:
                     eva_losses_min = eva_loss
                     torch.save(checkpoint, model_name)
@@ -141,6 +86,8 @@ def main():
 
     parser = argparse.ArgumentParser()
     # The Ultimate
+    parser.add_argument('--no_seed', action='store_true',
+                        help='Do not freeze random seed. Use this option if you want to explore your model robustness.')
     parser.add_argument('--seed', type=int, default=42,
                         help='The global random seed.')
     parser.add_argument('--cuda', action='store_true', 
@@ -157,35 +104,36 @@ def main():
     parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
 
     # Model-related hyperparameters
-    parser.add_argument('--d_history', type=int, default=32)
-    parser.add_argument('--d_intensity', type=int, default=64)
-    parser.add_argument('--dropout', type=float, default=0.)
-    parser.add_argument('--rnn_layers', type=int, default=1)
-    parser.add_argument('--mlp_layers', type=int, default=3)
-    parser.add_argument('--n_warmup_steps', type=int, default=2000)
+    parser.add_argument('--model_name', default=None,
+                        help="The model name.")
+    parser.add_argument('--model_json', action=path, default=None,
+                        help="The path of json file that contains model hyperparameters.")
 
     # Optimizer-related hyperparameters
-    parser.add_argument('--custom_op', action='store_true', help='Set it to true if you want to use your own optimizer or that from third-party packages.')
-    parser.add_argument('--op_name', type=str, default='AdamW', help='The name of optimizer. All optimizer hyperparameters are set as default.')
-    parser.add_argument('--lr_sched', action='store_true', help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\'t come into effect.')
-    parser.add_argument('--lr', type=float, default=0.1, help='Input learning rate. The real learning rate could change due to the lr scheduler.')
-    parser.add_argument('--num_cycles', type=float, default=0.5)
+    parser.add_argument('--optim_json', action=path, default=None,
+                        help='The path of json file that contains optimizer and scheduler settings.')
+    parser.add_argument('--custom_op', action='store_true', 
+                        help='Set it to true if you want to use your own optimizer or that from third-party packages.')
+    parser.add_argument('--op_name', type=str, default='AdamW', 
+                        help='The name of optimizer. All optimizer hyperparameters are set as default.')
+    parser.add_argument('--lr_sched', action='store_true', 
+                        help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\'t come into effect.')
+    parser.add_argument('--n_warmup_steps', type=int, default=2000, 
+                        help='The number of warmup steps. Models during warmup won\'t be stored.')
+    parser.add_argument('--lr', type=float, default=0.1, 
+                        help='Input learning rate. The real learning rate could change due to the lr scheduler.')
+    parser.add_argument('--n_cycles', type=float, default=0.5)
     parser.add_argument('--last_epoch', type=int, default=-1)
 
     opt = parser.parse_args()
-    # optimizer and learning rate scheduler
-    if opt.custom_op:
-        import torch_optimizer as top
-        if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
-            raise logger.exception(f'The given optimizer {opt.op_name} is not found in neither PyTorch nor pytorch_optimizer. Please check your optimizer settings and try again.')
-    else:
-        if not hasattr(optim, opt.op_name):
-            raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
-    
+
     if torch.__version__ == '1.4.0':
-        raise logger.exception('Due to pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate scheduler including LambdaLR will fail to run. Please update PyTorch version to 1.5.0 or above.')
+        raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
 
     # Reproducibility
+    if opt.no_seed:
+        opt.seed = random.randint(0, 2**16)
+        logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
     torch.manual_seed(opt.seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
@@ -209,72 +157,26 @@ def main():
     #========= Loading Dataset =========#
 
     if opt.data_path:
-        training_data, evaluation_data, test_data, training_size = prepare_dataloaders(opt)
+        training_data, evaluation_data, test_data, opt.training_size = prepare_dataloaders(opt)
     else:
         raise logger.exception("Wrong input data path.")
 
     logger.info(opt)
 
+    model_param = read_json(opt.model_json)
+    logger.info(f'The input model hyperparameters are {model_param}')
     # Load model
-    TPP = TemporalModel(
-        d_history=opt.d_history,
-        d_intensity=opt.d_intensity,
-        dropout=opt.dropout,
-        rnn_layers=opt.rnn_layers,
-        mlp_layers=opt.mlp_layers
+    model = get_model(opt.model_name)(
+        **model_param
     ).to(opt.device)
+    opt.__dict__.update(model_param)
 
-    # Load optimizer
-    optimizer = None
-    if hasattr(optim, opt.op_name):
-        optimizer = getattr(optim, opt.op_name)(TPP.parameters(), opt.lr)
-    else:
-        optimizer = top.get(opt.op_name)(TPP.parameters(), opt.lr)
-    
     # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
     # If you want to use another learning rate scheduler, plz modify it in src.optim.
-    sched_optimizer = ScheduledOptim(optimizer, scheduler = opt.lr_sched, num_warmup_steps = opt.n_warmup_steps, 
-                                     num_training_steps = training_steps(training_size, opt.epoch, opt.batch_size),
-                                     num_cycles = opt.num_cycles, last_epoch = opt.last_epoch)
+    sched_optimizer = ScheduledOptim(opt, model)
 
-    train(TPP, training_data, evaluation_data,
+    train(model, training_data, evaluation_data,
           test_data, sched_optimizer, opt.device, opt)
-
-
-def prepare_dataloaders(opt):
-    batch_size = opt.batch_size
-    file_names = os.listdir(os.path.expanduser(opt.data_path))
-    # A strong assertion
-    assert len(file_names) == 3
-
-    data_raw = {}
-    is_csv = file_names[0].split('.')[-1] == 'csv'
-    try:
-        if is_csv:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_csv(
-                    os.path.join(opt.data_path, file + '.' + type))
-        else:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_json(
-                    os.path.join(opt.data_path, file + '.' + type))
-    except:
-        raise TypeError(
-            f"Wrong datafile format. Please check your data file in {opt.data_path}")
-
-    #========= Preparing Model =========#
-    train = CustomDataset(data_raw['train'])
-    evaluate = CustomDataset(data_raw['evaluate'])
-    test = CustomDataset(data_raw['test'])
-    size = len(train)
-
-    train_iterator = DataLoader(train, shuffle = True, batch_size=batch_size, num_workers=4)
-    evaluation_iterator = DataLoader(evaluate, batch_size=batch_size, num_workers=4)
-    test_iterator = DataLoader(test, batch_size=batch_size, num_workers=4)
-
-    return train_iterator, evaluation_iterator, test_iterator, size
 
 
 if __name__ == '__main__':

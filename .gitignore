@@ -108,11 +108,12 @@ ENV/
 *.chkpt
 *.bin
 
-# The data and outputs
+# The data, config files, and outputs
 data/
 output/
 raw_input/
 output/
+config/
 
 # The test scripts
 scripts/

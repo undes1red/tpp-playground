@@ -1,8 +1,5 @@
 from functools import reduce
-import math
-import logging
-import argparse
-import os
+import math, logging, argparse, os, json
 
 import torch.optim.lr_scheduler as lrs
 
@@ -42,6 +39,8 @@ def getLogger(name, file = None):
         return getFileLogger(name, file)
     else:
         return getEventLogger(name)
+
+logger = getLogger(__name__)
 
 def add(a, b):
     return a + b
@@ -88,8 +87,14 @@ class FileLogger(object):
         self.print_item = print_item
 
         # Initial info
-        for logger in self.loggers.values():
-            logger.info(', '.join(self.print_item))
+        if isinstance(self.print_item, list):
+            for logger in self.loggers.values():
+                logger.info(', '.join(self.print_item))
+        elif isinstance(self.print_item, dict):
+            for name in self.print_item.keys():
+                self.loggers[name].info(', '.join(self.print_item[name]))
+        else:
+            logger.exception('Wrong log index input type. The expected types are list or dict. Please check your input of print_item.')
 
     def print(self, logger_name, num_format = None, **kwargs):
         logger = self.loggers[logger_name]
@@ -100,3 +105,15 @@ class FileLogger(object):
         for idx, key in enumerate(self.print_item):
             info += '{' + key + num_format[idx] + '}, '
         logger.info(info.format_map(kwargs))
+
+def read_json(json_path):
+    with open(json_path, 'r') as f:
+        a = json.load(f)
+    return a
+
+def suffix(opt, *args):
+    output = ''
+    for item in args:
+        output += ('_' + str(getattr(opt, item)))
+    
+    return output
