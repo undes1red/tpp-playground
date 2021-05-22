@@ -40,7 +40,7 @@ def getLogger(name, file = None):
     else:
         return getEventLogger(name)
 
-logger = getLogger(__name__)
+logger_ = getLogger(__name__)
 
 def add(a, b):
     return a + b
@@ -57,11 +57,6 @@ def get_lr_sheduler(optimizer, num_warmup_steps, num_training_steps, num_cycles,
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
 
     return lrs.LambdaLR(optimizer, lr_lambda = lr_lambda, last_epoch = last_epoch)
-
-# Calculate the total training step
-def training_steps(dataset_size, epoch, batch):
-    return math.ceil(dataset_size * epoch / batch)
-
 
 # Definition of path parsing action.
 class path(argparse.Action):
@@ -94,7 +89,9 @@ class FileLogger(object):
             for name in self.print_item.keys():
                 self.loggers[name].info(', '.join(self.print_item[name]))
         else:
-            logger.exception('Wrong log index input type. The expected types are list or dict. Please check your input of print_item.')
+            logger_.exception(
+                'Wrong log index input type. The expected types are list or dict. Please check your input of print_item.'
+            )
 
     def print(self, logger_name, num_format = None, **kwargs):
         logger = self.loggers[logger_name]

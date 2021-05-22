@@ -16,35 +16,27 @@ def loss_f(intensity, intensity_integral):
     loss = torch.sum(loss, dim=0)
     return loss
 
-def train_epoch(model, training_data, optimizer, device):
+def train_step(model, minibatch, optimizer, device):
     ''' Epoch operation in training phase'''
 
     model.train()
-    fact, total_loss, training_set_length = 0, 0, len(training_data)
+    optimizer.zero_grad()
+    intensity_integral, intensity = model(
+            minibatch[0].to(device), minibatch[1].to(device))
 
-    desc = '  - (Training)   '
-    for batch in tqdm(training_data, desc=desc, leave=False):
-        # forward
-        optimizer.zero_grad()
-        intensity_integral, intensity = model(
-            batch[0].to(device), batch[1].to(device))
+    loss = loss_f(
+        intensity=intensity, intensity_integral=intensity_integral
+    )
+    loss.backward()
+    optimizer.step_and_update_lr()
 
-        # backward and update parameters
-        loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
-        )
-        loss.backward()
-        optimizer.step_and_update_lr()
+    loss = loss.item()
+    fact = minibatch[2].sum()
 
-        total_loss += loss.item()
-        fact += batch[2].sum()
-
-    loss_per_train = total_loss / training_set_length
-    fact = fact / training_set_length
-    return loss_per_train, fact
+    return loss, fact
 
 
-def eval_epoch(model, evaluation_data, device):
+def evaluation(model, evaluation_data, device):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()

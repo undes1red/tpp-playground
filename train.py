@@ -1,13 +1,15 @@
 # The model training script
 
-import argparse, time, os, math, random
+import argparse, os, math, random
 import torch
+from tqdm import tqdm
+from itertools import cycle
 
 from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix
 
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
-from src.optimizer.loss import train_epoch, eval_epoch
+from src.optimizer.loss import train_step, evaluation
 from src.data.dataloader import prepare_dataloaders
 
 logger = getLogger(__name__)
@@ -16,7 +18,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
-    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'epoch', 'd_history', 'd_intensity', 'rnn_layers', 'mlp_layers')
+    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'd_history', 'd_intensity', 'rnn_layers', 'mlp_layers')
     if not os.path.exists(os.path.join(opt.save_model, 'output' + folder_suffix)):
         os.mkdir(os.path.join(opt.save_model, 'output' + folder_suffix))
 
@@ -30,53 +32,67 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
-        log_item = ['Epoch', 'Loss', 'Gap']
+        log_item = ['Step', 'Loss', 'Gap']
         log_format = ['', ':8.5f', ':8.5f']
 
         file_logger = FileLogger(log_item, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
-    warmup_epoches = opt.n_warmup_steps / len(training_data)
     num_format = [':8.5f', ':8.5f', ':2.5f']
     eva_losses_min = math.inf
+    report_loss_sum, report_fact_sum, current_step = 0, 0, 0
 
-    for epoch_i in range(opt.epoch):
-        logger.info('[ Epoch ' + str(epoch_i + 1) + ' ]')
-
-        train_loss, fact_tr = train_epoch(model, training_data, optimizer, device)
-        print_performances(logger = logger, procedure='Training', absolute_loss=train_loss, relative_loss=train_loss-fact_tr, 
-                           average_lr=optimizer.get_lr(), num_format = num_format)
-
-        eva_loss, fact_ev = eval_epoch(model, evaluation_data, device)
-        print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev,
-                           average_lr=optimizer.get_lr(), num_format = num_format)
-
-        test_loss, fact_test = eval_epoch(model, test_data, device)
-        print_performances(logger = logger, procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, 
-                           average_lr=optimizer.get_lr(), num_format = num_format)
-
-        checkpoint = {'epoch': epoch_i, 'settings': opt,
-                      'model': model.state_dict()}
-
-        if opt.save_model and epoch_i > warmup_epoches:
-            if opt.save_mode == 'all':
-                model_name = os.path.join(
-                    opt.save_model, ('_tr_loss_{tr_loss:3.3f}' + '_ev_loss_{eva_loss:3.3f}' + '.chkpt').format(tr_loss=train_loss, eva_loss=eva_loss))
-                torch.save(checkpoint, model_name)
-            elif opt.save_mode == 'best':
-                model_name = os.path.join(opt.save_model, 'output' + folder_suffix, 'checkpoint.chkpt')
-                if eva_loss < eva_losses_min and epoch_i > warmup_epoches:
-                    eva_losses_min = eva_loss
+    desc = '  - (Training)   '
+    step_range = range(opt.n_training_steps)
+    training = cycle(iter(training_data))
+    for current_step in tqdm(step_range, desc=desc, leave=False):
+        data = next(training)
+        train_loss, fact_tr = train_step(model, data, optimizer, device)
+        report_loss_sum += train_loss
+        report_fact_sum += fact_tr
+    
+        if current_step > opt.n_training_steps:
+            logger.warning('Training finished!')
+            return 0
+    
+        if current_step % opt.n_report_steps == 0:
+            logger.warning(f'Brief training status report at step {current_step}.')
+            print_performances(logger = logger, procedure='Training', absolute_loss=report_loss_sum/opt.n_report_steps, 
+                               relative_loss=(report_loss_sum-report_fact_sum)/opt.n_report_steps, 
+                               average_lr=optimizer.get_lr(), num_format = num_format)
+            report_loss_sum, report_fact_sum = 0, 0
+            
+        if current_step % opt.n_evaluation_steps == 0:
+            logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
+            eva_loss, fact_ev = evaluation(model, evaluation_data, device)
+            print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev,
+                               average_lr=optimizer.get_lr(), num_format = num_format)
+                                   
+            test_loss, fact_test = evaluation(model, test_data, device)
+            print_performances(logger = logger, procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, 
+                               average_lr=optimizer.get_lr(), num_format = num_format)
+    
+                # We will store the checkpoint after model evaluation.
+            checkpoint = {'step': current_step, 'settings': opt, 'model': model.state_dict()}
+        
+            if opt.save_model and current_step > opt.n_warmup_steps:
+                if opt.save_mode == 'all':
+                    model_name = os.path.join(
+                            opt.save_model, ('_tr_loss_{tr_loss:3.3f}' + '_ev_loss_{eva_loss:3.3f}' + '.chkpt').format(tr_loss=train_loss, eva_loss=eva_loss))
                     torch.save(checkpoint, model_name)
-                    logger.info('    - The checkpoint file has been updated.')
-
-        if file_logger:
-            file_logger.print(logger_name = 'training_log', num_format = log_format, 
-                              Epoch = epoch_i, Loss = train_loss, Gap = train_loss - fact_tr)
-            file_logger.print(logger_name = 'evaluation_log', num_format = log_format, 
-                              Epoch = epoch_i, Loss = eva_loss, Gap = eva_loss - fact_ev)
-            file_logger.print(logger_name = 'test_log', num_format = log_format, 
-                              Epoch = epoch_i, Loss = test_loss, Gap = test_loss - fact_test)
-
+                elif opt.save_mode == 'best':
+                    model_name = os.path.join(opt.save_model, 'output' + folder_suffix, 'checkpoint.chkpt')
+                    if eva_loss < eva_losses_min and current_step > opt.n_warmup_steps:
+                            eva_losses_min = eva_loss
+                            torch.save(checkpoint, model_name)
+                            logger.info('    - The checkpoint file has been updated.')
+        
+            if file_logger:
+                file_logger.print(logger_name = 'training_log', num_format = log_format, 
+                                  Step = current_step, Loss = train_loss, Gap = train_loss - fact_tr)
+                file_logger.print(logger_name = 'evaluation_log', num_format = log_format, 
+                                  Step = current_step, Loss = eva_loss, Gap = eva_loss - fact_ev)
+                file_logger.print(logger_name = 'test_log', num_format = log_format, 
+                                  Step = current_step, Loss = test_loss, Gap = test_loss - fact_test)
 
 def main():
     ''' 
@@ -100,7 +116,9 @@ def main():
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
 
     # Training procedure related hyperparameters
-    parser.add_argument('--epoch', type=int, default=10, help='Epoch number')
+    parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')
+    parser.add_argument('--n_evaluation_steps', type=int, default=200, help='The number of steps that follows a model evaluation.')
+    parser.add_argument('--n_report_steps', type = int, default=200, help='After a given number of steps, report the current model training status.')
     parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
 
     # Model-related hyperparameters
@@ -157,11 +175,13 @@ def main():
     #========= Loading Dataset =========#
 
     if opt.data_path:
-        training_data, evaluation_data, test_data, opt.training_size = prepare_dataloaders(opt)
+        training_data, evaluation_data, test_data = prepare_dataloaders(opt)
+        opt.training_size = len(training_data)
     else:
         raise logger.exception("Wrong input data path.")
 
     logger.info(opt)
+    logger.info(f'For someone needs epoch, the training epoch is {opt.n_training_steps/len(training_data)}')
 
     model_param = read_json(opt.model_json)
     logger.info(f'The input model hyperparameters are {model_param}')

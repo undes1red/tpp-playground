@@ -25,7 +25,7 @@ class ScheduledOptim():
         
         if opt.lr_sched:
             self.n_warmup_steps = opt.n_warmup_steps
-            self.n_training_steps = utils.training_steps(opt.training_size, opt.epoch, opt.batch_size)
+            self.n_training_steps = opt.n_training_steps
             self.n_cycles = opt.n_cycles
             self.last_epoch = opt.last_epoch
             self._scheduler = utils.get_lr_sheduler(optimizer = self._optimizer, num_warmup_steps = self.n_warmup_steps, 
