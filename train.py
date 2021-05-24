@@ -9,10 +9,24 @@ from src.utils import getLogger, path, print_performances, FileLogger, read_json
 
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
-from src.optimizer.loss import train_step, evaluation
+from src.optimizer.loss import train_step, evaluation_step
 from src.data.dataloader import prepare_dataloaders
 
 logger = getLogger(__name__)
+
+def evaluation(data, model, desc, device):
+    r = range(1, len(data) + 1)
+    data_itr = iter(data)
+    sum_loss, sum_fact = 0, 0
+
+    for _ in tqdm(r, desc=desc, leave=False):
+        minibatch = next(data_itr)
+        eva_loss, fact_ev = evaluation_step(model, minibatch, device)
+        sum_loss += eva_loss
+        sum_fact += fact_ev
+
+    return sum_loss/len(data), sum_fact/len(data)
+
 
 def train(model, training_data, evaluation_data, test_data, optimizer, device, opt):
     ''' Start training '''
@@ -39,39 +53,39 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 
     num_format = [':8.5f', ':8.5f', ':2.5f']
     eva_losses_min = math.inf
-    report_loss_sum, report_fact_sum, current_step = 0, 0, 0
-
+    report_loss_sum, report_fact_sum = 0, 0
     desc = '  - (Training)   '
-    step_range = range(opt.n_training_steps)
+    step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
+
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        train_loss, fact_tr = train_step(model, data, optimizer, device)
+        train_loss, train_fact = train_step(model, data, optimizer, device)
         report_loss_sum += train_loss
-        report_fact_sum += fact_tr
-    
-        if current_step > opt.n_training_steps:
-            logger.warning('Training finished!')
-            return 0
+        report_fact_sum += train_fact
     
         if current_step % opt.n_report_steps == 0:
             logger.warning(f'Brief training status report at step {current_step}.')
-            print_performances(logger = logger, procedure='Training', absolute_loss=report_loss_sum/opt.n_report_steps, 
-                               relative_loss=(report_loss_sum-report_fact_sum)/opt.n_report_steps, 
-                               average_lr=optimizer.get_lr(), num_format = num_format)
+            print_performances(logger = logger, procedure='Training', absolute_loss=report_loss_sum/opt.n_report_steps,
+                               relative_loss=(report_loss_sum-report_fact_sum)/opt.n_report_steps,
+                               average_lr=optimizer.get_lr(), num_format=num_format)
+            if file_logger:
+                file_logger.print(logger_name = 'training_log', num_format = log_format, 
+                                  Step = current_step, Loss = report_loss_sum/opt.n_report_steps, Gap = (report_loss_sum - report_fact_sum)/opt.n_report_steps)
             report_loss_sum, report_fact_sum = 0, 0
             
         if current_step % opt.n_evaluation_steps == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
-            eva_loss, fact_ev = evaluation(model, evaluation_data, device)
-            print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss, relative_loss=eva_loss-fact_ev,
-                               average_lr=optimizer.get_lr(), num_format = num_format)
-                                   
-            test_loss, fact_test = evaluation(model, test_data, device)
-            print_performances(logger = logger, procedure='Test', absolute_loss=test_loss, relative_loss=test_loss-fact_test, 
-                               average_lr=optimizer.get_lr(), num_format = num_format)
+            eva_loss, eva_fact = evaluation(evaluation_data, model, '  - (Evaluating)   ', device)
+            print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss,
+                               relative_loss=eva_loss-eva_fact,
+                               average_lr=optimizer.get_lr(), num_format=num_format)
+
+            test_loss, test_fact = evaluation(test_data, model, '  - (Testing)   ', device)
+            print_performances(logger = logger, procedure='Test', absolute_loss=test_loss,
+                               relative_loss=test_loss-test_fact, average_lr=optimizer.get_lr(), num_format=num_format)
     
-                # We will store the checkpoint after model evaluation.
+            # We will store the checkpoint after model evaluation.
             checkpoint = {'step': current_step, 'settings': opt, 'model': model.state_dict()}
         
             if opt.save_model and current_step > opt.n_warmup_steps:
@@ -85,14 +99,14 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
                             eva_losses_min = eva_loss
                             torch.save(checkpoint, model_name)
                             logger.info('    - The checkpoint file has been updated.')
-        
             if file_logger:
-                file_logger.print(logger_name = 'training_log', num_format = log_format, 
-                                  Step = current_step, Loss = train_loss, Gap = train_loss - fact_tr)
                 file_logger.print(logger_name = 'evaluation_log', num_format = log_format, 
-                                  Step = current_step, Loss = eva_loss, Gap = eva_loss - fact_ev)
+                                  Step = current_step, Loss = eva_loss, Gap = eva_loss - eva_fact)
                 file_logger.print(logger_name = 'test_log', num_format = log_format, 
-                                  Step = current_step, Loss = test_loss, Gap = test_loss - fact_test)
+                                  Step = current_step, Loss = test_loss, Gap = test_loss - test_fact)
+    
+    logger.warning('Training finished!')
+
 
 def main():
     ''' 
@@ -180,15 +194,17 @@ def main():
     else:
         raise logger.exception("Wrong input data path.")
 
-    logger.info(opt)
-    logger.info(f'For someone needs epoch, the training epoch is {opt.n_training_steps/len(training_data)}')
-
     model_param = read_json(opt.model_json)
     logger.info(f'The input model hyperparameters are {model_param}')
     # Load model
     model = get_model(opt.model_name)(
         **model_param
     ).to(opt.device)
+
+    logger.info(opt)
+    logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(training_data):5.5f}')
+    logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
+
     opt.__dict__.update(model_param)
 
     # Due to the complexity of learning rate scheduler, the scheduler is fixed. 

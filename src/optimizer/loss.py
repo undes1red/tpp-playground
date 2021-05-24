@@ -36,24 +36,19 @@ def train_step(model, minibatch, optimizer, device):
     return loss, fact
 
 
-def evaluation(model, evaluation_data, device):
+def evaluation_step(model, minibatch, device):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()
-    fact, total_loss, evaluation_set_length = 0, 0, len(evaluation_data)
+    intensity_integral, intensity = model(
+        minibatch[0].to(device), minibatch[1].to(device)
+    )
 
-    desc = '  - (Evaluation) '
-    for batch in tqdm(evaluation_data, desc=desc, leave=False):
-        # forward
-        intensity_integral, intensity = model(
-            batch[0].to(device), batch[1].to(device))
-        loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
-        )
+    loss = loss_f(
+        intensity=intensity, intensity_integral=intensity_integral
+    )
 
-        total_loss += loss.item()
-        fact += batch[2].sum()
+    loss = loss.item()
+    fact = minibatch[2].sum()
 
-    loss_per_eval = total_loss / evaluation_set_length
-    fact = fact / evaluation_set_length
-    return loss_per_eval, fact
+    return loss, fact
