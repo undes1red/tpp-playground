@@ -9,26 +9,25 @@ from src.utils import getLogger, path, print_performances, FileLogger, read_json
 
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
-from src.optimizer.loss import train_step, evaluation_step
-from src.data.dataloader import prepare_dataloaders
+from src.data import prepare_dataloaders
 
 logger = getLogger(__name__)
 
-def evaluation(data, model, desc, device):
+def evaluation(data, model, model_class, desc, device):
     r = range(1, len(data) + 1)
     data_itr = iter(data)
     sum_loss, sum_fact = 0, 0
-
+    
     for _ in tqdm(r, desc=desc, leave=False):
         minibatch = next(data_itr)
-        eva_loss, fact_ev = evaluation_step(model, minibatch, device)
+        eva_loss, fact_ev = model_class.evaluation_step(model, minibatch, device)
         sum_loss += eva_loss
         sum_fact += fact_ev
 
     return sum_loss/len(data), sum_fact/len(data)
 
 
-def train(model, training_data, evaluation_data, test_data, optimizer, device, opt):
+def train(model, model_class, training_data, evaluation_data, test_data, optimizer, device, opt):
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
@@ -60,7 +59,7 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
 
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        train_loss, train_fact = train_step(model, data, optimizer, device)
+        train_loss, train_fact = model_class.train_step(model, data, optimizer, device)
         report_loss_sum += train_loss
         report_fact_sum += train_fact
     
@@ -76,12 +75,12 @@ def train(model, training_data, evaluation_data, test_data, optimizer, device, o
             
         if current_step % opt.n_evaluation_steps == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
-            eva_loss, eva_fact = evaluation(evaluation_data, model, '  - (Evaluating)   ', device)
+            eva_loss, eva_fact = evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device)
             print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss,
                                relative_loss=eva_loss-eva_fact,
                                average_lr=optimizer.get_lr(), num_format=num_format)
 
-            test_loss, test_fact = evaluation(test_data, model, '  - (Testing)   ', device)
+            test_loss, test_fact = evaluation(test_data, model, model_class, '  - (Testing)   ', device)
             print_performances(logger = logger, procedure='Test', absolute_loss=test_loss,
                                relative_loss=test_loss-test_fact, average_lr=optimizer.get_lr(), num_format=num_format)
     
@@ -123,8 +122,11 @@ def main():
     parser.add_argument('--cuda', action='store_true', 
                         help="Set it to true if you want to use GPU.")
 
-    # Model save
+    # Input data
     parser.add_argument('--data_path', action=path, default=None, help='Input dataset file path.')
+    parser.add_argument('--dataset_name', default=None, help='Input dataset class name.')
+
+    # Model save
     parser.add_argument('--log', action=path, default=None, help='Log file path.')
     parser.add_argument('--save_model', action=path, default=None, help='Saved checkpoint file path.')
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
@@ -197,7 +199,8 @@ def main():
     model_param = read_json(opt.model_json)
     logger.info(f'The input model hyperparameters are {model_param}')
     # Load model
-    model = get_model(opt.model_name)(
+    model_class = get_model(opt.model_name)
+    model = model_class(
         **model_param
     ).to(opt.device)
 
@@ -211,7 +214,7 @@ def main():
     # If you want to use another learning rate scheduler, plz modify it in src.optim.
     sched_optimizer = ScheduledOptim(opt, model)
 
-    train(model, training_data, evaluation_data,
+    train(model, model_class, training_data, evaluation_data,
           test_data, sched_optimizer, opt.device, opt)
 
 

@@ -5,11 +5,8 @@ import torch.nn.functional as F
 
 class CTLSTMCell(nn.Module):
 
-    def __init__(self, hidden_dim, device=None):
+    def __init__(self, hidden_dim):
         super(CTLSTMCell, self).__init__()
-
-        device = device or 'cpu'
-        self.device = torch.device(device)
 
         self.hidden_dim = hidden_dim
         self.linear = nn.Linear(hidden_dim * 2, hidden_dim * 7, bias=True)
@@ -17,6 +14,10 @@ class CTLSTMCell(nn.Module):
 
     def forward(
         self, rnn_input, hidden_t_i_minus, cell_t_i_minus, cell_bar_im1):
+        # rnn_input: [batch, embedding]
+        # hidden_t_i_minus: [batch, embedding]
+        # cell_t_i_minus: [batch, embedding]
+        # cell_bar_im1: [batch, embedding]
 
         dim_of_hidden = rnn_input.dim() - 1
 
@@ -44,6 +45,8 @@ class CTLSTMCell(nn.Module):
     def decay(self, cell_i, cell_bar_i, gate_decay, gate_output, dtime):
         # no need to consider extra_dim_particle here
         # cuz this function is applicable to any # of dims
+        # cell_i : [batch_size, dim_size]
+
         if dtime.dim() < cell_i.dim():
             # e.g. 
             # cell_i : B x T x D 

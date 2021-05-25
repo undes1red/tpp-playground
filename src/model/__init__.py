@@ -1,5 +1,6 @@
 from .dwg.model import TemporalModel
 from .fullynn.model import FullyNNModel
+from .ctlstm.model import CTLSTMwrapper
 
 from ..utils import getLogger
 
@@ -8,7 +9,8 @@ logger = getLogger(__name__)
 # One should register their model here. 
 model_zoo = {
     'dwg': TemporalModel,
-    'fullynn': FullyNNModel
+    'fullynn': FullyNNModel,
+    'ctlstm': CTLSTMwrapper
 }
 
 def get_model(name):
@@ -17,4 +19,4 @@ def get_model(name):
         logger.info(f"Model named {name} is retrieved.")
         return model
     except:
-        logger.exception(f"Model named {name} is not found! Please register your model in src/model.__init__.py and try again.")
+        logger.exception(f"Model named {name} is not found! Please register your model in src/model/__init__.py and try again.")
