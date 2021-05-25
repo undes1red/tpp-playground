@@ -18,11 +18,11 @@ class DynamicMLP(nn.Module):
                                num_layers=num_layers, batch_first=True, dropout=dropout)
 
         # self.weight_gen = nn.Linear(1, d_intensity, bias=True)
-        self.weight_gen = ClampLinear(1, d_intensity, clamp_min=-0.10, bias=True)
+        self.weight_gen = ClampLinear(1, d_intensity, clamp_min=None, bias=True)
         # self.weight_gen = NonNegLinear(1, d_intensity,bias=True)
         # Should we use the output of LSTM as the weight of the dynamic linear layer?
         # self.time_weight = nn.Linear(1, d_history, bias=True)
-        self.time_weight = ClampLinear(1, d_history, clamp_min=-0.10, bias=True)
+        self.time_weight = ClampLinear(1, d_history, clamp_min=None, bias=True)
         # self.time_weight = NonNegLinear(1, d_history,bias=True)
 
         self.time = NonNegLinear(1, d_history * num_layers, bias=False)

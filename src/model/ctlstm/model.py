@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from .ctlstm import CTLSTM
 
 class CTLSTMwrapper(nn.Module):
