@@ -12,10 +12,12 @@ class FullyNNModel(nn.Module):
                  d_intensity,
                  dropout,
                  rnn_layers,
-                 mlp_layers):
+                 mlp_layers,
+                 device):
         super(FullyNNModel, self).__init__()
+        self.device = device
         self.model = FullyNN(d_history, d_intensity,
-                                dropout, rnn_layers, mlp_layers)
+                                dropout, rnn_layers, mlp_layers, device)
 
     def forward(self, input_time, input_result):
         input_result.requires_grad = True
@@ -43,7 +45,8 @@ class FullyNNModel(nn.Module):
         model.train()
         optimizer.zero_grad()
         intensity_integral, intensity = model(
-                minibatch[0].to(device), minibatch[1].to(device))
+                minibatch[0].to(device), minibatch[1].to(device)
+        )
     
         loss = loss_f(
             intensity=intensity, intensity_integral=intensity_integral

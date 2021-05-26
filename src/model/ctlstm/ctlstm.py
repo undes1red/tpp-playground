@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from .cont_time_cell import CTLSTMCell
 
 class CTLSTM(nn.Module):
-    def __init__(self, hidden_dim, event_num, beta):
+    def __init__(self, hidden_dim, event_num, beta, mc_sample_num, device):
         super(CTLSTM, self).__init__()
 
         # In current dataset, there is no mark information. Currently, this CTLSTM implementation has
@@ -13,28 +13,32 @@ class CTLSTM(nn.Module):
 
         # Initial
         # These three vectors refer to initial hidden state(h(t)), initial memory state(c(t)) and initial memory base state(\bar(c)(t)).
-        self.h_0 = torch.zeros(hidden_dim)
-        self.c_0 = torch.zeros(hidden_dim)
-        self.cb_0 = torch.zeros(hidden_dim)
-
+        self.hidden_dim = hidden_dim
+        self.device = device
         self.beta = beta
+        self.mc_sample_num = mc_sample_num
+        self.mc_sample_num_eval = max(1.0, mc_sample_num)
+        self.eps = torch.finfo(float).eps
+    
+        self.h_0 = torch.zeros(self.hidden_dim, device = self.device)
+        self.c_0 = torch.zeros(self.hidden_dim, device = self.device)
+        self.cb_0 = torch.zeros(self.hidden_dim, device = self.device)
 
         # Intensity part
-        self.rnn_cell = CTLSTMCell(hidden_dim)
+        self.rnn_cell = CTLSTMCell(hidden_dim, device = self.device)
 
         # Mark part
         # The definition of a event sequences in CTLSTM:
         # <BOS> <> <> <> <> ... <> <> <EOS>
         # The pad event here is confusing.
-        self.event_num = event_num + 3
+        self.event_num = event_num
         self.idx_BOS = self.event_num
         self.idx_EOS = self.event_num + 1
         self.idx_PAD = self.event_num + 2
-        self.event_range = torch.arange(0, event_num).unsqueeze(-1)
+        self.event_range = torch.arange(0, event_num, device = self.device)
 
-        self.mark = nn.Embedding(self.event_num, hidden_dim)
-        self.intensity = nn.Linear(self.hidden_dim, 1, bias = False)
-        self.s = nn.Parameter([1.], requires_grad = True)
+        self.mark = nn.Embedding(self.event_num + 3, self.hidden_dim).to(self.device)
+        self.intensity = nn.Linear(self.hidden_dim, 1, bias = False).to(self.device)
     
     def forward(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, eval_tag=False): 
         """
@@ -106,9 +110,9 @@ class CTLSTM(nn.Module):
         '''
         batch_size, length= x_event.shape
         
-        cell_t_i_minus = self.c_0.unsqueeze(0).expand(batch_size, self.hidden_dim)
-        cell_bar_im1 = self.cb_0.unsqueeze(0).expand(batch_size, self.hidden_dim)
-        hidden_t_i_minus = self.h_0.unsqueeze(0).expand(batch_size, self.hidden_dim)
+        cell_t_i_minus = self.c_0.unsqueeze(0).expand(batch_size, self.hidden_dim).to(self.device)
+        cell_bar_im1 = self.cb_0.unsqueeze(0).expand(batch_size, self.hidden_dim).to(self.device)
+        hidden_t_i_minus = self.h_0.unsqueeze(0).expand(batch_size, self.hidden_dim).to(self.device)
         
         all_cell, all_cell_bar = [], []
         all_gate_output, all_gate_decay = [], []
@@ -166,7 +170,7 @@ class CTLSTM(nn.Module):
 		or at the sampled times 
 		e.g., for MLE, they are sampled times for Monte-Carlo approx 
 		"""
-        embedding = self.self.mark(event_tensor)
+        embedding = self.mark(event_tensor)
         # batch_size x T+1 x N (N can be 1)
         _, all_h_t = self.rnn_cell.decay(
 			all_cell, all_cell_bar, all_gate_decay, all_gate_output, dtime_tensor)

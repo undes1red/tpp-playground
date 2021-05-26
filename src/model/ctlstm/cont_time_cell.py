@@ -5,11 +5,12 @@ import torch.nn.functional as F
 
 class CTLSTMCell(nn.Module):
 
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, device):
         super(CTLSTMCell, self).__init__()
 
+        self.device = device
         self.hidden_dim = hidden_dim
-        self.linear = nn.Linear(hidden_dim * 2, hidden_dim * 7, bias=True)
+        self.linear = nn.Linear(hidden_dim * 2, hidden_dim * 7, bias=True).to(device)
 
 
     def forward(

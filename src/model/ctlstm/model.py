@@ -3,9 +3,10 @@ import torch.nn as nn
 from .ctlstm import CTLSTM
 
 class CTLSTMwrapper(nn.Module):
-    def __init__(self, hidden_dim, event_num = 1, beta = 1):
+    def __init__(self, hidden_dim, device, mc_sample_num = 1., event_num = 1, beta = 1):
         super(CTLSTMwrapper, self).__init__()
-        self.model = CTLSTM(hidden_dim = hidden_dim, event_num = event_num, beta = beta)
+        self.device = device
+        self.model = CTLSTM(hidden_dim = hidden_dim, event_num = event_num, beta = beta, device = device, mc_sample_num = mc_sample_num)
     
     def forward(self, minibatch, eval_tag):
         '''
@@ -20,8 +21,8 @@ class CTLSTMwrapper(nn.Module):
 
         event_tensor, dtime_tensor, token_num_tensor, duration_tensor = minibatch
 
-        return self.model(event_tensor = event_tensor, dtime_tensor = dtime_tensor, 
-                          token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, 
+        return self.model(event_tensor = event_tensor.to(self.device), dtime_tensor = dtime_tensor.to(self.device), 
+                          token_num_tensor = token_num_tensor.to(self.device), duration_tensor = duration_tensor.to(self.device), 
                           eval_tag = eval_tag)
 
     @staticmethod
@@ -30,11 +31,12 @@ class CTLSTMwrapper(nn.Module):
     
         model.train()
         optimizer.zero_grad()
-        intensity_integral, intensity = model(
-                minibatch[0].to(device), eval_tag = False)
+        log_likelihood = model(
+            minibatch[0], eval_tag = False
+        )
     
         loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
+            value = log_likelihood
         )
         loss.backward()
         optimizer.step_and_update_lr()
@@ -49,12 +51,12 @@ class CTLSTMwrapper(nn.Module):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        intensity_integral, intensity = model(
-            minibatch.to(device), eval_tag = True
+        log_likelihood = model(
+            minibatch[0], eval_tag = True
         )
     
         loss = loss_f(
-            intensity=intensity, intensity_integral=intensity_integral
+            value = log_likelihood
         )
     
         loss = loss.item()

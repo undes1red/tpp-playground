@@ -27,11 +27,11 @@ def evaluation(data, model, model_class, desc, device):
     return sum_loss/len(data), sum_fact/len(data)
 
 
-def train(model, model_class, training_data, evaluation_data, test_data, optimizer, device, opt):
+def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix):
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
-    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'd_history', 'd_intensity', 'rnn_layers', 'mlp_layers')
+    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)
     if not os.path.exists(os.path.join(opt.save_model, 'output' + folder_suffix)):
         os.mkdir(os.path.join(opt.save_model, 'output' + folder_suffix))
 
@@ -59,7 +59,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
 
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        train_loss, train_fact = model_class.train_step(model, data, optimizer, device)
+        train_loss, train_fact = model_class.train_step(model, data, optimizer, device = opt.device)
         report_loss_sum += train_loss
         report_fact_sum += train_fact
     
@@ -75,12 +75,12 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             
         if current_step % opt.n_evaluation_steps == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
-            eva_loss, eva_fact = evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device)
+            eva_loss, eva_fact = evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device)
             print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss,
                                relative_loss=eva_loss-eva_fact,
                                average_lr=optimizer.get_lr(), num_format=num_format)
 
-            test_loss, test_fact = evaluation(test_data, model, model_class, '  - (Testing)   ', device)
+            test_loss, test_fact = evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device)
             print_performances(logger = logger, procedure='Test', absolute_loss=test_loss,
                                relative_loss=test_loss-test_fact, average_lr=optimizer.get_lr(), num_format=num_format)
     
@@ -197,12 +197,13 @@ def main():
         raise logger.exception("Wrong input data path.")
 
     model_param = read_json(opt.model_json)
+    param_names = list(model_param.keys())
     logger.info(f'The input model hyperparameters are {model_param}')
     # Load model
     model_class = get_model(opt.model_name)
-    model = model_class(
+    model = model_class(device = opt.device,
         **model_param
-    ).to(opt.device)
+    )
 
     logger.info(opt)
     logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(training_data):5.5f}')
@@ -214,8 +215,8 @@ def main():
     # If you want to use another learning rate scheduler, plz modify it in src.optim.
     sched_optimizer = ScheduledOptim(opt, model)
 
-    train(model, model_class, training_data, evaluation_data,
-          test_data, sched_optimizer, opt.device, opt)
+    train(model = model, model_class = model_class, training_data = training_data, evaluation_data = evaluation_data,
+          test_data = test_data, optimizer = sched_optimizer, opt = opt, model_suffix = param_names)
 
 
 if __name__ == '__main__':
