@@ -177,6 +177,8 @@ def main():
 
     if torch.__version__ == '1.4.0':
         raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
+    if torch.__version__ == '1.7.1':
+        raise logger.exception('Due to a possible GPU memory leak, we do not suggest to use pytorch 1.7.1 against this framework.')
 
     # Reproducibility
     if opt.no_seed:
