@@ -29,7 +29,7 @@ class CTLSTMwrapper(nn.Module):
         ''' Epoch operation in training phase'''
     
         model.train()
-        optimizer.zero_grad()
+            
         log_likelihood = model(
             minibatch[0], eval_tag = False
         )
@@ -40,6 +40,7 @@ class CTLSTMwrapper(nn.Module):
         loss.backward()
         if update_or_not:
             optimizer.step_and_update_lr()
+            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[1].sum()

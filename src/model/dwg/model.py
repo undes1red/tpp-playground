@@ -42,7 +42,7 @@ class TemporalModel(nn.Module):
     def train_step(model, minibatch, optimizer, device, update_or_not):
         ''' Epoch operation in training phase'''
         model.train()
-        optimizer.zero_grad()
+
         intensity_integral, intensity = model(
                 minibatch[0].to(device), minibatch[1].to(device)
         )
@@ -53,6 +53,7 @@ class TemporalModel(nn.Module):
         loss.backward()
         if update_or_not:
             optimizer.step_and_update_lr()
+            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[2].sum()

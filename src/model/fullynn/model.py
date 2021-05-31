@@ -43,7 +43,7 @@ class FullyNNModel(nn.Module):
         ''' Epoch operation in training phase'''
     
         model.train()
-        optimizer.zero_grad()
+            
         intensity_integral, intensity = model(
                 minibatch[0].to(device), minibatch[1].to(device)
         )
@@ -54,6 +54,7 @@ class FullyNNModel(nn.Module):
         loss.backward()
         if update_or_not:
             optimizer.step_and_update_lr()
+            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[2].sum()

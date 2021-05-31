@@ -18,7 +18,7 @@ def evaluation(data, model, model_class, desc, device):
     data_itr = iter(data)
     sum_loss, sum_fact = 0, 0
     
-    for _ in tqdm(r, desc=desc, leave=False):
+    for _ in tqdm(r, desc=desc, leave=True):
         minibatch = next(data_itr)
         eva_loss, fact_ev = model_class.evaluation_step(model, minibatch, device)
         sum_loss += eva_loss
@@ -56,6 +56,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
+    optimizer.zero_grad()
     do_update = True
 
     for current_step in tqdm(step_range, desc=desc, leave=False):
