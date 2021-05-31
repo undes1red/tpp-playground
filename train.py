@@ -56,10 +56,12 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
+    do_update = True
 
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        train_loss, train_fact = model_class.train_step(model, data, optimizer, device = opt.device)
+        do_update = current_step % opt.agg_update_step == 0
+        train_loss, train_fact = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = do_update)
         report_loss_sum += train_loss
         report_fact_sum += train_fact
     
@@ -125,6 +127,9 @@ def main():
     # Input data
     parser.add_argument('--data_path', action=path, default=None, help='Input dataset file path.')
     parser.add_argument('--dataset_name', default=None, help='Input dataset class name.')
+    parser.add_argument('--n_worker', default=0, type=int,
+              help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
+                  if you meet \'received 0 items of ancdata\' exception.')
 
     # Model save
     parser.add_argument('--log', action=path, default=None, help='Log file path.')
@@ -136,6 +141,8 @@ def main():
     parser.add_argument('--n_evaluation_steps', type=int, default=200, help='The number of steps that follows a model evaluation.')
     parser.add_argument('--n_report_steps', type = int, default=200, help='After a given number of steps, report the current model training status.')
     parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
+    parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches to do a optimizer step. The number of practical training steps is \
+                                                                        agg_update_step * n_training_steps')
 
     # Model-related hyperparameters
     parser.add_argument('--model_name', default=None,
@@ -160,6 +167,13 @@ def main():
     parser.add_argument('--last_epoch', type=int, default=-1)
 
     opt = parser.parse_args()
+
+    if opt.agg_update_step > 1:
+        logger.warning(f'Gradient aggregation is detected! The number of practical training steps is multiplied by {opt.agg_update_step}!')
+        opt.n_training_steps *= opt.agg_update_step
+        opt.n_evaluation_steps *= opt.agg_update_step
+        opt.n_report_steps *= opt.agg_update_step
+        opt.n_warmup_steps *= opt.agg_update_step
 
     if torch.__version__ == '1.4.0':
         raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')

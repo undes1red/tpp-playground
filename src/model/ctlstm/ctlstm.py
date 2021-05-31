@@ -66,9 +66,9 @@ class CTLSTM(nn.Module):
         mc_sample_num_tensor = (token_num_tensor.float() * mc_sample_num).long()
         all_c_p_noise, all_cb_p_noise, all_d_p_noise, all_o_p_noise, \
         all_dtime_noise, all_mask_noise = self.get_mc_samples(
-			all_c_p_actual, all_cb_p_actual, 
-			all_d_p_actual, all_o_p_actual, 
-			dtime_tensor[:, 1:], mc_sample_num_tensor, 
+			all_c_p_actual, all_cb_p_actual,
+			all_d_p_actual, all_o_p_actual,
+			dtime_tensor[:, 1:], mc_sample_num_tensor,
 			duration_tensor, mask_tensor
 		)
 		# B x T' (x D)
@@ -183,7 +183,7 @@ class CTLSTM(nn.Module):
 
         return intensities
         
-    def get_mc_samples(self, 
+    def get_mc_samples(self,
         all_cell, all_cell_bar, all_gate_decay, all_gate_output, dtime_tensor, 
         mc_sample_num_tensor, duration_tensor, mask_tensor): 
         """

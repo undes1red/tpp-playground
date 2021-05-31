@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 from .ctlstm import CTLSTM
 
@@ -26,7 +25,7 @@ class CTLSTMwrapper(nn.Module):
                           eval_tag = eval_tag)
 
     @staticmethod
-    def train_step(model, minibatch, optimizer, device):
+    def train_step(model, minibatch, optimizer, device, update_or_not):
         ''' Epoch operation in training phase'''
     
         model.train()
@@ -39,7 +38,8 @@ class CTLSTMwrapper(nn.Module):
             value = log_likelihood
         )
         loss.backward()
-        optimizer.step_and_update_lr()
+        if update_or_not:
+            optimizer.step_and_update_lr()
     
         loss = loss.item()
         fact = minibatch[1].sum()
@@ -69,7 +69,6 @@ def loss_f(value):
     The definition of loss.
     '''
     loss = -value
-    loss = torch.clamp(loss, max=10)
     loss = loss.sum(axis = -1)
     
     return loss
