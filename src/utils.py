@@ -66,42 +66,34 @@ class path(argparse.Action):
 
 def print_performances(logger, procedure, num_format = None, **kwargs):
     if num_format is None or len(num_format) != len(kwargs):
-        num_format = [':5.2f'] * len(kwargs)
+        logger_.exception('Bad num_format dictoinary.')
 
     info = f'{procedure:12} '
-    for idx, key in enumerate(kwargs.keys()):
-        info += ' ,' + key + ': {' + key + num_format[idx] + '}'
+    for key in kwargs.keys():
+        info += ' ,' + key + ': {' + key + num_format[key] + '}'
     logger.info(info.format_map(kwargs))
 
 
 class FileLogger(object):
-    def __init__(self, print_item, **kwargs):
+    def __init__(self, print_format, **kwargs):
         self.loggers = dict()
         for name, path in kwargs.items():
             self.loggers[name] = getLogger(name, path)
-        self.print_item = print_item
+        self.print_format = print_format
+        self.print_item = self.print_format.keys()
 
         # Initial info
-        if isinstance(self.print_item, list):
-            for logger in self.loggers.values():
-                logger.info(', '.join(self.print_item))
-        elif isinstance(self.print_item, dict):
-            for name in self.print_item.keys():
-                self.loggers[name].info(', '.join(self.print_item[name]))
-        else:
-            logger_.exception(
-                'Wrong log index input type. The expected types are list or dict. Please check your input of print_item.'
-            )
+        for logger in self.loggers.values():
+            logger.info(', '.join(self.print_item))
 
-    def print(self, logger_name, num_format = None, **kwargs):
+    def print(self, logger_name, **kwargs):
         logger = self.loggers[logger_name]
-        if num_format is None or len(num_format) != len(kwargs):
-            num_format = [':5.2f'] * len(kwargs)
 
         info = ''
-        for idx, key in enumerate(self.print_item):
-            info += '{' + key + num_format[idx] + '}, '
+        for key in self.print_item:
+            info += '{' + key + self.print_format[key] + '}, '
         logger.info(info.format_map(kwargs))
+
 
 def read_json(json_path):
     with open(json_path, 'r') as f:
@@ -114,3 +106,52 @@ def suffix(opt, *args):
         output += ('_' + str(getattr(opt, item)))
     
     return output
+
+def lst_add_lst(list1, list2):
+    assert len(list1) == len(list2)
+    return [sum(x) for x in zip(list1, list2)]
+
+def lst_divide(lst, denominator):
+    if isinstance(denominator, list):
+        assert len(lst) == len(denominator)
+        return [x/y for x, y in zip(lst, denominator)]
+    return [x/denominator for x in lst]
+
+def evaluation(data, model, model_class, desc, device, output_length):
+    r = range(1, len(data) + 1)
+    data_itr = iter(data)
+    sum_ = [0] * output_length
+    
+    # for _ in tqdm(r, desc=desc, disable=True):
+    for _ in r:
+        minibatch = next(data_itr)
+        batch_sum = model_class.evaluation_step(model, minibatch, device)
+        sum_ = lst_add_lst(sum_, batch_sum)
+
+    return lst_divide(sum_, len(data))
+
+class Metric():
+    def __init__(self, metric_number, smaller_is_better = None):
+        self.metric_number = metric_number
+        self.map = {True:1, False: -1}
+        self.best_metric = [math.inf] * self.metric_number
+        if smaller_is_better is None:
+            self.mask = [1] * self.metric_number
+        else:
+            assert len(smaller_is_better) == self.metric_number
+            self.mask = [self.map[item] for item in smaller_is_better]
+    
+    def compare(self, input_metric):
+        assert len(input_metric) == len(self.mask)
+        tmp = lst_divide(input_metric, self.mask)
+        output = True
+
+        for input_number, recorded in zip(tmp, self.best_metric):
+            if input_number >= recorded:
+                output = False
+                break
+        
+        if output:
+            self.best_metric = input_metric
+        
+        return output

@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 from itertools import cycle
 
-from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix
+from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
 
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
@@ -13,19 +13,21 @@ from src.data import prepare_dataloaders
 
 logger = getLogger(__name__)
 
-def evaluation(data, model, model_class, desc, device):
-    r = range(1, len(data) + 1)
-    data_itr = iter(data)
-    sum_loss, sum_fact = 0, 0
-    
-    for _ in tqdm(r, desc=desc, leave=True):
-        minibatch = next(data_itr)
-        eva_loss, fact_ev = model_class.evaluation_step(model, minibatch, device)
-        sum_loss += eva_loss
-        sum_fact += fact_ev
 
-    return sum_loss/len(data), sum_fact/len(data)
+def postprocess(input):
+    return [input[0], input[0] - input[1]]
 
+def log_print_format(input):
+    format_dict = {}
+    format_dict['absolute_loss'] = input[0]
+    format_dict['relative_loss'] = input[1]
+    return format_dict
+
+def logfile_print_format(input):
+    format_dict = {}
+    format_dict['absolute loss'] = input[0]
+    format_dict['relative loss'] = input[1]
+    return format_dict
 
 def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix):
     ''' Start training '''
@@ -45,14 +47,16 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
-        log_item = ['Step', 'Loss', 'Gap']
-        log_format = ['', ':8.5f', ':8.5f']
+        logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
 
-        file_logger = FileLogger(log_item, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
+        file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
-    num_format = [':8.5f', ':8.5f', ':2.5f']
-    eva_losses_min = math.inf
-    report_loss_sum, report_fact_sum = 0, 0
+    # What you should modify
+    log_format = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
+    output_length = 2
+    metric_checker = Metric(2)
+    report_sum = [0] * output_length # [absolute loss sum, relative loss sum]
+    
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
@@ -62,50 +66,45 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
         do_update = current_step % opt.agg_update_step == 0
-        train_loss, train_fact = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = do_update)
-        report_loss_sum += train_loss
-        report_fact_sum += train_fact
+        step_result = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = do_update)
+        report_sum = lst_add_lst(report_sum, step_result)
     
         if current_step % opt.n_report_steps == 0:
             logger.warning(f'Brief training status report at step {current_step}.')
-            print_performances(logger = logger, procedure='Training', absolute_loss=report_loss_sum/opt.n_report_steps,
-                               relative_loss=(report_loss_sum-report_fact_sum)/opt.n_report_steps,
-                               average_lr=optimizer.get_lr(), num_format=num_format)
+            report_sum = postprocess(lst_divide(report_sum, opt.n_report_steps))
+            print_performances(logger = logger, procedure='Training', num_format = log_format, **log_print_format(report_sum))
             if file_logger:
-                file_logger.print(logger_name = 'training_log', num_format = log_format, 
-                                  Step = current_step, Loss = report_loss_sum/opt.n_report_steps, Gap = (report_loss_sum - report_fact_sum)/opt.n_report_steps)
-            report_loss_sum, report_fact_sum = 0, 0
+                file_logger.print(logger_name = 'training_log', step = current_step, **logfile_print_format(report_sum))
+            report_sum = [0] * output_length
             
         if current_step % opt.n_evaluation_steps == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
-            eva_loss, eva_fact = evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device)
-            print_performances(logger = logger, procedure='Evaluation', absolute_loss=eva_loss,
-                               relative_loss=eva_loss-eva_fact,
-                               average_lr=optimizer.get_lr(), num_format=num_format)
+            eva_report = postprocess(
+                evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device, output_length = output_length)
+            )
+            print_performances(logger = logger, procedure='Evaluation', num_format = log_format, **log_print_format(eva_report))
 
-            test_loss, test_fact = evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device)
-            print_performances(logger = logger, procedure='Test', absolute_loss=test_loss,
-                               relative_loss=test_loss-test_fact, average_lr=optimizer.get_lr(), num_format=num_format)
-    
+            test_report = postprocess(
+                evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device, output_length = output_length)
+            )
+            print_performances(logger = logger, procedure='Test', num_format = log_format, **log_print_format(test_report))
+            
             # We will store the checkpoint after model evaluation.
             checkpoint = {'step': current_step, 'settings': opt, 'model': model.state_dict()}
         
             if opt.save_model and current_step > opt.n_warmup_steps:
                 if opt.save_mode == 'all':
                     model_name = os.path.join(
-                            opt.save_model, ('_tr_loss_{tr_loss:3.3f}' + '_ev_loss_{eva_loss:3.3f}' + '.chkpt').format(tr_loss=train_loss, eva_loss=eva_loss))
+                            opt.save_model, (f'_training_step_{current_step}' + '.chkpt'))
                     torch.save(checkpoint, model_name)
                 elif opt.save_mode == 'best':
                     model_name = os.path.join(opt.save_model, 'output' + folder_suffix, 'checkpoint.chkpt')
-                    if eva_loss < eva_losses_min and current_step > opt.n_warmup_steps:
-                            eva_losses_min = eva_loss
+                    if metric_checker.compare(eva_report) and current_step > opt.n_warmup_steps:
                             torch.save(checkpoint, model_name)
                             logger.info('    - The checkpoint file has been updated.')
             if file_logger:
-                file_logger.print(logger_name = 'evaluation_log', num_format = log_format, 
-                                  Step = current_step, Loss = eva_loss, Gap = eva_loss - eva_fact)
-                file_logger.print(logger_name = 'test_log', num_format = log_format, 
-                                  Step = current_step, Loss = test_loss, Gap = test_loss - test_fact)
+                file_logger.print(logger_name = 'evaluation_log', step = current_step, **logfile_print_format(eva_report))
+                file_logger.print(logger_name = 'test_log', step = current_step, **logfile_print_format(test_report))
     
     logger.warning('Training finished!')
 
