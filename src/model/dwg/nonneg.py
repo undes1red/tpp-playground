@@ -61,7 +61,7 @@ class ClampLinear(nn.Linear):
     Alleviate the negative gradient issue.
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
-    def __init__(self, in_features, out_features, clamp_min = -1, bias=True):
+    def __init__(self, in_features, out_features, clamp_min = None, bias=True):
         super(ClampLinear, self).__init__(in_features, out_features, bias)
         self.clamp_min = clamp_min
 

@@ -4,16 +4,20 @@ import torch.nn.functional as F
 from .nonneg import NonNegLinear, ClampLinear
 from .activate import Log
 
-
+TA = {
+    'log': Log(),
+    'tanh': nn.Tanh()
+}
 class DynamicMLP(nn.Module):
     '''
     This class implements a dynamic MLP which weight value would change depending on the history data. 
     The purpose is try to force the model output at point 0 is forever 0.
     '''
 
-    def __init__(self, d_history, d_intensity, dropout, num_layers, mlp_layers, device):
+    def __init__(self, d_history, d_intensity, dropout, num_layers, mlp_layers, device, time_activation, no_time_weight, no_scale):
         super(DynamicMLP, self).__init__()
         self.device = device
+        self.no_time_weight = no_time_weight
 
         self.history = nn.LSTM(input_size=1, hidden_size=d_history,
                                num_layers=num_layers, batch_first=True, dropout=dropout).to(self.device)
@@ -35,12 +39,16 @@ class DynamicMLP(nn.Module):
 
         # Activate functions
         self.activate = nn.Softplus()
-        self.activate_factor = nn.Parameter(torch.tensor([0.], device = self.device))
         # Can tanh or sigmoid hold the trend of increasing intensity better?
         # Or we should let our model do this by itself.
-        self.activate_time = Log()
+        self.activate_time = TA[time_activation]
         # self.activate_time = nn.Tanh()
-        self.activate_time_factor = nn.Parameter(torch.tensor([0.], device = self.device))
+        if no_scale:
+            self.activate_factor = torch.tensor([0.], device = self.device)
+            self.activate_time_factor = torch.tensor([0.], device = self.device)
+        else:
+            self.activate_factor = nn.Parameter(torch.tensor([0.], device = self.device))
+            self.activate_time_factor = nn.Parameter(torch.tensor([0.], device = self.device))
 
     def forward(self, time_history, time_happen):
         '''
@@ -66,7 +74,7 @@ class DynamicMLP(nn.Module):
         # weight generation
         time_history = time_history.unsqueeze(-1)
         _, (hidden, _) = self.history(time_history)
-        hidden = hidden + time_weight.unsqueeze(0)
+        hidden = hidden + time_weight.unsqueeze(0) if not self.no_time_weight else torch.zeros_like(hidden)
         hidden = hidden.transpose(0, 1).reshape(time_history.shape[0], -1, 1)
         weight = self.weight_gen(hidden)
         weight = self.activate(weight)

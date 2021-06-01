@@ -12,12 +12,15 @@ class TemporalModel(nn.Module):
                  dropout,
                  rnn_layers,
                  mlp_layers,
+                 time_activation,
+                 no_time_weight,
+                 no_scale,
                  device):
         super(TemporalModel, self).__init__()
         self.device = device
-
-        self.model = DynamicMLP(d_history, d_intensity,
-                                dropout, rnn_layers, mlp_layers, device = device)
+        self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, 
+                                num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
+                                no_time_weight = no_time_weight, no_scale = no_scale, device = device)
 
     def forward(self, input_time, input_result):
         input_result.requires_grad = True

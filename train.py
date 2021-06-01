@@ -1,6 +1,6 @@
 # The model training script
 
-import argparse, os, math, random
+import argparse, os, random
 import torch
 from tqdm import tqdm
 from itertools import cycle
@@ -56,7 +56,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     output_length = 2
     metric_checker = Metric(2)
     report_sum = [0] * output_length # [absolute loss sum, relative loss sum]
-    
+
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
