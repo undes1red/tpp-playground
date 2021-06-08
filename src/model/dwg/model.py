@@ -80,7 +80,10 @@ class TemporalModel(nn.Module):
         fact = minibatch[2].sum()
     
         return loss, fact
-
+        
+    @staticmethod
+    def postprocess(input):
+        return [input[0], input[0] - input[1]]
 
 
 def loss_f(intensity, intensity_integral):

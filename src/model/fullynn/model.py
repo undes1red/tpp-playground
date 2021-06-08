@@ -13,11 +13,13 @@ class FullyNNModel(nn.Module):
                  dropout,
                  rnn_layers,
                  mlp_layers,
+                 nonlinear,
                  device):
         super(FullyNNModel, self).__init__()
         self.device = device
-        self.model = FullyNN(d_history, d_intensity,
-                                dropout, rnn_layers, mlp_layers, device)
+        self.model = FullyNN(d_history = d_history, d_intensity = d_intensity,
+                             dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
+                             nonlinear = nonlinear, device = device)
 
     def forward(self, input_time, input_result):
         input_result.requires_grad = True
@@ -78,6 +80,10 @@ class FullyNNModel(nn.Module):
         fact = minibatch[2].sum()
     
         return loss, fact
+
+    @staticmethod
+    def postprocess(input):
+        return [input[0], input[0] - input[1]]
 
 def loss_f(intensity, intensity_integral):
     '''

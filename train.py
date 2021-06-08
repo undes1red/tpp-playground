@@ -1,26 +1,29 @@
 # The model training script
 
 import argparse, os, random
-import torch
 from tqdm import tqdm
 from itertools import cycle
 
-from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+import sys
+import numpy as np
+import datetime
 
+from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric, ExponentialMovingAverage
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
 from src.data import prepare_dataloaders
 
 logger = getLogger(__name__)
 
-
-def postprocess(input):
-    return [input[0], input[0] - input[1]]
-
 def log_print_format(input):
     format_dict = {}
     format_dict['absolute_loss'] = input[0]
     format_dict['relative_loss'] = input[1]
+    format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
     return format_dict
 
 def logfile_print_format(input):
@@ -29,7 +32,9 @@ def logfile_print_format(input):
     format_dict['relative loss'] = input[1]
     return format_dict
 
-def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix):
+logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
+
+def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix, rank):
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
@@ -45,14 +50,13 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         log_eva_file = os.path.join(opt.log, log_folder, 'evaluate.log')
         log_test_file = os.path.join(opt.log, log_folder, 'test.log')
 
-        logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
+        if rank == 0:
+            logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
-        logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
 
         file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
     # What you should modify
-    log_format = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
     output_length = 2
     metric_checker = Metric(2)
     report_sum = [0] * output_length # [absolute loss sum, relative loss sum]
@@ -63,31 +67,47 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     optimizer.zero_grad()
     do_update = True
 
+    if rank == 0:
+        ema = ExponentialMovingAverage(model)
+
+    if opt.profiler:
+        profiler = torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                                          schedule=torch.profiler.schedule(wait=1,warmup=1,active=2),
+                                          on_trace_ready=torch.profiler.tensorboard_trace_handler(dir_name = os.path.join(opt.log, 'tensorboard')),with_stack=True)
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
         do_update = current_step % opt.agg_update_step == 0
         step_result = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = do_update)
+
+        if rank == 0:
+            if current_step > 0.8 * opt.n_training_steps:
+                ema.apply()
+            else:
+                ema.apply(decay=0.0)
+
         report_sum = lst_add_lst(report_sum, step_result)
+        if opt.profiler:
+            profiler.step()
     
-        if current_step % opt.n_report_steps == 0:
+        if current_step % opt.n_report_steps == 0 and rank == 0:
             logger.warning(f'Brief training status report at step {current_step}.')
-            report_sum = postprocess(lst_divide(report_sum, opt.n_report_steps))
-            print_performances(logger = logger, procedure='Training', num_format = log_format, **log_print_format(report_sum))
+            report_sum = model_class.postprocess(lst_divide(report_sum, opt.n_report_steps))
+            print_performances(logger = logger, procedure='Training', **log_print_format(report_sum))
             if file_logger:
                 file_logger.print(logger_name = 'training_log', step = current_step, **logfile_print_format(report_sum))
             report_sum = [0] * output_length
             
-        if current_step % opt.n_evaluation_steps == 0:
+        if current_step % opt.n_evaluation_steps == 0 and rank == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
-            eva_report = postprocess(
+            eva_report = model_class.postprocess(
                 evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device, output_length = output_length)
             )
-            print_performances(logger = logger, procedure='Evaluation', num_format = log_format, **log_print_format(eva_report))
+            print_performances(logger = logger, procedure='Evaluation', **log_print_format(eva_report))
 
-            test_report = postprocess(
+            test_report = model_class.postprocess(
                 evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device, output_length = output_length)
             )
-            print_performances(logger = logger, procedure='Test', num_format = log_format, **log_print_format(test_report))
+            print_performances(logger = logger, procedure='Test', **log_print_format(test_report))
             
             # We will store the checkpoint after model evaluation.
             checkpoint = {'step': current_step, 'settings': opt, 'model': model.state_dict()}
@@ -105,11 +125,106 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             if file_logger:
                 file_logger.print(logger_name = 'evaluation_log', step = current_step, **logfile_print_format(eva_report))
                 file_logger.print(logger_name = 'test_log', step = current_step, **logfile_print_format(test_report))
-    
-    logger.warning('Training finished!')
+    if rank == 0:
+        logger.warning('Training finished!')
 
 
-def main():
+def _main(rank, logger, opt):
+
+    if opt.agg_update_step > 1 and rank == 0:
+        logger.warning(f'Gradient aggregation is detected! The number of practical training steps is multiplied by {opt.agg_update_step}!')
+        opt.n_training_steps *= opt.agg_update_step
+        opt.n_evaluation_steps *= opt.agg_update_step
+        opt.n_report_steps *= opt.agg_update_step
+        opt.n_warmup_steps *= opt.agg_update_step
+
+    if torch.__version__ == '1.4.0' and rank == 0:
+        raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
+
+    # Reproducibility
+    if opt.no_seed:
+        opt.seed = random.randint(0, 2**16) + rank
+        if rank == 0:
+            logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
+    torch.manual_seed(opt.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Debug
+    torch.autograd.set_detect_anomaly(True)
+
+    if not opt.log and not opt.save_model and rank == 0:
+        logger.warning('No experiment result will be saved.')
+
+    # Cuda
+    opt.device = torch.device(
+        f'cuda:{rank:d}' if opt.cuda and torch.cuda.is_available() else 'cpu')
+
+    if rank == 0:
+        if opt.device.type == 'cuda':
+            logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                logger.info('{} \t Memory: {:.2f}GB'.format(props.name, props.total_memory / (1024**3)))
+        else:
+            logger.info('WARNING: Using device {}'.format(opt.device))
+
+    # Create there dirs if they don't exist.
+    if not os.path.isdir(opt.log):
+        os.makedirs(opt.log)
+    if not os.path.isdir(opt.save_model):
+        os.makedirs(opt.save_model)
+
+    #========= Loading Dataset =========#
+
+    if opt.data_path:
+        training_data, evaluation_data, test_data = prepare_dataloaders(opt)
+        opt.training_size = len(training_data)
+    else:
+        raise logger.exception("Wrong input data path.")
+
+    model_param = read_json(opt.model_json)
+    param_names = list(model_param.keys())
+    if rank == 0:
+        logger.info(f'The input model hyperparameters are {model_param}')
+    # Load model
+    model_class = get_model(opt.model_name)
+    model = model_class(device = opt.device,
+        **model_param
+    )
+    model = DDP(model, device_ids = [rank], find_unused_parameters = True)
+
+    if rank == 0:
+        logger.info(opt)
+        logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(training_data):5.5f}')
+        logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
+
+    opt.__dict__.update(model_param)
+
+    # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
+    # If you want to use another learning rate scheduler, plz modify it in src.optim.
+    sched_optimizer = ScheduledOptim(opt, model)
+
+    train(rank = rank, model = model, model_class = model_class, training_data = training_data, evaluation_data = evaluation_data,
+          test_data = test_data, optimizer = sched_optimizer, opt = opt, model_suffix = param_names)
+
+
+def main(rank, ngpus, opt):
+    dist.init_process_group("nccl", rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+
+    logger = getLogger('__Trainer__')
+
+    try:
+        _main(rank = rank, logger = logger, opt = opt)
+    except:
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+
+    dist.destroy_process_group()
+
+
+if __name__ == '__main__':
     ''' 
     Usage:
     See scripts files in directory scripts/ for examples. Check all arguments via 'python3 train.py --help'
@@ -123,6 +238,11 @@ def main():
                         help='The global random seed.')
     parser.add_argument('--cuda', action='store_true', 
                         help="Set it to true if you want to use GPU.")
+    parser.add_argument('--profiler', action='store_true', 
+                        help="Use a profiler to probe the bottleneck of your model when your model is slow. (Because of pytorch issue #56008, profiler support is now disabled.)")
+    parser.add_argument("--ngpus", type=int, default=1,
+                        help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1.")
+
 
     # Input data
     parser.add_argument('--data_path', action=path, default=None, help='Input dataset file path.')
@@ -167,73 +287,13 @@ def main():
     parser.add_argument('--last_epoch', type=int, default=-1)
 
     opt = parser.parse_args()
-
-    if opt.agg_update_step > 1:
-        logger.warning(f'Gradient aggregation is detected! The number of practical training steps is multiplied by {opt.agg_update_step}!')
-        opt.n_training_steps *= opt.agg_update_step
-        opt.n_evaluation_steps *= opt.agg_update_step
-        opt.n_report_steps *= opt.agg_update_step
-        opt.n_warmup_steps *= opt.agg_update_step
-
-    if torch.__version__ == '1.4.0':
-        raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
-    if torch.__version__ == '1.7.1':
-        raise logger.exception('Due to a possible GPU memory leak, we do not suggest to use pytorch 1.7.1 against this framework.')
-
-    # Reproducibility
-    if opt.no_seed:
-        opt.seed = random.randint(0, 2**16)
-        logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
-    torch.manual_seed(opt.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    # Debug
-    torch.autograd.set_detect_anomaly(True)
-
-    if not opt.log and not opt.save_model:
-        logger.warning('No experiment result will be saved.')
-
-    # Cuda
-    opt.device = torch.device(
-        'cuda' if opt.cuda and torch.cuda.is_available() else 'cpu')
-
-    # Create there dirs if they don't exist.
-    if not os.path.isdir(opt.log):
-        os.makedirs(opt.log)
-    if not os.path.isdir(opt.save_model):
-        os.makedirs(opt.save_model)
-
-    #========= Loading Dataset =========#
-
-    if opt.data_path:
-        training_data, evaluation_data, test_data = prepare_dataloaders(opt)
-        opt.training_size = len(training_data)
-    else:
-        raise logger.exception("Wrong input data path.")
-
-    model_param = read_json(opt.model_json)
-    param_names = list(model_param.keys())
-    logger.info(f'The input model hyperparameters are {model_param}')
-    # Load model
-    model_class = get_model(opt.model_name)
-    model = model_class(device = opt.device,
-        **model_param
-    )
-
-    logger.info(opt)
-    logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(training_data):5.5f}')
-    logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-
-    opt.__dict__.update(model_param)
-
-    # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
-    # If you want to use another learning rate scheduler, plz modify it in src.optim.
-    sched_optimizer = ScheduledOptim(opt, model)
-
-    train(model = model, model_class = model_class, training_data = training_data, evaluation_data = evaluation_data,
-          test_data = test_data, optimizer = sched_optimizer, opt = opt, model_suffix = param_names)
-
-
-if __name__ == '__main__':
-    main()
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
+    logger = getLogger("MP_parser")
+    try:
+        mp.set_start_method("forkserver")
+        mp.spawn(main, args = (opt.ngpus, opt), nprocs=opt.ngpus, join=True)
+    except Exception:
+        import traceback
+        logger.error(traceback.format_exc())
+        sys.exit(1)

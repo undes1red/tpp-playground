@@ -1,12 +1,19 @@
 from functools import reduce
 import math, logging, argparse, os, json
+import torch
 
 import torch.optim.lr_scheduler as lrs
 
 # Logger settings
-def getEventLogger(name):
+def getEventLogger(name, root):
     logger = logging.getLogger(name)
+    if root:
+        logger.parent = None
+        logger.root = logger
+
     logger.setLevel(logging.DEBUG)
+    if (logger.hasHandlers()):
+        logger.handlers.clear()
     # create console handler and set level to debug
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
@@ -19,9 +26,15 @@ def getEventLogger(name):
 
     return logger
 
-def getFileLogger(name, file):
+def getFileLogger(name, file, root):
     logger = logging.getLogger(name)
+    if root:
+        logger.parent = None
+        logger.root = logger
+
     logger.setLevel(logging.DEBUG)
+    if (logger.hasHandlers()):
+        logger.handlers.clear()
     # create console handler and set level to debug
     ch = logging.FileHandler(file, mode = 'w')
     ch.setLevel(logging.DEBUG)
@@ -34,11 +47,11 @@ def getFileLogger(name, file):
 
     return logger
 
-def getLogger(name, file = None):
+def getLogger(name = None, file = None, root = True):
     if file:
-        return getFileLogger(name, file)
+        return getFileLogger(name, file, root)
     else:
-        return getEventLogger(name)
+        return getEventLogger(name, root)
 
 logger_ = getLogger(__name__)
 
@@ -155,3 +168,41 @@ class Metric():
             self.best_metric = input_metric
         
         return output
+
+class ExponentialMovingAverage(object):
+
+    def __init__(self, module, decay=0.999):
+        """Initializes the model when .apply() is called the first time.
+        This is to take into account data-dependent initialization that occurs in the first iteration."""
+        self.decay = decay
+        self.module_params = {n: p for (n, p) in module.named_parameters()}
+        self.ema_params = {n: p.data.clone() for (n, p) in module.named_parameters()}
+        self.nparams = sum(p.numel() for (_, p) in self.ema_params.items())
+
+    def apply(self, decay=None):
+        decay = decay or self.decay
+        with torch.no_grad():
+            for name, param in self.module_params.items():
+                self.ema_params[name] -= (1 - decay) * (self.ema_params[name] - param.data)
+
+    def set(self, named_params):
+        with torch.no_grad():
+            for name, param in named_params.items():
+                self.ema_params[name].copy_(param)
+
+    def replace_with_ema(self):
+        for name, param in self.module_params.items():
+            param.data.copy_(self.ema_params[name])
+
+    def swap(self):
+        for name, param in self.module_params.items():
+            tmp = self.ema_params[name].clone()
+            self.ema_params[name].copy_(param.data)
+            param.data.copy_(tmp)
+
+    def __repr__(self):
+        return (
+            '{}(decay={}, module={}, nparams={})'.format(
+                self.__class__.__name__, self.decay, self.module.__class__.__name__, self.nparams
+            )
+        )

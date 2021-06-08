@@ -1,13 +1,12 @@
 import torch.nn as nn
-import numpy as np
-from .nonneg import NonNegLinear
+from ..fullynn.nonneg import NonNegLinear
 
 TA = {
     'softplus': nn.Softplus,
     'tanh': nn.Tanh
 }
 
-class FullyNN(nn.Module):
+class FullyNNAutoregression(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -18,12 +17,14 @@ class FullyNN(nn.Module):
     '''
 
     def __init__(self, d_history, d_intensity, dropout, rnn_layers, mlp_layers, nonlinear, device):
-        super(FullyNN, self).__init__()
+        super(FullyNNAutoregression, self).__init__()
+        self.d_history = d_history
+        self.d_intensity = d_intensity
 
-        self.rnn = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = rnn_layers, batch_first = True, dropout = dropout).to(device)
+        self.rnn = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = rnn_layers, batch_first = True,
+                           dropout = dropout, proj_size = d_intensity).to(device)
 
         self.hidden_x = NonNegLinear(1, d_intensity, bias = False).to(device)
-        self.hidden_p = nn.Linear(d_history * rnn_layers, d_intensity, bias = True).to(device)
 
         # The original implement counts the hidden_x as one of mlp_layers
         self.mlp = nn.ModuleList([
@@ -36,16 +37,22 @@ class FullyNN(nn.Module):
         self.activate_final = nn.Softplus()
 
 
-    def forward(self, time_history, time_happen):
+    def forward(self, history, target):
         # Reshape hidden output for full connection layers.
-        # hidden: [batch_size, num_rnn_layer * d_history]
-        _, (hidden, _) = self.rnn(time_history.unsqueeze(-1))
-        hidden = hidden.reshape(time_history.shape[0], -1)
+        # The input should contain [BOS] and [EOS]. Their corresponding time should be 0 and the timestamp of the last event adding 0.1. 
+        # (Just like what Mei does in his NHP paper.)
+        
+        minibatch_size, _ = history.shape
 
-        time = self.hidden_x(time_happen)
-        hidden = self.hidden_p(hidden)
+        # original hidden: [batch_size, num_layers * num_directions, d_intensity]
+        # original output: [batch_size, seq_len, num_directions * d_intensity]
+        output, (_, _) = self.rnn(history.unsqueeze(-1))
+        # history [batch_size, sequence_length - 1, d_intensity]
+        output = output.reshape(minibatch_size, -1, self.d_intensity)
 
-        output = self.activate(time + hidden)
+        time = self.hidden_x(target.unsqueeze(-1))
+
+        output = self.activate(time + output)
 
         for layer in self.mlp:
             output = layer(output)

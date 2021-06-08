@@ -65,6 +65,10 @@ class CTLSTMwrapper(nn.Module):
     
         return loss, fact
 
+    @staticmethod
+    def postprocess(input):
+        return [input[0], input[0] - input[1]]
+
 def loss_f(value):
     '''
     The definition of loss.
