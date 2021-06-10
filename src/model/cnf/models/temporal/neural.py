@@ -24,7 +24,10 @@ class IntensityODEFunc(nn.Module):
         return intensity, self.dstate_fn(t, tpp_state)
 
     def get_intensity(self, tpp_state):
-        return torch.sigmoid(self.intensity_fn(tpp_state[..., :self.hdim]) - 2.0) * 50
+        output = tpp_state[..., :self.hdim]
+        output = self.intensity_fn(output) - 2.0
+        output = torch.sigmoid(output) * 50
+        return output
 
 
 class SplitHiddenStateODEFunc(nn.Module):

@@ -1,5 +1,4 @@
 # The model training script
-
 import argparse, os, random
 from tqdm import tqdm
 from itertools import cycle
@@ -110,7 +109,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             print_performances(logger = logger, procedure='Test', **log_print_format(test_report))
             
             # We will store the checkpoint after model evaluation.
-            checkpoint = {'step': current_step, 'settings': opt, 'model': model.state_dict()}
+            checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict()}
         
             if opt.save_model and current_step > opt.n_warmup_steps:
                 if opt.save_mode == 'all':
@@ -147,11 +146,7 @@ def _main(rank, logger, opt):
         if rank == 0:
             logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
     torch.manual_seed(opt.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    # Debug
-    torch.autograd.set_detect_anomaly(True)
+    torch.backends.cudnn.benchmark = True
 
     if not opt.log and not opt.save_model and rank == 0:
         logger.warning('No experiment result will be saved.')

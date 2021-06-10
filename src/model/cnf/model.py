@@ -3,10 +3,8 @@ import torch.nn as nn
 
 from .models import CombinedSpatiotemporalModel, JumpCNFSpatiotemporalModel, SelfAttentiveCNFSpatiotemporalModel, JumpGMMSpatiotemporalModel
 from .models.spatial import GaussianMixtureSpatialModel, IndependentCNF, JumpCNF, SelfAttentiveCNF
-from .models.spatial.cnf import TimeVariableCNF
 from .models.temporal import HomogeneousPoissonPointProcess, HawkesPointProcess, SelfCorrectingPointProcess, NeuralPointProcess
 from .models.temporal.neural import ACTFNS as TPP_ACTFNS
-from .models.temporal.neural import TimeVariableODE
 
 
 class CNFWrapper(nn.Module):
@@ -16,9 +14,10 @@ class CNFWrapper(nn.Module):
         '''
         super(CNFWrapper, self).__init__()
 
+        self.device = device
         # I'm wondering how to get these numbers.
-        self.t_0 = torch.tensor([0.0])
-        self.t_1 = torch.tensor([150.0])
+        self.t_0 = torch.tensor([0.0], device = self.device)
+        self.t_1 = torch.tensor([25.0], device = self.device)
         
         if kwargs.get('tpp_model') is None:
             if kwargs['tpp_actfn'] not in TPP_ACTFNS.keys():
@@ -28,7 +27,7 @@ class CNFWrapper(nn.Module):
                 raise Exception(f'Invalid tpp model activation function. Available activations are {TPP_ACTFNS.keys()}')
 
         if model_type == 'jumpcnf' and tpp_type == 'neural':
-            self.model = JumpCNFSpatiotemporalModel(**kwargs).to(device)
+            self.model = JumpCNFSpatiotemporalModel(**kwargs).to(self.device)
             # dim=x_dim,
             # hidden_dims=list(map(int, args.hdims.split("-"))),
             # tpp_hidden_dims=list(map(int, args.tpp_hdims.split("-"))),
@@ -43,7 +42,7 @@ class CNFWrapper(nn.Module):
             # tpp_otreg_strength=args.tpp_otreg_strength,
             # layer_type=args.layer_type,
         elif model_type == 'attncnf' and tpp_type == 'neural':
-            self.model = SelfAttentiveCNFSpatiotemporalModel(**kwargs).to(device)
+            self.model = SelfAttentiveCNFSpatiotemporalModel(**kwargs).to(self.device)
             # dim=x_dim
             # hidden_dims=list(map(int, args.hdims.split("-"))),
             # tpp_hidden_dims=list(map(int, args.tpp_hdims.split("-"))),
@@ -60,7 +59,7 @@ class CNFWrapper(nn.Module):
             # layer_type=args.layer_type,
             # lowvar_trace=not args.naive_hutch,
         elif model_type == 'cond_gmm' and tpp_type == 'neural':
-            self.model = JumpGMMSpatiotemporalModel(**kwargs).to(device)
+            self.model = JumpGMMSpatiotemporalModel(**kwargs).to(self.device)
             # dim=x_dim,
             # hidden_dims=list(map(int, args.hdims.split("-"))),
             # tpp_hidden_dims=list(map(int, args.tpp_hdims.split("-"))),
@@ -86,19 +85,19 @@ class CNFWrapper(nn.Module):
                 raise ValueError(f"Invalid tpp model {tpp_type}")
     
             if model_type == "gmm":
-                self.model = CombinedSpatiotemporalModel(GaussianMixtureSpatialModel(), tpp_model).to(device)
+                self.model = CombinedSpatiotemporalModel(GaussianMixtureSpatialModel(), tpp_model).to(self.device)
             elif model_type == "cnf":
-                self.model = CombinedSpatiotemporalModel(IndependentCNF(**kwargs['model']), tpp_model).to(device)
+                self.model = CombinedSpatiotemporalModel(IndependentCNF(**kwargs['model']), tpp_model).to(self.device)
                     # dim=x_dim, hidden_dims=list(map(int, args.hdims.split("-"))),
                     # layer_type=args.layer_type, actfn=args.actfn, tol=args.tol, otreg_strength=args.otreg_strength,
                     # squash_time=True
             elif model_type == "tvcnf":
-                self.model = CombinedSpatiotemporalModel(IndependentCNF(**kwargs['model']), tpp_model).to(device)
+                self.model = CombinedSpatiotemporalModel(IndependentCNF(**kwargs['model']), tpp_model).to(self.device)
                     # dim=x_dim, hidden_dims=list(map(int, args.hdims.split("-"))),
                     # layer_type=args.layer_type, actfn=args.actfn, tol=args.tol, otreg_strength=args.otreg_strength),
                     # tpp_model
             elif model_type == "jumpcnf":
-                self.model = CombinedSpatiotemporalModel(JumpCNF(**kwargs['model']), tpp_model).to(device)
+                self.model = CombinedSpatiotemporalModel(JumpCNF(**kwargs['model']), tpp_model).to(self.device)
                     # dim=x_dim, hidden_dims=list(map(int, args.hdims.split("-"))),
                     # layer_type=args.layer_type, actfn=args.actfn, tol=args.tol, otreg_strength=args.otreg_strength),
             elif model_type == "attncnf":
@@ -126,6 +125,7 @@ class CNFWrapper(nn.Module):
     
         loss = loss_f(loglik)
         loss.backward()
+
         if update_or_not:
             optimizer.step_and_update_lr()
             optimizer.zero_grad()
