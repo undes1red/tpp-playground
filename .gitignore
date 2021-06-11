@@ -120,3 +120,6 @@ scripts/
 
 # probable existing tensorboard logfiles.
 events*
+
+# shell scripts
+*.sh

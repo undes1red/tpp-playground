@@ -2,18 +2,15 @@
 # The original code formed as a jupyter notebook can be retrieved from https://github.com/omitakahiro/NeuralNetworkPointProcess.
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
+import argparse
 
-from scipy.stats import lognorm,gamma
-from scipy.optimize import brentq
-
-np.random.seed(12345)
+from scipy.stats import lognorm
 
 ######################################################
 ### homogeneous possion process
 ######################################################
-def generate_stationary_poisson():
-    tau = np.random.exponential(size=64)
+def generate_stationary_poisson(n):
+    tau = np.random.exponential(size=n)
     T = tau.cumsum()
     score = np.ones_like(T)
     return T, score
@@ -21,94 +18,14 @@ def generate_stationary_poisson():
 ######################################################
 ### hawkes process
 ######################################################
-def generate_hawkes1():
-    [T,LL] = simulate_hawkes(128,0.2,[0.8,0.0],[1.0,20.0])
+def generate_hawkes1(n):
+    [T,LL] = simulate_hawkes(n,0.2,[0.8,0.0],[1.0,20.0])
     score = - LL
     return T, score
 
-def generate_hawkes2():
-    [T,LL] = simulate_hawkes(128,0.2,[0.4,0.4],[1.0,20.0])
+def generate_hawkes2(n):
+    [T,LL] = simulate_hawkes(n,0.2,[0.4,0.4],[1.0,20.0])
     score = - LL
-    return T, score
-
-def simulate_hawkes(n,mu,alpha,beta):
-    T = []
-    LL = []
-    
-    x = 0
-    l_trg1 = 0
-    l_trg2 = 0
-    l_trg_Int1 = 0
-    l_trg_Int2 = 0
-    mu_Int = 0
-    count = 0
-    
-    while 1:
-        l = mu + l_trg1 + l_trg2
-        step = np.random.exponential()/l
-        x = x + step
-        
-        l_trg_Int1 += l_trg1 * ( 1 - np.exp(-beta[0]*step) ) / beta[0]
-        l_trg_Int2 += l_trg2 * ( 1 - np.exp(-beta[1]*step) ) / beta[1]
-        mu_Int += mu * step
-        l_trg1 *= np.exp(-beta[0]*step)
-        l_trg2 *= np.exp(-beta[1]*step)
-        l_next = mu + l_trg1 + l_trg2
-        
-        if np.random.rand() < l_next/l: #accept
-            T.append(x)
-            LL.append( np.log(l_next) - l_trg_Int1 - l_trg_Int2 - mu_Int )
-            l_trg1 += alpha[0]*beta[0]
-            l_trg2 += alpha[1]*beta[1]
-            l_trg_Int1 = 0
-            l_trg_Int2 = 0
-            mu_Int = 0
-            count += 1
-            
-            if count == n:
-                break
-        
-    return [np.array(T),np.array(LL)]
-
-######################################################
-### stationary renewal process
-######################################################
-def generate_stationary_renewal():
-    s = np.sqrt(np.log(6*6+1))
-    mu = -s*s/2
-    tau = lognorm.rvs(s=s,scale=np.exp(mu),size=64)
-    lpdf = - lognorm.logpdf(tau,s=s,scale=np.exp(mu))
-    T = tau.cumsum()
-    
-    return T, lpdf
- 
-######################################################
-### self-correcting process
-######################################################
-def generate_self_correcting():
-    
-    def self_correcting_process(mu,alpha,n):
-    
-        t = 0; x = 0;
-        T = [];
-        log_l = [];
-        Int_l = [];
-    
-        for i in range(n):
-            e = np.random.exponential()
-            tau = np.log( e*mu/np.exp(x) + 1 )/mu # e = ( np.exp(mu*tau)- 1 )*np.exp(x) /mu
-            t = t+tau
-            T.append(t)
-            x = x + mu*tau
-            log_l.append(x)
-            Int_l.append(e)
-            x = x -alpha
-
-        return [np.array(T),np.array(log_l),np.array(Int_l)]
-    
-    [T,log_l,Int_l] = self_correcting_process(1,1,64)
-    score = -(log_l - Int_l)
-    
     return T, score
 
 def simulate_hawkes(n,mu,alpha,beta):
@@ -191,24 +108,125 @@ def simulate_multi_hawkes(n,mu,alpha,beta,head):
         
     return [np.array(T[-n:]),np.array(LL)]
 
-data = {'index': [], 'time_seq': [], 'score': []}
-file = 'train'
-for i in range(2600):
-    time, score = generate_hawkes1()
-    data['index'].append(i)
-    data['time_seq'].append(time.tolist())
-    data['score'].append(score.tolist())
+######################################################
+### stationary renewal process
+######################################################
+def generate_stationary_renewal(n):
+    s = np.sqrt(np.log(6*6+1))
+    mu = -s*s/2
+    tau = lognorm.rvs(s=s,scale=np.exp(mu),size=n)
+    lpdf = -lognorm.logpdf(tau,s=s,scale=np.exp(mu))
+    T = tau.cumsum()
+    
+    return T, lpdf
+ 
+######################################################
+### self-correcting process
+######################################################
+def generate_self_correcting(n):
+    
+    def self_correcting_process(mu,alpha,n):
+    
+        t = 0; x = 0;
+        T = [];
+        log_l = [];
+        Int_l = [];
+    
+        for i in range(n):
+            e = np.random.exponential()
+            tau = np.log( e*mu/np.exp(x) + 1 )/mu # e = ( np.exp(mu*tau)- 1 )*np.exp(x) /mu
+            t = t+tau
+            T.append(t)
+            x = x + mu*tau
+            log_l.append(x)
+            Int_l.append(e)
+            x = x -alpha
 
-final = pd.DataFrame.from_dict(data)
-final.to_json(file + '.json')
+        return [np.array(T),np.array(log_l),np.array(Int_l)]
+    
+    [T,log_l,Int_l] = self_correcting_process(1,1,n)
+    score = -(log_l - Int_l)
+    
+    return T, score
 
-data = {'index': [], 'time_seq': [], 'score': []}
-file = 'test'
-for i in range(260):
-    time, score = generate_hawkes1()
-    data['index'].append(i)
-    data['time_seq'].append(time.tolist())
-    data['score'].append(score.tolist())
+def transform_autoregression(data_input, max_seq):
+    data = np.array([[]])
+    result = np.array([[]])
+    score = np.array([[]])
+    size = data_input.shape[0]
+    for index in range(size):
+        time = np.array(data_input.iloc[index].time_seq)
+        L = np.array(data_input.iloc[index].score)
+        try:
+            assert (np.diff(time) < 0).any() == False
+        except:
+            raise ValueError("Non-monotonic increase time input detected.")
 
-final = pd.DataFrame.from_dict(data)
-final.to_json(file + '.json')
+        time = np.diff(time, axis=-1)
+
+        if time.shape[0] < max_seq + 1:
+            time = np.concatenate(([0] * (max_seq - time.shape[0] + 1), time))
+
+        for i in range(0, time.shape[0] - max_seq):
+            if data.shape[1] == 0:
+                data = time[i:i+max_seq].reshape(1, -1)
+                result = time[i+max_seq].reshape(1, -1)
+                score = L[i+max_seq].reshape(1, -1)
+            else:
+                data = np.append(
+                    data, time[i:i+max_seq].reshape(1, -1), axis=0)
+                result = np.append(
+                    result, time[i+max_seq].reshape(1, -1), axis=0)
+                score = np.append(
+                    score, L[i+max_seq].reshape(1, -1), axis=0)
+
+    return pd.DataFrame.from_dict({'data': data, 'result': result, 'score': score})
+
+def data_gen(name, data_size, seq_len, autoregression = False):
+    data = {'index': [], 'time_seq': [], 'score': []}
+    if autoregression:
+        gen_seq_len = seq_len * 2
+    else:
+        gen_seq_len = seq_len
+    for i in range(data_size):
+        time, score = generate_hawkes1(gen_seq_len)
+        data['index'].append(i)
+        data['time_seq'].append(time.tolist())
+        data['score'].append(score.tolist())
+    
+    final = pd.DataFrame.from_dict(data)
+    if autoregression:
+        final = transform_autoregression(final, seq_len)
+    final.to_json(name + ('_auto' if autoregression else '') + '.json')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--dataset_name', type=str, choices=['hawkes', 'possion', 'self_correcting', 'stationary_renewal'],
+                        help="How to generate synthetic temporal point process data.")
+    parser.add_argument('--data_type', type=str, choices=['autoregression', 'sequence'],
+                        help='Autoregression: Each line of data comprise three parts: history: relative time sequence of history events,\
+                              result: the time interval between this event and the last event in history, score: the ideal value of log(p).\n \
+                              Sequence: Each line of data comprise two parts: event time sequence, mask sequence and score sequence. Ceveats: the timestamps in sequence\
+                              datasets are absolute.')
+    parser.add_argument('--seq_length', type=int, help="For autoregression datasets, it is the length of history sequence. \
+                                                        For sequence datasets: it is the length of sequence")
+    parser.add_argument('--train_size', type=int, help='The size of training dataset')
+    parser.add_argument('--eva_size', type=int, help='The size of evaluation dataset')
+    parser.add_argument('--test_size', type=int, help='The size of test dataset')
+
+    parser.add_argument('--random_seed', type=int, help='Global random seed.')
+
+    opt = parser.parse_args()
+
+    np.random.seed(opt.random_seed)
+
+    if opt.data_type == 'autoregression':
+        data_gen('train', opt.train_size, opt.seq_length, True)
+        data_gen('evaluate', opt.eva_size, opt.seq_length, True)
+        data_gen('test', opt.test_size, opt.seq_length, True)
+    else:
+        data_gen('train', opt.train_size, opt.seq_length)
+        data_gen('evaluate', opt.eva_size, opt.seq_length)
+        data_gen('test', opt.test_size, opt.seq_length)

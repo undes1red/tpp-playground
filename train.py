@@ -98,12 +98,12 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         if current_step % opt.n_evaluation_steps == 0 and rank == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
             eva_report = model_class.postprocess(
-                evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device, output_length = report_result_length)
+                evaluation(evaluation_data, model, model_class, device = opt.device, output_length = report_result_length)
             )
             print_performances(logger = logger, procedure='Evaluation', **log_print_format(eva_report))
 
             test_report = model_class.postprocess(
-                evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device, output_length = report_result_length)
+                evaluation(test_data, model, model_class, device = opt.device, output_length = report_result_length)
             )
             print_performances(logger = logger, procedure='Test', **log_print_format(test_report))
             

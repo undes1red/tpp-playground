@@ -17,7 +17,7 @@ class CNFWrapper(nn.Module):
         self.device = device
         # I'm wondering how to get these numbers.
         self.t_0 = torch.tensor([0.0], device = self.device)
-        self.t_1 = torch.tensor([25.0], device = self.device)
+        self.t_1 = torch.tensor([150.0], device = self.device)
         
         if kwargs.get('tpp_model') is None:
             if kwargs['tpp_actfn'] not in TPP_ACTFNS.keys():
@@ -116,12 +116,11 @@ class CNFWrapper(nn.Module):
         model.train()
 
         event, timestamps, mask = minibatch[0]
-        event_count = mask.shape[1]
 
         space_loglik, time_loglik = model(
                 timestamps.to(device), event.to(device), mask.to(device)
         )
-        loglik = (space_loglik.sum() + time_loglik.sum())/event_count
+        loglik = (space_loglik.sum() + time_loglik.sum())
     
         loss = loss_f(loglik)
         loss.backward()
@@ -147,7 +146,7 @@ class CNFWrapper(nn.Module):
         space_loglik, time_loglik = model(
             timestamps.to(device), event.to(device), mask.to(device)
         )
-        loglik = (space_loglik.sum() + time_loglik.sum())/event_count
+        loglik = (space_loglik.sum() + time_loglik.sum())
     
         loss = loss_f(loglik)
     
