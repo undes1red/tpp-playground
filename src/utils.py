@@ -114,9 +114,9 @@ def read_json(json_path):
     return a
 
 def suffix(opt, *args):
-    output = ''
+    output = {}
     for item in args:
-        output += ('_' + str(getattr(opt, item)))
+        output[item] = getattr(opt, item)
     
     return output
 
@@ -130,7 +130,7 @@ def lst_divide(lst, denominator):
         return [x/y for x, y in zip(lst, denominator)]
     return [x/denominator for x in lst]
 
-def evaluation(data, model, model_class, desc, device, output_length):
+def evaluation(data, model, model_class, device, output_length):
     r = range(1, len(data) + 1)
     data_itr = iter(data)
     sum_ = [0] * output_length
@@ -168,41 +168,6 @@ class Metric():
             self.best_metric = input_metric
         
         return output
-
-class ExponentialMovingAverage(object):
-
-    def __init__(self, module, decay=0.999):
-        """Initializes the model when .apply() is called the first time.
-        This is to take into account data-dependent initialization that occurs in the first iteration."""
-        self.decay = decay
-        self.module_params = {n: p for (n, p) in module.named_parameters()}
-        self.ema_params = {n: p.data.clone() for (n, p) in module.named_parameters()}
-        self.nparams = sum(p.numel() for (_, p) in self.ema_params.items())
-
-    def apply(self, decay=None):
-        decay = decay or self.decay
-        with torch.no_grad():
-            for name, param in self.module_params.items():
-                self.ema_params[name] -= (1 - decay) * (self.ema_params[name] - param.data)
-
-    def set(self, named_params):
-        with torch.no_grad():
-            for name, param in named_params.items():
-                self.ema_params[name].copy_(param)
-
-    def replace_with_ema(self):
-        for name, param in self.module_params.items():
-            param.data.copy_(self.ema_params[name])
-
-    def swap(self):
-        for name, param in self.module_params.items():
-            tmp = self.ema_params[name].clone()
-            self.ema_params[name].copy_(param.data)
-            param.data.copy_(tmp)
-
-    def __repr__(self):
-        return (
-            '{}(decay={}, module={}, nparams={})'.format(
-                self.__class__.__name__, self.decay, self.module.__class__.__name__, self.nparams
-            )
-        )
+    
+    def show(self):
+        return self.best_metric

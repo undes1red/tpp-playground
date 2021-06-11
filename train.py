@@ -11,7 +11,7 @@ import sys
 import numpy as np
 import datetime
 
-from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric, ExponentialMovingAverage
+from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
 from src.data import prepare_dataloaders
@@ -37,12 +37,14 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     ''' Start training '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
-    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)
-    if not os.path.exists(os.path.join(opt.save_model, 'output' + folder_suffix)):
-        os.mkdir(os.path.join(opt.save_model, 'output' + folder_suffix))
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)
+    folder_suffix = "_".join(map(str, model_hyperparameters.values()))
+    if not os.path.exists(os.path.join(opt.save_model, 'output_' + folder_suffix)):
+        os.mkdir(os.path.join(opt.save_model, 'output_' + folder_suffix))
 
+    writer, file_logger = None, None
     if opt.log:
-        log_folder = 'log' + folder_suffix
+        log_folder = 'log_' + folder_suffix
         if not os.path.exists(os.path.join(opt.log, log_folder)):
             os.mkdir(os.path.join(opt.log, log_folder))
         log_train_file = os.path.join(opt.log, log_folder, 'train.log')
@@ -55,19 +57,19 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
 
         file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
+        if opt.tensorboard:
+            from torch.utils.tensorboard import SummaryWriter
+            writer = SummaryWriter(log_dir = os.path.join(opt.log, log_folder))
+
     # What you should modify
-    output_length = 2
-    metric_checker = Metric(2)
-    report_sum = [0] * output_length # [absolute loss sum, relative loss sum]
+    report_result_length = 2
+    metric_checker = Metric(report_result_length)
+    report_sum = [0] * report_result_length # [absolute loss sum, relative loss sum]
 
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
     training = cycle(iter(training_data))
     optimizer.zero_grad()
-    do_update = True
-
-    if rank == 0:
-        ema = ExponentialMovingAverage(model)
 
     if opt.profiler:
         profiler = torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
@@ -75,14 +77,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                                           on_trace_ready=torch.profiler.tensorboard_trace_handler(dir_name = os.path.join(opt.log, 'tensorboard')),with_stack=True)
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        do_update = current_step % opt.agg_update_step == 0
-        step_result = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = do_update)
-
-        if rank == 0:
-            if current_step > 0.8 * opt.n_training_steps:
-                ema.apply()
-            else:
-                ema.apply(decay=0.0)
+        step_result = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = current_step % opt.agg_update_step == 0)
 
         report_sum = lst_add_lst(report_sum, step_result)
         if opt.profiler:
@@ -93,18 +88,22 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             report_sum = model_class.postprocess(lst_divide(report_sum, opt.n_report_steps))
             print_performances(logger = logger, procedure='Training', **log_print_format(report_sum))
             if file_logger:
-                file_logger.print(logger_name = 'training_log', step = current_step, **logfile_print_format(report_sum))
-            report_sum = [0] * output_length
+                report = logfile_print_format(report_sum)
+                file_logger.print(logger_name = 'training_log', step = current_step, **report)
+                if writer:
+                    for key, value in report.items():
+                        writer.add_scalar(tag = 'Train/' + key, scalar_value = value, global_step = current_step)
+            report_sum = [0] * report_result_length
             
         if current_step % opt.n_evaluation_steps == 0 and rank == 0:
             logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
             eva_report = model_class.postprocess(
-                evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device, output_length = output_length)
+                evaluation(evaluation_data, model, model_class, '  - (Evaluating)   ', device = opt.device, output_length = report_result_length)
             )
             print_performances(logger = logger, procedure='Evaluation', **log_print_format(eva_report))
 
             test_report = model_class.postprocess(
-                evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device, output_length = output_length)
+                evaluation(test_data, model, model_class, '  - (Testing)   ', device = opt.device, output_length = report_result_length)
             )
             print_performances(logger = logger, procedure='Test', **log_print_format(test_report))
             
@@ -117,14 +116,25 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                             opt.save_model, (f'_training_step_{current_step}' + '.chkpt'))
                     torch.save(checkpoint, model_name)
                 elif opt.save_mode == 'best':
-                    model_name = os.path.join(opt.save_model, 'output' + folder_suffix, 'checkpoint.chkpt')
+                    model_name = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.chkpt')
                     if metric_checker.compare(eva_report) and current_step > opt.n_warmup_steps:
                             torch.save(checkpoint, model_name)
                             logger.info('    - The checkpoint file has been updated.')
             if file_logger:
-                file_logger.print(logger_name = 'evaluation_log', step = current_step, **logfile_print_format(eva_report))
-                file_logger.print(logger_name = 'test_log', step = current_step, **logfile_print_format(test_report))
+                eva = logfile_print_format(eva_report)
+                test = logfile_print_format(test_report)
+                file_logger.print(logger_name = 'evaluation_log', step = current_step, **eva)
+                file_logger.print(logger_name = 'test_log', step = current_step, **test)
+                if writer:
+                    for key in eva.keys():
+                        writer.add_scalar(tag = 'Evaluation/' + key, scalar_value = eva[key], global_step = current_step)
+                        writer.add_scalar(tag = 'Test/' + key, scalar_value = test[key], global_step = current_step)
+                    
     if rank == 0:
+        if writer:
+            writer.add_hparams(model_hyperparameters, logfile_print_format(metric_checker.show()))
+            writer.flush()
+            writer.close()
         logger.warning('Training finished!')
 
 
@@ -142,16 +152,17 @@ def _main(rank, logger, opt):
 
     # Reproducibility
     if opt.no_seed:
-        opt.seed = random.randint(0, 2**16) + rank
+        opt.seed = random.randint(0, 2**16)
         if rank == 0:
             logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
-    torch.manual_seed(opt.seed)
+    torch.manual_seed(opt.seed + rank)
+    np.random.seed(opt.seed + rank)
     torch.backends.cudnn.benchmark = True
 
     if not opt.log and not opt.save_model and rank == 0:
         logger.warning('No experiment result will be saved.')
 
-    # Cuda
+    # cuda
     opt.device = torch.device(
         f'cuda:{rank:d}' if opt.cuda and torch.cuda.is_available() else 'cpu')
 
@@ -246,10 +257,12 @@ if __name__ == '__main__':
               help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
                   if you meet \'received 0 items of ancdata\' exception.')
 
-    # Model save
+    # Model save and log management
     parser.add_argument('--log', action=path, default=None, help='Log file path.')
     parser.add_argument('--save_model', action=path, default=None, help='Saved checkpoint file path.')
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
+    parser.add_argument('--tensorboard', action='store_true', help='Use tensorboard to visualize the training result.')
+
 
     # Training procedure related hyperparameters
     parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')

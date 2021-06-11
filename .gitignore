@@ -117,3 +117,6 @@ config/
 
 # The test scripts
 scripts/
+
+# probable existing tensorboard logfiles.
+events*
