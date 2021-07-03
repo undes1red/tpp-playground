@@ -17,7 +17,7 @@ class CNFWrapper(nn.Module):
         self.device = device
         # I'm wondering how to get these numbers.
         self.t_0 = torch.tensor([0.0], device = self.device)
-        self.t_1 = torch.tensor([150.0], device = self.device)
+        self.t_1 = torch.tensor([250.0], device = self.device)
         
         if kwargs.get('tpp_model') is None:
             if kwargs['tpp_actfn'] not in TPP_ACTFNS.keys():
@@ -120,19 +120,19 @@ class CNFWrapper(nn.Module):
         space_loglik, time_loglik = model(
                 timestamps.to(device), event.to(device), mask.to(device)
         )
-        loglik = (space_loglik.sum() + time_loglik.sum())
+        space_sum = loss_f(space_loglik.sum())
+        time_sum = loss_f(time_loglik.sum())
+        loss = space_sum + time_sum
     
-        loss = loss_f(loglik)
         loss.backward()
-
         if update_or_not:
             optimizer.step_and_update_lr()
             optimizer.zero_grad()
     
-        loss = loss.item()
+        time_loss = time_sum.item()
         fact = minibatch[1].sum()
     
-        return loss, fact
+        return time_loss, fact
     
     @staticmethod
     def evaluation_step(model, minibatch, device):
@@ -141,19 +141,19 @@ class CNFWrapper(nn.Module):
         model.eval()
 
         event, timestamps, mask = minibatch[0]
-        event_count = mask.sum()
 
         space_loglik, time_loglik = model(
             timestamps.to(device), event.to(device), mask.to(device)
         )
-        loglik = (space_loglik.sum() + time_loglik.sum())
-    
-        loss = loss_f(loglik)
-    
+        space_sum = loss_f(space_loglik.sum())
+        time_sum = loss_f(time_loglik.sum())
+        loss = space_sum + time_sum
+        
         loss = loss.item()
+        time_loss = time_sum.item()
         fact = minibatch[1].sum()
     
-        return loss, fact
+        return time_loss, fact
         
     @staticmethod
     def postprocess(input):
@@ -164,4 +164,4 @@ def loss_f(loglik):
     '''
     The definition of loss.
     '''
-    return loglik.mul(-1.0).mean()
+    return loglik.mul(-1.0)

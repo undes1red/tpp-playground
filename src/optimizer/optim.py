@@ -1,13 +1,17 @@
 '''A wrapper class for scheduled optimizer '''
 
-from .. import utils
+import math
+from ..utils import getLogger, mean, read_json
 import torch.optim as optim
 
-logger = utils.getLogger(__name__)
+logger = getLogger(__name__)
 
 class ScheduledOptim():
-    '''A simple wrapper class for learning rate scheduling'''
-    def __init__(self, opt, model):
+    '''
+    A simple wrapper for using various optimizers to train models without any code modification.
+    Currently, only LambdaLR learning rate scheduler is supported.
+    '''
+    def __init__(self, opt, model, rank):
         if opt.custom_op:
             import torch_optimizer as top
             if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
@@ -16,8 +20,9 @@ class ScheduledOptim():
             if not hasattr(optim, opt.op_name):
                 raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
     
-        param = utils.read_json(opt.optim_json)
-        logger.info(f'The additional input optimizer hyperparameters are {param}')
+        param = read_json(opt.optim_json)
+        if rank == 0:
+            logger.info(f'The additional input optimizer hyperparameters are {param}')
         if hasattr(optim, opt.op_name):
             self._optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
         else:
@@ -28,7 +33,7 @@ class ScheduledOptim():
             self.n_training_steps = opt.n_training_steps
             self.n_cycles = opt.n_cycles
             self.last_epoch = opt.last_epoch
-            self._scheduler = utils.get_lr_sheduler(optimizer = self._optimizer, num_warmup_steps = self.n_warmup_steps, 
+            self._scheduler = get_lr_sheduler(optimizer = self._optimizer, num_warmup_steps = self.n_warmup_steps, 
                                                     num_training_steps = self.n_training_steps,
                                                     num_cycles = self.n_cycles, last_epoch = self.last_epoch)
         else:
@@ -50,4 +55,14 @@ class ScheduledOptim():
         for items in self._optimizer.state_dict()['param_groups']:
             lr.append(items['lr'])
 
-        return utils.mean(lr)
+        return mean(lr)
+
+
+def get_lr_sheduler(optimizer, num_warmup_steps, num_training_steps, num_cycles, last_epoch):
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lr_lambda, last_epoch = last_epoch)

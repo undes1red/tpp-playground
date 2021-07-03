@@ -2,6 +2,7 @@ from .dwg.model import TemporalModel
 from .fullynn.model import FullyNNModel
 from .ctlstm.model import CTLSTMwrapper
 from .cnf.model import CNFWrapper
+from .ifl.model import ifl
 
 from ..utils import getLogger
 
@@ -12,13 +13,16 @@ model_zoo = {
     'dwg': TemporalModel,
     'fullynn': FullyNNModel,
     'ctlstm': CTLSTMwrapper,
-    'cnf': CNFWrapper
+    'cnf': CNFWrapper,
+    'ifl': ifl
 }
 
-def get_model(name):
+def get_model(name, rank):
     try:
         model = model_zoo[name]
-        logger.info(f"Model named {name} is retrieved.")
+        if rank == 0:
+            logger.info(f"Model named {name} is retrieved.")
         return model
     except:
-        logger.exception(f"Model named {name} is not found! Please register your model in src/model/__init__.py and try again.")
+        if rank == 0:
+            logger.exception(f"Model named {name} is not found! Please register your model in src/model/__init__.py and try again.")

@@ -1,8 +1,5 @@
 from functools import reduce
 import math, logging, argparse, os, json
-import torch
-
-import torch.optim.lr_scheduler as lrs
 
 # Logger settings
 def getEventLogger(name, root):
@@ -48,6 +45,13 @@ def getFileLogger(name, file, root):
     return logger
 
 def getLogger(name = None, file = None, root = True):
+    '''
+    Get normal loggers or file loggers.
+
+    Args:
+    name: The name of a generated logger
+    file: print all logs into the file if set.
+    '''
     if file:
         return getFileLogger(name, file, root)
     else:
@@ -55,21 +59,22 @@ def getLogger(name = None, file = None, root = True):
 
 logger_ = getLogger(__name__)
 
+# Several extensive operations for python list.
 def add(a, b):
     return a + b
 
 def mean(iter):
     return reduce(add, iter)/len(iter)
 
-# For Lambda scheduler
-def get_lr_sheduler(optimizer, num_warmup_steps, num_training_steps, num_cycles, last_epoch):
-    def lr_lambda(current_step):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+def lst_add_lst(list1, list2):
+    assert len(list1) == len(list2)
+    return [sum(x) for x in zip(list1, list2)]
 
-    return lrs.LambdaLR(optimizer, lr_lambda = lr_lambda, last_epoch = last_epoch)
+def lst_divide(lst, denominator):
+    if isinstance(denominator, list):
+        assert len(lst) == len(denominator)
+        return [x/y for x, y in zip(lst, denominator)]
+    return [x/denominator for x in lst]
 
 # Definition of path parsing action.
 class path(argparse.Action):
@@ -77,6 +82,7 @@ class path(argparse.Action):
         setattr(namespace, self.dest, os.path.abspath(values))
 
 
+# How to print formated logs via logger and format definitions.
 def print_performances(logger, procedure, num_format = None, **kwargs):
     if num_format is None or len(num_format) != len(kwargs):
         logger_.exception('Bad num_format dictoinary.')
@@ -87,6 +93,7 @@ def print_performances(logger, procedure, num_format = None, **kwargs):
     logger.info(info.format_map(kwargs))
 
 
+# File logger handler.
 class FileLogger(object):
     def __init__(self, print_format, **kwargs):
         self.loggers = dict()
@@ -108,11 +115,13 @@ class FileLogger(object):
         logger.info(info.format_map(kwargs))
 
 
+# Read and convert a json file into a dict object.
 def read_json(json_path):
     with open(json_path, 'r') as f:
         a = json.load(f)
     return a
 
+# Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
     output = {}
     for item in args:
@@ -120,16 +129,7 @@ def suffix(opt, *args):
     
     return output
 
-def lst_add_lst(list1, list2):
-    assert len(list1) == len(list2)
-    return [sum(x) for x in zip(list1, list2)]
-
-def lst_divide(lst, denominator):
-    if isinstance(denominator, list):
-        assert len(lst) == len(denominator)
-        return [x/y for x, y in zip(lst, denominator)]
-    return [x/denominator for x in lst]
-
+# General evaluation procedure.
 def evaluation(data, model, model_class, device, output_length):
     r = range(1, len(data) + 1)
     data_itr = iter(data)
@@ -144,6 +144,12 @@ def evaluation(data, model, model_class, device, output_length):
     return lst_divide(sum_, len(data))
 
 class Metric():
+    '''
+    A Metric handler.
+    1. metric_number: How many metric do you have?
+    2. smaller_is_better: If model performance is better with lower metric value, you should set it to true. Otherwise, it is false.
+    If smaller_is_better is set, its length must match argument 'metric_number'.
+    '''
     def __init__(self, metric_number, smaller_is_better = None):
         self.metric_number = metric_number
         self.map = {True:1, False: -1}
