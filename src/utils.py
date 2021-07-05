@@ -76,12 +76,6 @@ def lst_divide(lst, denominator):
         return [x/y for x, y in zip(lst, denominator)]
     return [x/denominator for x in lst]
 
-# Definition of path parsing action.
-class path(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string = None):
-        setattr(namespace, self.dest, os.path.abspath(values))
-
-
 # How to print formated logs via logger and format definitions.
 def print_performances(logger, procedure, num_format = None, **kwargs):
     if num_format is None or len(num_format) != len(kwargs):

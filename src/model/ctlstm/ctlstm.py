@@ -51,6 +51,7 @@ class CTLSTM(nn.Module):
 		"""
         target_tensor, mask_tensor = self.get_target(event_tensor)
 		# B x T+1 , starting from 1st actual event 
+        # forward propagation through CTLSTM module.
         all_c_p_actual, all_cb_p_actual, all_d_p_actual, all_o_p_actual, _, _ = \
         self.get_cells_gates_states(event_tensor, dtime_tensor)
 		# B x T+1 x D 

@@ -15,11 +15,13 @@ class TemporalModel(nn.Module):
                  time_activation,
                  no_time_weight,
                  no_scale,
-                 device):
+                 device,
+                 weight_gen_min = None,
+                 time_weight_min = None):
         super(TemporalModel, self).__init__()
         self.device = device
-        self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, 
-                                num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
+        self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, weight_gen_min = weight_gen_min,
+                                time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
                                 no_time_weight = no_time_weight, no_scale = no_scale, device = device)
 
     def forward(self, input_time, input_result):

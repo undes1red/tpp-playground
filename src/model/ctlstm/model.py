@@ -74,6 +74,5 @@ def loss_f(value):
     The definition of loss.
     '''
     loss = -value
-    loss = loss.sum(axis = -1)
     
     return loss

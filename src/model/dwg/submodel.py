@@ -14,7 +14,8 @@ class DynamicMLP(nn.Module):
     The purpose is try to force the model output at point 0 is forever 0.
     '''
 
-    def __init__(self, d_history, d_intensity, dropout, num_layers, mlp_layers, device, time_activation, no_time_weight, no_scale):
+    def __init__(self, d_history, d_intensity, dropout, num_layers, mlp_layers, device, time_activation, no_time_weight, no_scale,
+                 weight_gen_min, time_weight_min):
         super(DynamicMLP, self).__init__()
         self.device = device
         self.no_time_weight = no_time_weight
@@ -23,11 +24,11 @@ class DynamicMLP(nn.Module):
                                num_layers=num_layers, batch_first=True, dropout=dropout).to(self.device)
 
         # self.weight_gen = nn.Linear(1, d_intensity, bias=True)
-        self.weight_gen = ClampLinear(1, d_intensity, clamp_min=None, bias=True).to(self.device)
+        self.weight_gen = ClampLinear(1, d_intensity, clamp_min=weight_gen_min, bias=True).to(self.device)
         # self.weight_gen = NonNegLinear(1, d_intensity,bias=True)
         # Should we use the output of LSTM as the weight of the dynamic linear layer?
         # self.time_weight = nn.Linear(1, d_history, bias=True)
-        self.time_weight = ClampLinear(1, d_history, clamp_min=None, bias=True).to(self.device)
+        self.time_weight = ClampLinear(1, d_history, clamp_min=time_weight_min, bias=True).to(self.device)
         # self.time_weight = NonNegLinear(1, d_history,bias=True)
 
         self.time = NonNegLinear(1, d_history * num_layers, bias=False).to(self.device)

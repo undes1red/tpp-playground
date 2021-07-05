@@ -11,17 +11,19 @@ import sys
 import numpy as np
 import datetime
 
-from src.utils import getLogger, path, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
+from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
 from src.data import prepare_dataloaders
 
 logger = getLogger(__name__)
+# Hope we can get rid of absolute path in training scripts.
+root_path = os.path.dirname(os.path.abspath(__file__))
 
 def log_print_format(input):
     '''
-    The output rule definition. The rule-defining dict should contain objects listed below:
-    1. 'num_format': Please, do not modify the name because the architecture will detect this key and use the corresponding dict as the output format definition.
+    The output format definition. The rule-defining dict should contain objects listed below:
+    1. 'num_format': Please, do not modify the name because the architecture will detect this key and use the corresponding subdict as the output format definition.
     2. What you want to output. You should register the name of each number in list 'input' as a key and each matching number as a value.
     Caveats: All used names should have their own format definition. If you really don't need it for some special outputs, please set it to an empty string ''.
     e.x.:
@@ -41,9 +43,9 @@ def log_print_format(input):
 
 '''
 Q: Why is the print format function different from the file print format function?
-A: Because FileLogger needs to know what it will output and prepare the log file before the training procedure begins. Item 'step' in dict 'logfile_format'
+A: Because FileLogger needs to know what it should output and prepare the log file before the training procedure begins. Item 'step' in dict 'logfile_format'
 is reserved to record the training progress so you should always have it in 'logfile_format'.
-Other stuff are the same as log_print_format()
+Other stuff are the same as what log_print_format() does.
 '''
 logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
 def logfile_print_format(input):
@@ -52,21 +54,28 @@ def logfile_print_format(input):
     format_dict['relative loss'] = input[1]
     return format_dict
 
+def choose_metric(evaluation_report, test_report):
+    '''
+    Choose the metric values that you want to employ for model performance comparison.
+    '''
+    return [evaluation_report[-1], test_report[-1]]
+
+metric_number = 2 # metric number is the length of the output of choose_metric
 
 def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix, rank):
     '''
     Main training procedure. Mostly, one should not modify it.
-    If you do everything in the right way, it won't complain and do the model training.
+    If you do everything in the right way, it won't complain about anything and will commence the model training.
     '''
 
     log_train_file, log_eva_file, log_test_file = None, None, None
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)
     folder_suffix = "_".join(map(str, model_hyperparameters.values()))
-    if not os.path.exists(os.path.join(opt.save_model, 'output_' + folder_suffix)):
+    if not os.path.exists(os.path.join(opt.save_model, 'output_' + folder_suffix)) and rank == 0:
         os.mkdir(os.path.join(opt.save_model, 'output_' + folder_suffix))
 
     writer, file_logger = None, None
-    if opt.log:
+    if opt.log and rank == 0:
         log_folder = 'log_' + folder_suffix
         if not os.path.exists(os.path.join(opt.log, log_folder)):
             os.mkdir(os.path.join(opt.log, log_folder))
@@ -74,18 +83,16 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         log_eva_file = os.path.join(opt.log, log_folder, 'evaluate.log')
         log_test_file = os.path.join(opt.log, log_folder, 'test.log')
 
-        if rank == 0:
-            logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
-            # These log_items defined here should match corresponding logger's print() method.
-            file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
+        logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
+        # These log_items defined here should match corresponding logger's print() method.
+        file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
 
         if opt.tensorboard:
             from torch.utils.tensorboard import SummaryWriter
             writer = SummaryWriter(log_dir = os.path.join(opt.log, log_folder))
 
-    report_result_length = opt.report_result_length
-    metric_checker = Metric(report_result_length)
-    report_sum = [0] * report_result_length # [absolute loss sum, relative loss sum]
+    metric_checker = Metric(metric_number)
+    report_sum = [0] * opt.report_result_length # [absolute loss sum, relative loss sum]
 
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
@@ -114,16 +121,16 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 if writer:
                     for key, value in report.items():
                         writer.add_scalar(tag = 'Train/' + key, scalar_value = value, global_step = current_step)
-            report_sum = [0] * report_result_length
+            report_sum = [0] * opt.report_result_length
             
         if current_step % opt.n_evaluation_steps == 0:
             if rank == 0:
                 logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
             eva_report = model_class.postprocess(
-                evaluation(evaluation_data, model, model_class, device = opt.device, output_length = report_result_length)
+                evaluation(evaluation_data, model, model_class, device = opt.device, output_length = opt.report_result_length)
             )
             test_report = model_class.postprocess(
-                evaluation(test_data, model, model_class, device = opt.device, output_length = report_result_length)
+                evaluation(test_data, model, model_class, device = opt.device, output_length = opt.report_result_length)
             )
             if rank == 0:
                 print_performances(logger = logger, procedure='Evaluation', **log_print_format(eva_report))
@@ -139,9 +146,9 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                         torch.save(checkpoint, model_name)
                     elif opt.save_mode == 'best':
                         model_name = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.chkpt')
-                        if metric_checker.compare(eva_report) and current_step > opt.n_warmup_steps:
-                                torch.save(checkpoint, model_name)
-                                logger.info('    - The checkpoint file has been updated.')
+                        if metric_checker.compare(choose_metric(eva_report, test_report)) and current_step > opt.n_warmup_steps:
+                            torch.save(checkpoint, model_name)
+                            logger.info('  The checkpoint file has been updated.')
                 if file_logger:
                     eva = logfile_print_format(eva_report)
                     test = logfile_print_format(test_report)
@@ -199,7 +206,7 @@ def _main(rank, logger, opt):
     #========= Loading Dataset =========#
 
     if opt.data_path:
-        training_data, evaluation_data, test_data = prepare_dataloaders(opt)
+        training_data, evaluation_data, test_data = prepare_dataloaders(opt, rank = rank)
         opt.training_size = len(training_data)
     else:
         raise logger.exception("Wrong input data path.")
@@ -269,19 +276,16 @@ if __name__ == '__main__':
 
 
     # Input data
-    parser.add_argument('--data_path', action=path, default=None, help='Input dataset file path.')
-    parser.add_argument('--dataset_name', default=None, help='Input dataset class name.')
+    parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
+    parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
     parser.add_argument('--n_worker', default=0, type=int,
               help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
                   if you meet \'received 0 items of ancdata\' exception.')
 
     # Model save and log management
-    parser.add_argument('--log', action=path, default=None, help='Log file path.')
-    parser.add_argument('--save_model', action=path, default=None, help='Saved checkpoint file path.')
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
     parser.add_argument('--tensorboard', action='store_true', help='Use tensorboard to visualize the training result.')
     parser.add_argument('--report_result_length', type=int, default=2, help='The number of metric numbers each running step returns.')
-
 
     # Training procedure related hyperparameters
     parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')
@@ -294,11 +298,11 @@ if __name__ == '__main__':
     # Model-related hyperparameters
     parser.add_argument('--model_name', default=None,
                         help="The model name.")
-    parser.add_argument('--model_json', action=path, default=None,
+    parser.add_argument('--model_json', type=str, default=None,
                         help="The path of json file that contains model hyperparameters.")
 
     # Optimizer-related hyperparameters
-    parser.add_argument('--optim_json', action=path, default=None,
+    parser.add_argument('--optim_json', type=str, default=None,
                         help='The path of json file that contains optimizer and scheduler settings.')
     parser.add_argument('--custom_op', action='store_true', 
                         help='Set it to true if you want to use your own optimizer or that from third-party packages.')
@@ -325,6 +329,13 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(opt.seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+    # Relative path to absolute path
+    opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
+    opt.log = os.path.join(root_path, 'log', opt.dataset_name)
+    opt.save_model = os.path.join(root_path, 'data', 'outputs', opt.dataset_name)
+    opt.model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json)
+    opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
 
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
