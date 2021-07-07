@@ -58,7 +58,7 @@ def choose_metric(evaluation_report, test_report):
     '''
     Choose the metric values that you want to employ for model performance comparison.
     '''
-    return [evaluation_report[-1], test_report[-1]]
+    return [torch.abs(evaluation_report[-1]), torch.abs(test_report[-1])]
 
 metric_number = 2 # metric number is the length of the output of choose_metric
 
@@ -165,7 +165,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             writer.flush()
             writer.close()
         logger.warning('Training finished!')
-
+        logger.info(f'The best metric value is {metric_checker.show()}.')
 
 def _main(rank, logger, opt):
     '''

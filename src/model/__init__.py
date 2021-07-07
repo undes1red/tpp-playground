@@ -8,7 +8,8 @@ from ..utils import getLogger
 
 logger = getLogger(__name__)
 
-# One should register their model here. 
+# One should register their models here.
+# The key of each model is foremost.
 model_zoo = {
     'dwg': TemporalModel,
     'fullynn': FullyNNModel,
