@@ -1,12 +1,12 @@
 from .submodel import DynamicMLP
+from ..utils import BasicModule
 import torch
-import torch.nn as nn
-
 
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
-class TemporalModel(nn.Module):
+
+class TemporalModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
@@ -43,8 +43,7 @@ class TemporalModel(nn.Module):
 
         return integral, intensity
     
-    @staticmethod
-    def train_step(model, minibatch, optimizer, device, update_or_not):
+    def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
         model.train()
 
@@ -56,16 +55,12 @@ class TemporalModel(nn.Module):
             intensity=intensity, intensity_integral=intensity_integral
         )
         loss.backward()
-        if update_or_not:
-            optimizer.step_and_update_lr()
-            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[2].sum()
     
         return loss, fact
     
-    @staticmethod
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -83,7 +78,6 @@ class TemporalModel(nn.Module):
     
         return loss, fact
         
-    @staticmethod
     def postprocess(input):
         return [input[0], input[0] - input[1]]
 

@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+from ..utils import BasicModule
 
 from .models import CombinedSpatiotemporalModel, JumpCNFSpatiotemporalModel, SelfAttentiveCNFSpatiotemporalModel, JumpGMMSpatiotemporalModel
 from .models.spatial import GaussianMixtureSpatialModel, IndependentCNF, JumpCNF, SelfAttentiveCNF
@@ -7,7 +7,7 @@ from .models.temporal import HomogeneousPoissonPointProcess, HawkesPointProcess,
 from .models.temporal.neural import ACTFNS as TPP_ACTFNS
 
 
-class CNFWrapper(nn.Module):
+class CNFWrapper(BasicModule):
     def __init__(self, device, model_type, tpp_type, **kwargs):
         '''
         CNF model wrapper
@@ -110,8 +110,7 @@ class CNFWrapper(nn.Module):
     def forward(self, event_times, event_types, mask):
         return self.model(event_times, event_types, mask, self.t_0, self.t_1)
 
-    @staticmethod
-    def train_step(model, minibatch, optimizer, device, update_or_not):
+    def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
         model.train()
 
@@ -125,16 +124,12 @@ class CNFWrapper(nn.Module):
         loss = space_sum + time_sum
     
         loss.backward()
-        if update_or_not:
-            optimizer.step_and_update_lr()
-            optimizer.zero_grad()
     
         time_loss = time_sum.item()
         fact = minibatch[1].sum()
     
         return time_loss, fact
     
-    @staticmethod
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -155,7 +150,6 @@ class CNFWrapper(nn.Module):
     
         return time_loss, fact
         
-    @staticmethod
     def postprocess(input):
         return [input[0], input[0] - input[1]]
 

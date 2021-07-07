@@ -1,13 +1,13 @@
 from .submodel import FullyNN
+from ..utils import BasicModule
 import torch
-import torch.nn as nn
 
 
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
 
-class FullyNNModel(nn.Module):
+class FullyNNModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
@@ -40,12 +40,10 @@ class FullyNNModel(nn.Module):
 
         return integral, intensity
 
-    @staticmethod
-    def train_step(model, minibatch, optimizer, device, update_or_not):
+    def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
     
         model.train()
-            
         intensity_integral, intensity = model(
                 minibatch[0].to(device), minibatch[1].to(device)
         )
@@ -54,16 +52,12 @@ class FullyNNModel(nn.Module):
             intensity=intensity, intensity_integral=intensity_integral
         )
         loss.backward()
-        if update_or_not:
-            optimizer.step_and_update_lr()
-            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[2].sum()
-    
+        
         return loss, fact
     
-    @staticmethod
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -81,7 +75,6 @@ class FullyNNModel(nn.Module):
     
         return loss, fact
 
-    @staticmethod
     def postprocess(input):
         return [input[0], input[0] - input[1]]
 

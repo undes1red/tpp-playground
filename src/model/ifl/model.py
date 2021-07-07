@@ -1,8 +1,7 @@
 from .log_norm_mix import LogNormMix
+from ..utils import BasicModule
 
-import torch.nn as nn
-
-class ifl(nn.Module):
+class ifl(BasicModule):
     def __init__(self, num_marks: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
                        context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU"):
         super(ifl, self).__init__()
@@ -28,8 +27,7 @@ class ifl(nn.Module):
         '''
         return self.model.log_prob(minibatch)
 
-    @staticmethod
-    def train_step(model, minibatch, optimizer, device, update_or_not):
+    def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
     
         model.train()
@@ -38,16 +36,12 @@ class ifl(nn.Module):
     
         loss = loss_f(log_likelihood)
         loss.backward()
-        if update_or_not:
-            optimizer.step_and_update_lr()
-            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[1].sum()
     
         return loss, fact
     
-    @staticmethod
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -61,7 +55,6 @@ class ifl(nn.Module):
     
         return loss, fact
 
-    @staticmethod
     def postprocess(input):
         return [input[0], input[0] - input[1]]
 

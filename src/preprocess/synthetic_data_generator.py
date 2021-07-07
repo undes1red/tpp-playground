@@ -9,7 +9,7 @@ from scipy.stats import lognorm
 ######################################################
 ### homogeneous possion process
 ######################################################
-def generate_stationary_poisson(n):
+def generate_poisson(n):
     tau = np.random.exponential(size=n)
     T = tau.cumsum()
     score = np.ones_like(T)
@@ -182,14 +182,22 @@ def transform_autoregression(data_input, max_seq):
 
     return pd.DataFrame.from_dict({'data': data, 'result': result, 'score': score})
 
-def data_gen(name, data_size, seq_len, autoregression = False):
+dataset_dict = {
+    'hawkes_1': generate_hawkes1,
+    'hawkes_2': generate_hawkes2,
+    'self_correcting': generate_self_correcting,
+    'stationary_renewal': generate_stationary_renewal,
+    'poisson': generate_poisson
+}
+
+def data_gen(name, dataset, data_size, seq_len, autoregression = False):
     data = {'index': [], 'time_seq': [], 'score': []}
     if autoregression:
         gen_seq_len = seq_len * 2
     else:
         gen_seq_len = seq_len
     for i in range(data_size):
-        time, score = generate_hawkes1(gen_seq_len)
+        time, score = dataset_dict[dataset](gen_seq_len)
         data['index'].append(i)
         data['time_seq'].append(time.tolist())
         data['score'].append(score.tolist())
@@ -203,7 +211,7 @@ def data_gen(name, data_size, seq_len, autoregression = False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--dataset_name', type=str, choices=['hawkes', 'possion', 'self_correcting', 'stationary_renewal'],
+    parser.add_argument('--dataset_name', type=str, choices=['hawkes_1', 'hawkes_2', 'poisson', 'self_correcting', 'stationary_renewal'],
                         help="How to generate synthetic temporal point process data.")
     parser.add_argument('--data_type', type=str, choices=['autoregression', 'sequence'],
                         help='Autoregression: Each line of data comprise three parts: history: relative time sequence of history events,\
@@ -223,10 +231,10 @@ if __name__ == '__main__':
     np.random.seed(opt.random_seed)
 
     if opt.data_type == 'autoregression':
-        data_gen('train', opt.train_size, opt.seq_length, True)
-        data_gen('evaluate', opt.eva_size, opt.seq_length, True)
-        data_gen('test', opt.test_size, opt.seq_length, True)
+        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length, True)
+        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length, True)
+        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length, True)
     else:
-        data_gen('train', opt.train_size, opt.seq_length)
-        data_gen('evaluate', opt.eva_size, opt.seq_length)
-        data_gen('test', opt.test_size, opt.seq_length)
+        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length)
+        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length)
+        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length)

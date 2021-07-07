@@ -1,7 +1,7 @@
-import torch.nn as nn
+from ..utils import BasicModule
 from .ctlstm import CTLSTM
 
-class CTLSTMwrapper(nn.Module):
+class CTLSTMwrapper(BasicModule):
     def __init__(self, hidden_dim, device, mc_sample_num = 1., event_num = 1, beta = 1):
         super(CTLSTMwrapper, self).__init__()
         self.device = device
@@ -25,7 +25,7 @@ class CTLSTMwrapper(nn.Module):
                           eval_tag = eval_tag)
 
     @staticmethod
-    def train_step(model, minibatch, optimizer, device, update_or_not):
+    def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
     
         model.train()
@@ -38,9 +38,6 @@ class CTLSTMwrapper(nn.Module):
             value = log_likelihood
         )
         loss.backward()
-        if update_or_not:
-            optimizer.step_and_update_lr()
-            optimizer.zero_grad()
     
         loss = loss.item()
         fact = minibatch[1].sum()

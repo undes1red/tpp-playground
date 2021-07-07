@@ -57,8 +57,11 @@ def logfile_print_format(input):
 def choose_metric(evaluation_report, test_report):
     '''
     Choose the metric values that you want to employ for model performance comparison.
+
+    You'd better to mark the name of each object in the output list here.
+    [relative loss on evaluation dataset, relative loss on test dataset]
     '''
-    return [torch.abs(evaluation_report[-1]), torch.abs(test_report[-1])]
+    return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
 
 metric_number = 2 # metric number is the length of the output of choose_metric
 
@@ -86,6 +89,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
         file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
+        model_logger = getLogger(name = 'best_model', file = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.log'))
 
         if opt.tensorboard:
             from torch.utils.tensorboard import SummaryWriter
@@ -105,7 +109,10 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                                           on_trace_ready=torch.profiler.tensorboard_trace_handler(dir_name = os.path.join(opt.log, 'tensorboard')),with_stack=True)
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
-        step_result = model_class.train_step(model, data, optimizer, device = opt.device, update_or_not = current_step % opt.agg_update_step == 0)
+        step_result = model_class.train_step(model, data, device = opt.device)
+        if current_step % opt.agg_update_step == 0:
+            optimizer.step_and_update_lr()
+            optimizer.zero_grad()
 
         report_sum = lst_add_lst(report_sum, step_result)
         if opt.profiler:
@@ -149,6 +156,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                         if metric_checker.compare(choose_metric(eva_report, test_report)) and current_step > opt.n_warmup_steps:
                             torch.save(checkpoint, model_name)
                             logger.info('  The checkpoint file has been updated.')
+                            model_logger.info(f'{metric_checker.show()}')
                 if file_logger:
                     eva = logfile_print_format(eva_report)
                     test = logfile_print_format(test_report)
