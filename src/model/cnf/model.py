@@ -126,9 +126,10 @@ class CNFWrapper(BasicModule):
         loss.backward()
     
         time_loss = time_sum.item()
+        space_loss = space_sum.item()
         fact = minibatch[1].sum()
     
-        return time_loss, fact
+        return time_loss, space_loss, fact
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
@@ -146,13 +147,42 @@ class CNFWrapper(BasicModule):
         
         loss = loss.item()
         time_loss = time_sum.item()
+        space_loss = space_sum.item()
         fact = minibatch[1].sum()
     
-        return time_loss, fact
+        return time_loss, space_loss, fact
         
     def postprocess(input):
-        return [input[0], input[0] - input[1]]
+        '''
+        [time absolute loss, spatio loss, time relative loss]
+        '''
+        return [input[0], input[1], input[0] - input[2]]
 
+    def log_print_format(input):
+        format_dict = {}
+        format_dict['absolute_loss'] = input[0]
+        format_dict['spatial_loss'] = input[1]
+        format_dict['relative_loss'] = input[2]
+        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'spatial_loss': ':8.5f'}
+        return format_dict
+    
+    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'spatial_loss': ':8.5f'}
+
+    def logfile_print_format(input):
+        format_dict = {}
+        format_dict['absolute loss'] = input[0]
+        format_dict['spatial_loss'] = input[1]
+        format_dict['relative loss'] = input[2]
+        return format_dict
+    
+    metric_number = 2 # metric number is the length of the output of choose_metric
+
+    def choose_metric(evaluation_report, test_report):
+        '''
+        [relative loss on evaluation dataset, relative loss on test dataset]
+        '''
+        return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
+    
 
 def loss_f(loglik):
     '''

@@ -1,6 +1,8 @@
 from .log_norm_mix import LogNormMix
 from ..utils import BasicModule
 
+import torch
+
 class ifl(BasicModule):
     def __init__(self, num_marks: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
                        context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU"):
@@ -58,6 +60,28 @@ class ifl(BasicModule):
     def postprocess(input):
         return [input[0], input[0] - input[1]]
 
+    def log_print_format(input):
+        format_dict = {}
+        format_dict['absolute_loss'] = input[0]
+        format_dict['relative_loss'] = input[1]
+        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
+        return format_dict
+    
+    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
+
+    def logfile_print_format(input):
+        format_dict = {}
+        format_dict['absolute loss'] = input[0]
+        format_dict['relative loss'] = input[1]
+        return format_dict
+    
+    def choose_metric(evaluation_report, test_report):
+        '''
+        [relative loss on evaluation dataset, relative loss on test dataset]
+        '''
+        return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
+    
+    metric_number = 2 # metric number is the length of the output of choose_metric
 
 def loss_f(loglik):
     '''

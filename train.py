@@ -20,51 +20,6 @@ logger = getLogger(__name__)
 # Hope we can get rid of absolute path in training scripts.
 root_path = os.path.dirname(os.path.abspath(__file__))
 
-def log_print_format(input):
-    '''
-    The output format definition. The rule-defining dict should contain objects listed below:
-    1. 'num_format': Please, do not modify the name because the architecture will detect this key and use the corresponding subdict as the output format definition.
-    2. What you want to output. You should register the name of each number in list 'input' as a key and each matching number as a value.
-    Caveats: All used names should have their own format definition. If you really don't need it for some special outputs, please set it to an empty string ''.
-    e.x.:
-    input = [a, b]. Expected output: loss_a: a, loss_b: b. Both a and b should keep 5 decimal places.
-    The format_dict should be like this:
-    {
-        'loss_a': a,
-        'loss_b': b,
-        'num_format': {'loss_a': ':.5f', 'relative_loss': ':.5f'}
-    }
-    '''
-    format_dict = {}
-    format_dict['absolute_loss'] = input[0]
-    format_dict['relative_loss'] = input[1]
-    format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
-    return format_dict
-
-'''
-Q: Why is the print format function different from the file print format function?
-A: Because FileLogger needs to know what it should output and prepare the log file before the training procedure begins. Item 'step' in dict 'logfile_format'
-is reserved to record the training progress so you should always have it in 'logfile_format'.
-Other stuff are the same as what log_print_format() does.
-'''
-logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
-def logfile_print_format(input):
-    format_dict = {}
-    format_dict['absolute loss'] = input[0]
-    format_dict['relative loss'] = input[1]
-    return format_dict
-
-def choose_metric(evaluation_report, test_report):
-    '''
-    Choose the metric values that you want to employ for model performance comparison.
-
-    You'd better to mark the name of each object in the output list here.
-    [relative loss on evaluation dataset, relative loss on test dataset]
-    '''
-    return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
-
-metric_number = 2 # metric number is the length of the output of choose_metric
-
 def train(model, model_class, training_data, evaluation_data, test_data, optimizer, opt, model_suffix, rank):
     '''
     Main training procedure. Mostly, one should not modify it.
@@ -88,14 +43,14 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
-        file_logger = FileLogger(logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
+        file_logger = FileLogger(model_class.logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
         model_logger = getLogger(name = 'best_model', file = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.log'))
 
         if opt.tensorboard:
             from torch.utils.tensorboard import SummaryWriter
             writer = SummaryWriter(log_dir = os.path.join(opt.log, log_folder))
 
-    metric_checker = Metric(metric_number)
+    metric_checker = Metric(model_class.metric_number)
     report_sum = [0] * opt.report_result_length # [absolute loss sum, relative loss sum]
 
     desc = '  - (Training)   '
@@ -121,9 +76,9 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         if current_step % opt.n_report_steps == 0 and rank == 0:
             logger.warning(f'Brief training status report at step {current_step}.')
             report_sum = model_class.postprocess(lst_divide(report_sum, opt.n_report_steps))
-            print_performances(logger = logger, procedure='Training', **log_print_format(report_sum))
+            print_performances(logger = logger, procedure='Training', **(model_class.log_print_format(report_sum)))
             if rank == 0 and file_logger:
-                report = logfile_print_format(report_sum)
+                report = model_class.logfile_print_format(report_sum)
                 file_logger.print(logger_name = 'training_log', step = current_step, **report)
                 if writer:
                     for key, value in report.items():
@@ -140,8 +95,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 evaluation(test_data, model, model_class, device = opt.device, output_length = opt.report_result_length)
             )
             if rank == 0:
-                print_performances(logger = logger, procedure='Evaluation', **log_print_format(eva_report))
-                print_performances(logger = logger, procedure='Test', **log_print_format(test_report))
+                print_performances(logger = logger, procedure='Evaluation', **(model_class.log_print_format(eva_report)))
+                print_performances(logger = logger, procedure='Test', **(model_class.log_print_format(test_report)))
             
                 # We will store the checkpoint after model evaluation.
                 checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict()}
@@ -153,13 +108,13 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                         torch.save(checkpoint, model_name)
                     elif opt.save_mode == 'best':
                         model_name = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.chkpt')
-                        if metric_checker.compare(choose_metric(eva_report, test_report)) and current_step > opt.n_warmup_steps:
+                        if metric_checker.compare(model_class.choose_metric(eva_report, test_report)) and current_step > opt.n_warmup_steps:
                             torch.save(checkpoint, model_name)
                             logger.info('  The checkpoint file has been updated.')
                             model_logger.info(f'{metric_checker.show()}')
                 if file_logger:
-                    eva = logfile_print_format(eva_report)
-                    test = logfile_print_format(test_report)
+                    eva = model_class.logfile_print_format(eva_report)
+                    test = model_class.logfile_print_format(test_report)
                     file_logger.print(logger_name = 'evaluation_log', step = current_step, **eva)
                     file_logger.print(logger_name = 'test_log', step = current_step, **test)
                     if writer:
@@ -169,7 +124,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                     
     if rank == 0:
         if writer:
-            writer.add_hparams(model_hyperparameters, logfile_print_format(metric_checker.show()))
+            writer.add_hparams(model_hyperparameters, model_class.logfile_print_format(metric_checker.show()))
             writer.flush()
             writer.close()
         logger.warning('Training finished!')

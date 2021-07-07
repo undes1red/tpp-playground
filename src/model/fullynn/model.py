@@ -77,6 +77,29 @@ class FullyNNModel(BasicModule):
 
     def postprocess(input):
         return [input[0], input[0] - input[1]]
+    
+    def log_print_format(input):
+        format_dict = {}
+        format_dict['absolute_loss'] = input[0]
+        format_dict['relative_loss'] = input[1]
+        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
+        return format_dict
+    
+    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
+
+    def logfile_print_format(input):
+        format_dict = {}
+        format_dict['absolute loss'] = input[0]
+        format_dict['relative loss'] = input[1]
+        return format_dict
+    
+    def choose_metric(evaluation_report, test_report):
+        '''
+        [relative loss on evaluation dataset, relative loss on test dataset]
+        '''
+        return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
+    
+    metric_number = 2 # metric number is the length of the output of choose_metric
 
 def loss_f(intensity, intensity_integral):
     '''
