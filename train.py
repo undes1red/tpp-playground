@@ -1,15 +1,13 @@
 # The model training script
-import argparse, os, random
+import argparse, os, random, sys, datetime
 from tqdm import tqdm
 from itertools import cycle
+import numpy as np
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-import sys
-import numpy as np
-import datetime
 
 from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
 from src.model import get_model
@@ -51,7 +49,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             writer = SummaryWriter(log_dir = os.path.join(opt.log, log_folder))
 
     metric_checker = Metric(model_class.metric_number)
-    report_sum = [0] * opt.report_result_length # [absolute loss sum, relative loss sum]
+    report_sum = [0] * opt.report_result_length
 
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)

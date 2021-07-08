@@ -12,16 +12,28 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
 
     @staticmethod
     def train_step(model, minibatch, device):
+        '''
+        Please tell us how your model propagates and obtains a proper loss value using one minibatch from the training dataset.
+        '''
         raise NotImplementedError()
 
     @staticmethod
     def evaluation_step(model, minibatch, device):
+        '''
+        Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.
+        '''
         raise NotImplementedError()
 
     @staticmethod
     def postprocess(input):
+        '''
+        The input is the output of function train_step() or function evaluation_step().
+        '''
         pass
 
+    '''
+    The input of log_print_format() and logfile_print_format() is the output object of function postprocess()
+    '''
     @staticmethod
     def log_print_format(input):
         '''
@@ -54,14 +66,17 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         raise NotImplementedError()
 
     
+    metric_number = 0 # metric number is the length of the output of choose_metric
+    '''
+    evaluation_report and test_report have the same variable mapping with postprocess.
+    '''
     @staticmethod
     def choose_metric(evaluation_report, test_report):
         '''
         Choose the metric values that you want to employ for model performance comparison.
     
-        You'd better to mark the name of each object in the output list here.
+        You'd better to mark the name of each object in the output list as a reminder, like:
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
         raise NotImplementedError()
 
-    metric_number = 0 # metric number is the length of the output of choose_metric
