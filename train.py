@@ -225,11 +225,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # The Ultimate
     parser.add_argument('--no_seed', action='store_true',
-                        help='Do not freeze random seed. Use this option if you want to explore your model robustness.')
+                        help='Do not freeze random seed. Use this option if you want to explore your model\'s robustness.')
     parser.add_argument('--seed', type=int, default=42,
-                        help='The global random seed.')
+                        help='Set global random seed.')
     parser.add_argument('--cuda', action='store_true', 
-                        help="Set it to true if you want to use GPU.")
+                        help="Set it to true if you want to use GPU to accelerate model training.")
     parser.add_argument('--profiler', action='store_true', 
                         help="Use a profiler to probe the bottleneck of your model when your model is slow. (Because of pytorch issue #56008, profiler support is now disabled.)")
     parser.add_argument("--ngpus", type=int, default=1,
@@ -253,7 +253,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_evaluation_steps', type=int, default=200, help='The number of steps that follows a model evaluation.')
     parser.add_argument('--n_report_steps', type = int, default=200, help='After a given number of steps, report the current model training status.')
     parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
-    parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches to do a optimizer step. The number of practical training steps is \
+    parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
                                                                         agg_update_step * n_training_steps')
 
     # Model-related hyperparameters
@@ -283,13 +283,12 @@ if __name__ == '__main__':
     # Reproducibility
     if opt.no_seed:
         opt.seed = random.randint(0, 2**16)
-        logger.warning(f'Random seed is not given explicitly. This time the used random seed is {opt.seed}.')
+        logger.warning(f'Random seed is not given explicitly. This time we utilize {opt.seed} as the random seed.')
     np.random.seed(opt.seed)
     torch.manual_seed(opt.seed)
     random.seed(opt.seed)
     torch.cuda.manual_seed_all(opt.seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
 
     # Relative path to absolute path
     opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
