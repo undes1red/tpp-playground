@@ -96,6 +96,9 @@ class FileLogger(object):
             self.loggers[name] = getLogger(name, path)
         self.print_format = print_format
         self.print_item = self.print_format.keys()
+        self.format_string = ''
+        for key in self.print_item:
+            self.format_string += '{' + key + self.print_format[key] + '}, '
 
         # Initial info
         for logger in self.loggers.values():
@@ -103,12 +106,7 @@ class FileLogger(object):
 
     def print(self, logger_name, **kwargs):
         logger = self.loggers[logger_name]
-
-        info = ''
-        for key in self.print_item:
-            info += '{' + key + self.print_format[key] + '}, '
-        logger.info(info.format_map(kwargs))
-
+        logger.info(self.format_string.format_map(kwargs))
 
 # Read and convert a json file into a dict object.
 def read_json(json_path):

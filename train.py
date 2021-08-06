@@ -38,11 +38,16 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         log_train_file = os.path.join(opt.log, log_folder, 'train.log')
         log_eva_file = os.path.join(opt.log, log_folder, 'evaluate.log')
         log_test_file = os.path.join(opt.log, log_folder, 'test.log')
+        log_best_model_file = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.log')
 
         logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
         # These log_items defined here should match corresponding logger's print() method.
         file_logger = FileLogger(model_class.logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
-        model_logger = getLogger(name = 'best_model', file = os.path.join(opt.save_model, 'output_' + folder_suffix, 'checkpoint.log'))
+        metric_format_dict = {
+            **{'step': ''},
+            **dict(zip([f'metric_{metric_count}' for metric_count in range(1, model_class.metric_number + 1)], [':8.5f'] * model_class.metric_number))
+        }
+        best_model_logger = FileLogger(metric_format_dict, best_model = log_best_model_file)
 
         if opt.tensorboard:
             from torch.utils.tensorboard import SummaryWriter
@@ -103,7 +108,11 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                         if metric_checker.compare(model_class.choose_metric(eva_report, test_report)) and current_step > opt.n_warmup_steps:
                             torch.save(checkpoint, model_name)
                             logger.info('  The checkpoint file has been updated.')
-                            model_logger.info(f'{metric_checker.show()}')
+                            best_model_dict = dict(zip(
+                                [f'metric_{metric_count}' for metric_count in range(1, model_class.metric_number + 1)], \
+                                model_class.choose_metric(eva_report, test_report)
+                                ))
+                            best_model_logger.print(logger_name = 'best_model', step = current_step, **best_model_dict)
                 if file_logger:
                     eva = model_class.logfile_print_format(eva_report)
                     test = model_class.logfile_print_format(test_report)
