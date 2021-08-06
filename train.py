@@ -3,6 +3,7 @@ import argparse, os, random, sys, datetime
 from tqdm import tqdm
 from itertools import cycle
 import numpy as np
+import apex.amp as amp
 
 import torch
 import torch.distributed as dist
@@ -96,7 +97,11 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 print_performances(logger = logger, procedure='Test', lr = optimizer.get_lr(), **(model_class.log_print_format(test_report)))
             
                 # We will store the checkpoint after model evaluation.
-                checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict()}
+                if opt.fp16:
+                    checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict(),
+                                 'optimizer': optimizer.state_dict(), 'amp': amp.state_dict()}
+                else:
+                    checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict(), 'optimizer': optimizer.state_dict()}
             
                 if opt.save_model and current_step > opt.n_warmup_steps:
                     if opt.save_mode == 'all':
@@ -129,7 +134,6 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             writer.flush()
             writer.close()
         logger.warning('Training finished!')
-        logger.info(f'The best metric value is {metric_checker.show()}.')
 
 def _main(rank, logger, opt):
     '''
@@ -184,7 +188,6 @@ def _main(rank, logger, opt):
     model = model_class(device = opt.device,
         **model_param
     )
-    model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
 
     if rank == 0:
         logger.info(opt)
@@ -196,6 +199,12 @@ def _main(rank, logger, opt):
     # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
     # If you want to use another learning rate scheduler, plz modify it in src.optim.
     sched_optimizer = ScheduledOptim(opt, model, rank)
+    if opt.fp16:
+        # Remove the original model
+        del model
+        model = sched_optimizer.get_model()
+    
+    model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
 
     train(rank = rank, model = model, model_class = model_class, training_data = training_data, evaluation_data = evaluation_data,
           test_data = test_data, optimizer = sched_optimizer, opt = opt, model_suffix = param_names)
@@ -235,6 +244,10 @@ if __name__ == '__main__':
                         help="Set it to true if you want to use GPU to accelerate model training.")
     parser.add_argument("--ngpus", type=int, default=1,
                         help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1.")
+    parser.add_argument("--fp16", action='store_true',
+                        help="Use this argument to enable fp16 training shipped by NVIDIA apex.")
+    parser.add_argument("--opt_level", type=str, default='O1',
+                        help="The optimization level of mixed precision training. Only effective when --fp16 training is enabled.")
 
 
     # Input data

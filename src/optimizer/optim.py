@@ -21,12 +21,17 @@ class ScheduledOptim():
                 raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
     
         param = read_json(opt.optim_json)
+        self._model = None
         if rank == 0:
             logger.info(f'The additional input optimizer hyperparameters are {param}')
         if hasattr(optim, opt.op_name):
             self._optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
         else:
             self._optimizer = top.get(opt.op_name)(model.parameters(), opt.lr, **param)
+
+        if opt.fp16:
+            import apex.amp as amp
+            self._model, self._optimizer = amp.initialize(model, self._optimizer, opt_level = opt.opt_level)
         
         if opt.lr_sched:
             self.n_warmup_steps = opt.n_warmup_steps
@@ -56,6 +61,19 @@ class ScheduledOptim():
             lr.append(items['lr'])
 
         return mean(lr)
+
+    def get_model(self):
+        if self._model == None:
+            raise Exception('Only with mixed precision training enabled you can get model from optimizer.')
+        else:
+            return self._model
+    
+    def state_dict(self):
+        return {'optimizer': self._optimizer.state_dict(), 'scheduler': self._scheduler.state_dict()}
+    
+    def load_state_dict(self, state_dict):
+        self._optimizer.load_state_dict(state_dict['optimizer'])
+        self._scheduler.load_state_dict(state_dict['scheduler'])
 
 
 def get_lr_sheduler(optimizer, num_warmup_steps, num_training_steps, num_cycles, last_epoch):
