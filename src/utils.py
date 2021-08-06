@@ -15,7 +15,8 @@ def getEventLogger(name, root):
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
     # create formatter
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d]: %(message)s', datefmt = '%Y-%m-%d %H:%M:%S')
+    # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     # add formatter to ch
     ch.setFormatter(formatter)
     # add ch to logger
@@ -77,11 +78,11 @@ def lst_divide(lst, denominator):
     return [x/denominator for x in lst]
 
 # How to print formated logs via logger and format definitions.
-def print_performances(logger, procedure, num_format = None, **kwargs):
+def print_performances(logger, procedure, lr = None, num_format = None, **kwargs):
     if num_format is None or len(num_format) != len(kwargs):
         logger_.exception('Bad num_format dictoinary.')
 
-    info = f'{procedure:12} '
+    info = f'{procedure:12}' + (f' ,lr: {lr:8.5f}' if lr else '')
     for key in kwargs.keys():
         info += ' ,' + key + ': {' + key + num_format[key] + '}'
     logger.info(info.format_map(kwargs))

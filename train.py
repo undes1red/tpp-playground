@@ -56,10 +56,6 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     training = cycle(iter(training_data))
     optimizer.zero_grad()
 
-    if opt.profiler:
-        profiler = torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-                                          schedule=torch.profiler.schedule(wait=1,warmup=1,active=2),
-                                          on_trace_ready=torch.profiler.tensorboard_trace_handler(dir_name = os.path.join(opt.log, 'tensorboard')),with_stack=True)
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
         step_result = model_class.train_step(model, data, device = opt.device)
@@ -68,13 +64,11 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             optimizer.zero_grad()
 
         report_sum = lst_add_lst(report_sum, step_result)
-        if opt.profiler:
-            profiler.step()
     
         if current_step % opt.n_report_steps == 0 and rank == 0:
             logger.warning(f'Brief training status report at step {current_step}.')
             report_sum = model_class.postprocess(lst_divide(report_sum, opt.n_report_steps))
-            print_performances(logger = logger, procedure='Training', **(model_class.log_print_format(report_sum)))
+            print_performances(logger = logger, procedure='Training', lr = optimizer.get_lr(), **(model_class.log_print_format(report_sum)))
             if rank == 0 and file_logger:
                 report = model_class.logfile_print_format(report_sum)
                 file_logger.print(logger_name = 'training_log', step = current_step, **report)
@@ -93,8 +87,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 evaluation(test_data, model, model_class, device = opt.device, output_length = opt.report_result_length)
             )
             if rank == 0:
-                print_performances(logger = logger, procedure='Evaluation', **(model_class.log_print_format(eva_report)))
-                print_performances(logger = logger, procedure='Test', **(model_class.log_print_format(test_report)))
+                print_performances(logger = logger, procedure='Evaluation', lr = optimizer.get_lr(), **(model_class.log_print_format(eva_report)))
+                print_performances(logger = logger, procedure='Test', lr = optimizer.get_lr(), **(model_class.log_print_format(test_report)))
             
                 # We will store the checkpoint after model evaluation.
                 checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict()}
@@ -181,7 +175,7 @@ def _main(rank, logger, opt):
     model = model_class(device = opt.device,
         **model_param
     )
-    model = DDP(model, device_ids = [rank], find_unused_parameters = True)
+    model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
 
     if rank == 0:
         logger.info(opt)
@@ -202,7 +196,7 @@ def main(rank, ngpus, opt):
     '''
     Multiprocessing training controller.
     '''
-    dist.init_process_group("nccl", rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+    dist.init_process_group("nccl" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
 
     logger = getLogger('__Trainer__')
 
@@ -230,8 +224,6 @@ if __name__ == '__main__':
                         help='Set global random seed.')
     parser.add_argument('--cuda', action='store_true', 
                         help="Set it to true if you want to use GPU to accelerate model training.")
-    parser.add_argument('--profiler', action='store_true', 
-                        help="Use a profiler to probe the bottleneck of your model when your model is slow. (Because of pytorch issue #56008, profiler support is now disabled.)")
     parser.add_argument("--ngpus", type=int, default=1,
                         help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1.")
 

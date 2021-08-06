@@ -48,7 +48,7 @@ class RecurrentTPP(nn.Module):
 
     def get_features(self, batch) -> torch.Tensor:
         """
-        Convert each event in a sequence into a feature vector.
+        Convert each event in a sequence into a feature vector using normalization. 
 
         Args:
             batch: Batch of sequences in padded format.

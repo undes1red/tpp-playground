@@ -120,9 +120,7 @@ class LogNormMix(RecurrentTPP):
         """
         raw_params = self.linear(context)  # (batch_size, seq_len, 3 * num_mix_components)
         # Slice the tensor to get the parameters of the mixture
-        locs = raw_params[..., :self.num_mix_components]
-        log_scales = raw_params[..., self.num_mix_components: (2 * self.num_mix_components)]
-        log_weights = raw_params[..., (2 * self.num_mix_components):]
+        locs, log_scales, log_weights = torch.chunk(raw_params, 3, dim = -1)
 
         log_scales = clamp_preserve_gradients(log_scales, -5.0, 3.0)
         log_weights = torch.log_softmax(log_weights, dim=-1)

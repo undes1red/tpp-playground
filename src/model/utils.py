@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
-import torch.nn as nn
 
+import torch.nn as nn
 
 class BasicModule(nn.Module, metaclass = ABCMeta):
     '''
@@ -8,33 +8,35 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
     '''
     @abstractmethod
     def forward(self, *args):
-        raise NotImplementedError()
-
+        '''
+        '''
+    
     @staticmethod
+    @abstractmethod
     def train_step(model, minibatch, device):
         '''
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the training dataset.
         '''
-        raise NotImplementedError()
 
     @staticmethod
+    @abstractmethod
     def evaluation_step(model, minibatch, device):
         '''
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.
         '''
-        raise NotImplementedError()
 
     @staticmethod
+    @abstractmethod
     def postprocess(input):
         '''
-        The input is the output of function train_step() or function evaluation_step().
+        The input is the output of function train_step() or function evaluation_step(). You should return a list
         '''
-        pass
 
     '''
     The input of log_print_format() and logfile_print_format() is the output object of function postprocess()
     '''
     @staticmethod
+    @abstractmethod
     def log_print_format(input):
         '''
         The output format definition. The rule-defining dict should contain objects listed below:
@@ -50,7 +52,6 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
             'num_format': {'loss_a': ':.5f', 'relative_loss': ':.5f'}
         }
         '''
-        raise NotImplementedError()
 
     
     '''
@@ -62,8 +63,11 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
     logfile_format = {'step': ''}
 
     @staticmethod
+    @abstractmethod
     def logfile_print_format(input):
-        raise NotImplementedError()
+        '''
+        See the annotations above.
+        '''
 
     
     metric_number = 0 # metric number is the length of the output of choose_metric
@@ -71,6 +75,7 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
     evaluation_report and test_report have the same variable mapping with postprocess.
     '''
     @staticmethod
+    @abstractmethod
     def choose_metric(evaluation_report, test_report):
         '''
         Choose the metric values that you want to employ for model performance comparison.
@@ -78,5 +83,4 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         You'd better to mark the name of each object in the output list as a reminder, like:
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        raise NotImplementedError()
 
