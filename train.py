@@ -3,7 +3,6 @@ import argparse, os, random, sys, datetime
 from tqdm import tqdm
 from itertools import cycle
 import numpy as np
-import apex.amp as amp
 
 import torch
 import torch.distributed as dist
@@ -24,6 +23,9 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     Main training procedure. Mostly, one should not modify it.
     If you do everything in the right way, it won't complain about anything and will commence the model training.
     '''
+    # fp16 training
+    if opt.fp16:
+        import apex.amp as amp
 
     log_train_file, log_eva_file, log_test_file = None, None, None
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)

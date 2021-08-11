@@ -114,10 +114,16 @@ class RecurrentTPP(nn.Module):
             log_p: shape (batch_size,)
 
         """
+        # extract features from minibatch, data normalization applies here.
         features = self.get_features(batch)
+        # RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
+        # metadata and sequence embedding from the context representation. These embeddings are the backbone of the
+        # distribution.
+        # inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
         context = self.get_context(features)
         inter_time_dist = self.get_inter_time_dist(context)
         inter_times = batch[1].clamp(1e-10)
+        # Using obtained invertible distribution we can obatin the log probability for each inter time.
         log_p = inter_time_dist.log_prob(inter_times)  # (batch_size, seq_len)
 
         # Survival probability of the last interval (from t_N to t_end).

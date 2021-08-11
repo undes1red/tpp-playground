@@ -6,8 +6,6 @@ from .cnf.model import CNFWrapper
 from .ifl.model import ifl
 from .rmtpp.model import RMTPP
 
-from .utils import BasicModule
-
 from ..utils import getLogger
 
 logger = getLogger(__name__)

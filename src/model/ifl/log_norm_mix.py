@@ -30,9 +30,9 @@ class LogNormalMixtureDistribution(TransformedDistribution):
     """
     def __init__(
         self,
-        locs: torch.Tensor,
-        log_scales: torch.Tensor,
-        log_weights: torch.Tensor,
+        locs: torch.Tensor,                 # \mu
+        log_scales: torch.Tensor,           # s without exp()
+        log_weights: torch.Tensor,          # w
         mean_log_inter_time: float = 0.0,
         std_log_inter_time: float = 1.0
     ):
