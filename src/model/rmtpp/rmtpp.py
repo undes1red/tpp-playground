@@ -19,8 +19,8 @@ class Model(nn.Module):
 
         # intensity related
         self.intensity = nn.Linear(output_size, 1)
-        self.time_scalar = nn.Parameter(torch.tensor(.1))
-        self.base_intensity = nn.Parameter(torch.tensor(.1))
+        self.time_scalar = torch.tensor(2.)
+        self.base_intensity = torch.tensor(0.2)
 
     def forward(self, event, time):
         event_vec = self.event_embedding(event.long())

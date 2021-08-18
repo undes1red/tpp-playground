@@ -83,7 +83,7 @@ class DynamicMLP(nn.Module):
         # Mingle history and relative time embedding.
         # time: [batch_size, 1, history_dim]
         # weight: [batch_size, history_dim, intensity_dim]
-        # Result: [batch_size, history_dim]
+        # Result: [batch_size, intensity_dim]
         time = time.unsqueeze(1)
         output = torch.bmm(time, weight).squeeze()
 

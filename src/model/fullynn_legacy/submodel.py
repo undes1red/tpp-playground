@@ -23,7 +23,7 @@ class FullyNN(nn.Module):
         self.rnn = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = rnn_layers, batch_first = True, dropout = dropout).to(device)
 
         self.hidden_x = NonNegLinear(1, d_intensity, bias = False).to(device)
-        self.hidden_p = nn.Linear(d_history, d_intensity, bias = True).to(device)
+        self.hidden_p = nn.Linear(d_history * rnn_layers, d_intensity, bias = True).to(device)
 
         # The original implement counts the hidden_x as one of mlp_layers
         self.mlp = nn.ModuleList([
@@ -36,23 +36,21 @@ class FullyNN(nn.Module):
         self.activate_final = nn.Softplus()
 
 
-    def forward(self, time_history, time_next):
-        '''
-        Args:
-            time_history: [batch_size, seq_len - 1, 1]
-            time_next:    [batch_size, seq_len - 1, 1]
-        '''
+    def forward(self, time_history, time_happen):
         # Reshape hidden output for full connection layers.
-        output, (_, _) = self.rnn(time_history)                                # [batch_size, seq_len - 1, d_history]
+        # hidden: [batch_size, num_rnn_layer * d_history]
+        _, (hidden, _) = self.rnn(time_history.unsqueeze(-1))
+        hidden = hidden.reshape(time_history.shape[0], -1)
 
-        time = self.hidden_x(time_next)                                        # [batch_size, seq_len - 1, d_intensity]
-        hidden = self.hidden_p(output)                                         # [batch_size, seq_len - 1, d_intensity]
+        time = self.hidden_x(time_happen)
+        hidden = self.hidden_p(hidden)
 
-        output = self.activate(time + hidden)                                  # [batch_size, seq_len - 1, d_intensity]
+        output = self.activate(time + hidden)
 
         for layer in self.mlp:
-            output = layer(output)                                             # [batch_size, seq_len - 1, d_intensity]
-            output = self.activate(output)                                     # [batch_size, seq_len - 1, d_intensity]
+            output = layer(output)
+            output = self.activate(output)
+        
+        output = self.activate_final(self.agg(output))
 
-        output = self.activate_final(self.agg(output))                         # [batch_size, seq_len - 1, 1]
         return output

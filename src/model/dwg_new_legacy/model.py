@@ -1,61 +1,54 @@
-from .submodel import FullyNN
+from .submodel import DynamicMLP
 from ..utils import BasicModule
 import torch
-
 
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
 
-class FullyNNModel(BasicModule):
+class TemporalModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
                  rnn_layers,
                  mlp_layers,
-                 nonlinear,
-                 device):
-        super(FullyNNModel, self).__init__()
+                 time_activation,
+                 no_time_weight,
+                 no_scale,
+                 device,
+                 weight_gen_min = None,
+                 time_weight_min = None):
+        super(TemporalModel, self).__init__()
         self.device = device
-        self.model = FullyNN(d_history = d_history, d_intensity = d_intensity,
-                             dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
-                             nonlinear = nonlinear, device = device)
+        self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, weight_gen_min = weight_gen_min,
+                                time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
+                                no_time_weight = no_time_weight, no_scale = no_scale, device = device)
 
-    def forward(self, input_time):
-        time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
-        time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len - 1, 1]
-        time_next = time_next.unsqueeze(-1)                                    # [batch_size, seq_len - 1, 1]
-        time_next.requires_grad = True
+    def forward(self, input_time, input_result):
+        input_result.requires_grad = True
 
-        integral = self.model(time_history, time_next)                         # [batch_size, seq_len - 1, 1]
+        integral = self.model(input_time, input_result)
 
         intensity = torch.autograd.grad(
             outputs=integral,
-            inputs=time_next,
+            inputs=input_result,
             grad_outputs=torch.ones_like(integral),
             create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len - 1, 1]
-
-
+        )[0]
         check_tensor(intensity)
-        assert intensity.shape == integral.shape
 
-        time_next.requires_grad = False
+        input_result.requires_grad = False
+
+        assert intensity.shape == input_result.shape
 
         return integral, intensity
-
-    def train_step(model, minibatch, device):
-        ''' 
-        Epoch operation in training phase.
-        The input minibatch comprise time sequences.
-
-        Args:
-            minibatch: [batch_size, seq_len]
-        '''
     
+    def train_step(model, minibatch, device):
+        ''' Epoch operation in training phase'''
         model.train()
-        intensity_integral, intensity = model(                                 # [batch_size, seq_len - 1, 1]
-                minibatch[0].to(device)
+
+        intensity_integral, intensity = model(
+                minibatch[0].to(device), minibatch[1].to(device)
         )
     
         loss = loss_f(
@@ -64,8 +57,8 @@ class FullyNNModel(BasicModule):
         loss.backward()
     
         loss = loss.item()
-        fact = minibatch[1].sum()
-        
+        fact = minibatch[2].sum()
+    
         return loss, fact
     
     def evaluation_step(model, minibatch, device):
@@ -73,7 +66,7 @@ class FullyNNModel(BasicModule):
     
         model.eval()
         intensity_integral, intensity = model(
-            minibatch[0].to(device)
+            minibatch[0].to(device), minibatch[1].to(device)
         )
     
         loss = loss_f(
@@ -81,13 +74,13 @@ class FullyNNModel(BasicModule):
         )
     
         loss = loss.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[2].sum()
     
         return loss, fact
-
+        
     def postprocess(input):
         return [input[0], input[0] - input[1]]
-    
+
     def log_print_format(input):
         format_dict = {}
         format_dict['absolute_loss'] = input[0]
@@ -111,20 +104,17 @@ class FullyNNModel(BasicModule):
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 
+
 def loss_f(intensity, intensity_integral):
     '''
     The definition of loss.
-
-    Args:
-        intensity:          [batch_size, seq_len - 1, 1]
-        intensity_integral: [batch_size, seq_len - 1, 1]
     '''
     intensity, intensity_integral = intensity.squeeze(), intensity_integral.squeeze()
 
     log_intensity = torch.log(intensity)
     log_p = log_intensity - intensity_integral
-
+    
     loss = -log_p
     loss = torch.clamp(loss, max=10)
-    loss = torch.sum(loss)
+    loss = torch.sum(loss, dim=0)
     return loss

@@ -1,10 +1,12 @@
-from .dwg.model import TemporalModel
-from .dwg_new.model import TemporalModel as TemporalModel_new
-from .fullynn.model import FullyNNModel
+from .dwg_legacy.model import TemporalModel
+from .dwg_new_legacy.model import TemporalModel as TemporalModel_new
+from .fullynn_legacy.model import FullyNNModel_legacy
+
 from .ctlstm.model import CTLSTMwrapper
 from .cnf.model import CNFWrapper
 from .ifl.model import ifl
 from .rmtpp.model import RMTPP
+from .fullynn.model import FullyNNModel
 
 from ..utils import getLogger
 
@@ -13,8 +15,12 @@ logger = getLogger(__name__)
 # One should register their models here.
 # The key of each model is foremost.
 model_zoo = {
-    'dwg': TemporalModel,
-    'dwg_new': TemporalModel_new,
+    # legacy models: these models do not support sequencial datasets.
+    'dwg_legacy': TemporalModel,
+    'dwg_new_legacy': TemporalModel_new,
+    'fullynn_legacy': FullyNNModel_legacy,
+
+    # New implementations: these models support sequencial datasets.
     'fullynn': FullyNNModel,
     'ctlstm': CTLSTMwrapper,
     'cnf': CNFWrapper,
