@@ -116,6 +116,8 @@ class RecurrentTPP(nn.Module):
         """
         # extract features from minibatch, data normalization applies here.
         features = self.get_features(batch)
+        if features.isnan().any():
+            print(batch)
         # RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         # metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         # distribution.

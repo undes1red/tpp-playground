@@ -1,5 +1,8 @@
 # This synthetic data generator bases on Omi's FullyNN project.
 # The original code formed as a jupyter notebook can be retrieved from https://github.com/omitakahiro/NeuralNetworkPointProcess.
+
+# Datasets which need intensity support: stationary_renewal
+
 import numpy as np
 import pandas as pd
 import argparse
@@ -12,25 +15,26 @@ from scipy.stats import lognorm
 def generate_poisson(n):
     tau = np.random.exponential(size=n)
     T = tau.cumsum()
-    score = np.ones_like(T)
-    return T, score
+    intensity = np.ones_like(T)
+    return T, tau, intensity
 
 ######################################################
 ### hawkes process
 ######################################################
 def generate_hawkes1(n):
-    [T,LL] = simulate_hawkes(n,0.2,[0.8,0.0],[1.0,20.0])
+    [T,LL], intensity = simulate_hawkes(n,0.2,[0.8,0.0],[1.0,20.0])
     score = - LL
-    return T, score
+    return T, score, intensity
 
 def generate_hawkes2(n):
-    [T,LL] = simulate_hawkes(n,0.2,[0.4,0.4],[1.0,20.0])
+    [T,LL], intensity = simulate_hawkes(n,0.2,[0.4,0.4],[1.0,20.0])
     score = - LL
-    return T, score
+    return T, score, intensity
 
 def simulate_hawkes(n,mu,alpha,beta):
     T = []
     LL = []
+    Intensity = []
     
     x = 0
     l_trg1 = 0
@@ -55,6 +59,7 @@ def simulate_hawkes(n,mu,alpha,beta):
         if np.random.rand() < l_next/l: #accept
             T.append(x)
             LL.append( np.log(l_next) - l_trg_Int1 - l_trg_Int2 - mu_Int )
+            Intensity.append(l_next)
             l_trg1 += alpha[0]*beta[0]
             l_trg2 += alpha[1]*beta[1]
             l_trg_Int1 = 0
@@ -65,7 +70,7 @@ def simulate_hawkes(n,mu,alpha,beta):
             if count == n:
                 break
         
-    return [np.array(T),np.array(LL)]
+    return [np.array(T),np.array(LL)], np.array(Intensity)
 
 def simulate_multi_hawkes(n,mu,alpha,beta,head):
     T = head.tolist()
@@ -127,36 +132,43 @@ def generate_self_correcting(n):
     
     def self_correcting_process(mu,alpha,n):
     
-        t = 0; x = 0;
-        T = [];
-        log_l = [];
-        Int_l = [];
+        t, x = 0, 0
+        T = []
+        log_l = []
+        Int_l = []
+        Intensity = []
     
         for i in range(n):
             e = np.random.exponential()
             tau = np.log( e*mu/np.exp(x) + 1 )/mu # e = ( np.exp(mu*tau)- 1 )*np.exp(x) /mu
-            t = t+tau
+            t = t + tau
             T.append(t)
             x = x + mu*tau
             log_l.append(x)
+            Intensity.append(np.exp(x))
             Int_l.append(e)
-            x = x -alpha
+            x = x - alpha
 
-        return [np.array(T),np.array(log_l),np.array(Int_l)]
+        return [np.array(T),np.array(log_l),np.array(Int_l)], np.array(Intensity)
     
-    [T,log_l,Int_l] = self_correcting_process(1,1,n)
+    [T,log_l,Int_l], intensity = self_correcting_process(1,1,n)
     score = -(log_l - Int_l)
     
-    return T, score
+    return T, score, intensity
 
 def transform_autoregression(data_input, max_seq):
     data = np.array([[]])
     result = np.array([[]])
     score = np.array([[]])
+    event = np.array([[]])
+    intensity = np.array([[]])
+
     size = data_input.shape[0]
     for index in range(size):
         time = np.array(data_input.iloc[index].time_seq)
         L = np.array(data_input.iloc[index].score)
+        event_seq = np.array(data_input.iloc[index].event)
+        intensity_seq = np.array(data_input.iloc[index].intensity)
         try:
             assert (np.diff(time) < 0).any() == False
         except:
@@ -172,6 +184,8 @@ def transform_autoregression(data_input, max_seq):
                 data = time[i:i+max_seq].reshape(1, -1)
                 result = time[i+max_seq].reshape(1, -1)
                 score = L[i+max_seq].reshape(1, -1)
+                event = event_seq[i+max_seq].reshape(1, -1)
+                intensity = intensity_seq[i+max_seq].reshape(1, -1)
             else:
                 data = np.append(
                     data, time[i:i+max_seq].reshape(1, -1), axis=0)
@@ -179,8 +193,13 @@ def transform_autoregression(data_input, max_seq):
                     result, time[i+max_seq].reshape(1, -1), axis=0)
                 score = np.append(
                     score, L[i+max_seq].reshape(1, -1), axis=0)
+                event = np.append(
+                    event, event_seq[i+max_seq].reshape(1, -1), axis=0)
+                intensity = np.append(
+                    intensity, intensity_seq[i+max_seq].reshape(1, -1), axis=0)
 
-    return pd.DataFrame.from_dict({'data': data, 'result': result, 'score': score})
+
+    return pd.DataFrame.from_dict({'data': data, 'result': result, 'score': score, 'event': event, 'intensity': intensity})
 
 dataset_dict = {
     'hawkes_1': generate_hawkes1,
@@ -191,16 +210,18 @@ dataset_dict = {
 }
 
 def data_gen(name, dataset, data_size, seq_len, autoregression = False):
-    data = {'index': [], 'time_seq': [], 'score': []}
+    data = {'index': [], 'time_seq': [], 'score': [], 'event': [], 'intensity': []}
     if autoregression:
         gen_seq_len = seq_len * 2
     else:
         gen_seq_len = seq_len
     for i in range(data_size):
-        time, score = dataset_dict[dataset](gen_seq_len)
+        time, score, intensity = dataset_dict[dataset](gen_seq_len)
         data['index'].append(i)
         data['time_seq'].append(time.tolist())
         data['score'].append(score.tolist())
+        data['intensity'].append(intensity.tolist())
+        data['event'].append(np.random.randint(10, size = gen_seq_len))
     
     final = pd.DataFrame.from_dict(data)
     if autoregression:

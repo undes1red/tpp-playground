@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
-from src.data import prepare_dataloaders
+from src.dataloader import prepare_dataloaders
 
 logger = getLogger(__name__)
 # Hope we can get rid of absolute path in training scripts.

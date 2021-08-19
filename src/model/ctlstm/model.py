@@ -7,6 +7,7 @@ class CTLSTMwrapper(BasicModule):
     def __init__(self, hidden_dim, device, mc_sample_num = 1., event_num = 1, beta = 1):
         super(CTLSTMwrapper, self).__init__()
         self.device = device
+        self.event_num = event_num
         self.model = CTLSTM(hidden_dim = hidden_dim, event_num = event_num, beta = beta, device = device, mc_sample_num = mc_sample_num)
     
     def forward(self, minibatch, eval_tag):
@@ -21,9 +22,16 @@ class CTLSTMwrapper(BasicModule):
         '''
 
         event_tensor, dtime_tensor, token_num_tensor, duration_tensor = minibatch
+        batch_size = event_tensor.shape[0]
+        event_tensor = torch.cat(
+            (torch.tensor([self.event_num]).repeat(batch_size, 1).to(self.device),\
+             event_tensor,\
+             torch.tensor([self.event_num + 1]).repeat(batch_size, 1).to(self.device)),
+            dim = 1
+        )
 
-        return self.model(event_tensor = event_tensor.to(self.device), dtime_tensor = dtime_tensor.to(self.device), 
-                          token_num_tensor = token_num_tensor.to(self.device), duration_tensor = duration_tensor.to(self.device), 
+        return self.model(event_tensor = event_tensor, dtime_tensor = dtime_tensor, 
+                          token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, 
                           eval_tag = eval_tag)
 
     def train_step(model, minibatch, device):
