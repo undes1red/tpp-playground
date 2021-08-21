@@ -21,8 +21,10 @@ class SynDataset(utils.data.Dataset):
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            return torch.tensor(self.data.iloc[index].time_seq), \
-                   torch.tensor(self.data.iloc[index].score)
+            raw_time = torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].time_seq)))
+            diff_time = torch.cat((torch.tensor([0.]), torch.diff(raw_time)))
+            return diff_time, \
+                   torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score)))
 
     def __len__(self):
         return self.data.shape[0]

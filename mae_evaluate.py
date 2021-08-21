@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.model import get_model
-from src.data import prepare_dataloaders
+from src.dataloader import prepare_dataloaders
 from src.utils import read_json, suffix
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"

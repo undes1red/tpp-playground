@@ -39,20 +39,20 @@ class FullyNN(nn.Module):
     def forward(self, time_history, time_next):
         '''
         Args:
-            time_history: [batch_size, seq_len - 1, 1]
-            time_next:    [batch_size, seq_len - 1, 1]
+            time_history: [batch_size, seq_len, 1]
+            time_next:    [batch_size, seq_len, 1]
         '''
         # Reshape hidden output for full connection layers.
-        output, (_, _) = self.rnn(time_history)                                # [batch_size, seq_len - 1, d_history]
+        output, (_, _) = self.rnn(time_history)                                # [batch_size, seq_len, d_history]
 
-        time = self.hidden_x(time_next)                                        # [batch_size, seq_len - 1, d_intensity]
-        hidden = self.hidden_p(output)                                         # [batch_size, seq_len - 1, d_intensity]
+        time = self.hidden_x(time_next)                                        # [batch_size, seq_len, d_intensity]
+        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
 
-        output = self.activate(time + hidden)                                  # [batch_size, seq_len - 1, d_intensity]
+        output = self.activate(time + hidden)                                  # [batch_size, seq_len, d_intensity]
 
         for layer in self.mlp:
-            output = layer(output)                                             # [batch_size, seq_len - 1, d_intensity]
-            output = self.activate(output)                                     # [batch_size, seq_len - 1, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, d_intensity]
+            output = self.activate(output)                                     # [batch_size, seq_len, d_intensity]
 
-        output = self.activate_final(self.agg(output))                         # [batch_size, seq_len - 1, 1]
+        output = self.activate_final(self.agg(output))                         # [batch_size, seq_len, 1]
         return output

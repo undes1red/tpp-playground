@@ -6,7 +6,7 @@ def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
 
-class TemporalModel(BasicModule):
+class TemporalModel_legacy(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,

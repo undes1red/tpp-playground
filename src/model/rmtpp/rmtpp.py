@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Model(nn.Module):
@@ -19,17 +20,20 @@ class Model(nn.Module):
 
         # intensity related
         self.intensity = nn.Linear(output_size, 1)
-        self.time_scalar = torch.tensor(2.)
-        self.base_intensity = torch.tensor(0.2)
+        self.time_scalar = torch.tensor(.1)
+        self.base_intensity = torch.tensor(.1)
 
-    def forward(self, event, time):
+    def forward(self, event, time, mean, var):
+        # time_norm = ((time - mean)/var).float()
         event_vec = self.event_embedding(event.long())
         time_vec = self.time_embedding(time.unsqueeze(-1))
         output, (_, _) = self.rnn(input = time_vec + event_vec)
         # output shape: (batch, seq_length, H_out)
         # We need (batch, seq_length)
-        intensity = torch.exp(self.intensity(output).squeeze() + self.time_scalar * time + self.base_intensity)
-        integral = (intensity - torch.exp(self.intensity(output).squeeze() + self.base_intensity)) / self.time_scalar
+
+        history_part = self.intensity(torch.tanh(output)).squeeze()
+        intensity = torch.exp(history_part + self.time_scalar * time + self.base_intensity)
+        integral = (intensity - torch.exp(history_part + self.base_intensity)) / self.time_scalar
         # For event, we need (batch, seq_length, num_event)
         mark = self.decide(self.marker(output))
 

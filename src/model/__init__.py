@@ -1,12 +1,15 @@
-from .dwg_legacy.model import TemporalModel
-from .dwg_new_legacy.model import TemporalModel as TemporalModel_new
+# Legacy models. They only fits legacy datasets.
+from .dwg_legacy.model import TemporalModel_legacy
+from .dwg_new_legacy.model import TemporalModel as TemporalModel_legacy_new
 from .fullynn_legacy.model import FullyNNModel_legacy
 
+# Models aganist new datasets.
 from .ctlstm.model import CTLSTMwrapper
 from .cnf.model import CNFWrapper
 from .ifl.model import ifl
 from .rmtpp.model import RMTPP
 from .fullynn.model import FullyNNModel
+from .dwg.model import TemporalModel
 
 from ..utils import getLogger
 
@@ -16,11 +19,12 @@ logger = getLogger(__name__)
 # The key of each model is foremost.
 model_zoo = {
     # legacy models: these models do not support sequencial datasets.
-    'dwg_legacy': TemporalModel,
-    'dwg_new_legacy': TemporalModel_new,
+    'dwg_legacy': TemporalModel_legacy,
+    'dwg_new_legacy': TemporalModel_legacy_new,
     'fullynn_legacy': FullyNNModel_legacy,
 
     # New implementations: these models support sequencial datasets.
+    'dwg': TemporalModel,
     'fullynn': FullyNNModel,
     'ctlstm': CTLSTMwrapper,
     'cnf': CNFWrapper,

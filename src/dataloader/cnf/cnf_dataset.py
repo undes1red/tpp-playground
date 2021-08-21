@@ -24,9 +24,7 @@ class CNFDataset(utils.data.Dataset):
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            # FIXME: Currently, we just have dummy event labels. This will be fixed in the future by generating MTPP synthetic datasets.
-            # We need small cumsum.
-            event_tensor = torch.tensor(self.data.iloc[index].event)
+            event_tensor = torch.tensor(self.data.iloc[index].event).float().unsqueeze(-1)
             time_tensor = torch.tensor(self.data.iloc[index].time_seq)
             mask_tensor = torch.tensor([1] * self.sequence_length)
             return [event_tensor, time_tensor, mask_tensor], \

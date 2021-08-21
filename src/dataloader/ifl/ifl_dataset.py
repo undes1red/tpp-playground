@@ -18,7 +18,7 @@ class IflDataset(utils.data.Dataset):
         # All input data has the same sequence length.
         self.sequence_length = len(self.data.iloc[0].time_seq)
         self.start_time = torch.tensor([start_time]) if start_time else torch.tensor([0])
-        self.end_time = torch.tensor([end_time]) if end_time else torch.tensor([300])
+        self.end_time = torch.tensor([end_time]) if end_time else torch.tensor([350])
         
         # Data normalization
         regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())

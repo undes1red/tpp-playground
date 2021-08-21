@@ -2,6 +2,7 @@
 
 import math
 from ..utils import getLogger, mean, read_json
+import torch.nn as nn
 import torch.optim as optim
 
 logger = getLogger(__name__)
@@ -22,6 +23,7 @@ class ScheduledOptim():
     
         param = read_json(opt.optim_json)
         self._model = None
+
         if rank == 0:
             logger.info(f'The additional input optimizer hyperparameters are {param}')
         if hasattr(optim, opt.op_name):

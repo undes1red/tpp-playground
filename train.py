@@ -68,6 +68,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         data = next(training)
         step_result = model_class.train_step(model, data, device = opt.device)
         if current_step % opt.agg_update_step == 0:
+            if opt.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
             optimizer.step_and_update_lr()
             optimizer.zero_grad()
 
@@ -271,6 +273,8 @@ if __name__ == '__main__':
     parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
     parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
                                                                         agg_update_step * n_training_steps')
+    parser.add_argument('--grad_clip', type=float, default=0.0, help='Clips gradient norm of an iterable of parameters. It only comes info effect when the argument \
+                                                                      value is bigger than 0.')
 
     # Model-related hyperparameters
     parser.add_argument('--model_name', default=None,

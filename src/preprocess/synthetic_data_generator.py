@@ -221,13 +221,15 @@ def data_gen(name, dataset, data_size, seq_len, autoregression = False):
         data['time_seq'].append(time.tolist())
         data['score'].append(score.tolist())
         data['intensity'].append(intensity.tolist())
-        data['event'].append(np.random.randint(10, size = gen_seq_len))
+        data['event'].append(event_gen(size = gen_seq_len, time = time))
     
     final = pd.DataFrame.from_dict(data)
     if autoregression:
         final = transform_autoregression(final, seq_len)
     final.to_json(name + ('_auto' if autoregression else '') + '.json')
 
+def event_gen(size, time):
+    return np.random.randint(10, size = size)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
