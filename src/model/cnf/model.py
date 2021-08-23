@@ -117,7 +117,7 @@ class CNFWrapper(BasicModule):
         event, timestamps, mask = minibatch[0]
 
         space_loglik, time_loglik = model(
-                timestamps.to(device), event.to(device), mask.to(device)
+                timestamps, event, mask
         )
         space_sum = loss_f(space_loglik.sum())
         time_sum = loss_f(time_loglik.sum())
@@ -139,7 +139,7 @@ class CNFWrapper(BasicModule):
         event, timestamps, mask = minibatch[0]
 
         space_loglik, time_loglik = model(
-            timestamps.to(device), event.to(device), mask.to(device)
+            timestamps, event, mask
         )
         space_sum = loss_f(space_loglik.sum())
         time_sum = loss_f(time_loglik.sum())

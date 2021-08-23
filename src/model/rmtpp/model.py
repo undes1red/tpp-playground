@@ -10,18 +10,18 @@ class RMTPP(BasicModule):
         self.device = device
         self.submodel = Model(input_size, hidden_size, num_layers, dropout, num_events, output_size).to(self.device)
 
-    def forward(self, event, time, mean, var):
-        intensity, integral, mark = self.submodel(event, time, mean, var)
+    def forward(self, event, time):
+        intensity, integral, mark = self.submodel(event, time)
 
         return intensity, integral, mark
 
     def train_step(model, minibatch, device):
         model.train()
         
-        event, time, _, mean, var = minibatch[0]
+        event, time, mask = minibatch[0]
         event = event[:, :-1]
         time = time[:, :-1]
-        intensity, integral, mark = model(event, time, mean, var)
+        intensity, integral, mark = model(event, time)
         time_loss, event_loss = loss_f(intensity, integral, mark, event.to(device))
         loss = time_loss + event_loss
         loss.backward()
@@ -35,10 +35,10 @@ class RMTPP(BasicModule):
     def evaluation_step(model, minibatch, device):
         model.eval()
 
-        event, time, _, mean, var = minibatch[0]
+        event, time, mask, = minibatch[0]
         event = event[:, :-1]
         time = time[:, :-1]
-        intensity, integral, mark= model(event, time, mean, var)
+        intensity, integral, mark = model(event, time)
         time_loss, event_loss = loss_f(intensity, integral, mark, event.to(device))
 
         fact = minibatch[1].sum().item()

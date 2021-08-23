@@ -8,6 +8,7 @@ import pandas as pd
 import argparse
 
 from scipy.stats import lognorm
+from scipy.special import erf
 
 ######################################################
 ### homogeneous possion process
@@ -124,7 +125,22 @@ def generate_stationary_renewal(n):
     T = tau.cumsum()
     
     return T, lpdf
- 
+
+######################################################
+### stationary renewal process
+######################################################
+def generate_stationary_renewal_intensity(n):
+    s = np.sqrt(1)
+    mu = 0
+    tau = lognorm.rvs(s=s,scale=np.exp(mu),size=n)
+    lpdf = -lognorm.logpdf(tau,s=s,scale=np.exp(mu))
+    T = tau.cumsum()
+
+    # Intensity calculated by Wolfram Alpha
+    Intensity = -0.797885*np.exp(-0.5*(np.log(tau))**2) / (-tau + tau * erf(0.707107 * np.log(tau)))
+    
+    return T, lpdf, Intensity
+
 ######################################################
 ### self-correcting process
 ######################################################
@@ -205,7 +221,7 @@ dataset_dict = {
     'hawkes_1': generate_hawkes1,
     'hawkes_2': generate_hawkes2,
     'self_correcting': generate_self_correcting,
-    'stationary_renewal': generate_stationary_renewal,
+    'stationary_renewal': generate_stationary_renewal_intensity,
     'poisson': generate_poisson
 }
 

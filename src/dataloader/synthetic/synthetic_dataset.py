@@ -10,10 +10,11 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device):
+    def __init__(self, data, device, plot = False):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
+        self.plot = plot
 
     def __getitem__(self, index):
         if isinstance(index, slice):
@@ -23,8 +24,11 @@ class SynDataset(utils.data.Dataset):
         else:
             raw_time = torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].time_seq)))
             diff_time = torch.cat((torch.tensor([0.]), torch.diff(raw_time)))
-            return diff_time, \
-                   torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score)))
+            if self.plot:
+                return diff_time, torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score)))
+            else:
+                return diff_time, torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score))),\
+                       torch.tensor(self.data.iloc[index].intensity)
 
     def __len__(self):
         return self.data.shape[0]

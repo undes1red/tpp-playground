@@ -52,7 +52,7 @@ class FullyNNModel(BasicModule):
     
         model.train()
         intensity_integral, intensity = model(                                 # [batch_size, seq_len, 1]
-                minibatch[0].to(device)
+                minibatch[0]
         )
     
         loss = loss_f(
@@ -70,7 +70,7 @@ class FullyNNModel(BasicModule):
     
         model.eval()
         intensity_integral, intensity = model(
-            minibatch[0].to(device)
+            minibatch[0]
         )
     
         loss = loss_f(
@@ -107,6 +107,28 @@ class FullyNNModel(BasicModule):
         return [evaluation_report[-1].item(), test_report[-1].item()]
     
     metric_number = 2 # metric number is the length of the output of choose_metric
+
+    # All methods not required by BasicModule are intensity plotter exclusive.
+    def function_prober(self, input_time, resolution):
+        '''
+        Args:
+        time: [batch_size(always 1), seq_len + 1]
+              The original dataset records. 
+        resolution: int
+                    How many interpretive numbers we have between an event interval?
+        '''
+        self.model.eval()
+        time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
+        time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
+        time_next = time_next.unsqueeze(-1)                                    # [batch_size, seq_len, 1]
+
+        expand_integral, expand_intensity, timestamp = self.model.integral_intensity(time_history, time_next, resolution)
+                                                                               # [batch_size, seq_len * resolution, 1]
+        check_tensor(expand_intensity)
+        assert expand_intensity.shape == expand_integral.shape
+
+        return expand_integral, expand_intensity, timestamp
+        
 
 def loss_f(intensity, intensity_integral):
     '''

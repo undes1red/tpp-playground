@@ -60,35 +60,36 @@ class DynamicMLP(nn.Module):
         Interesting idea but I don't know if it works.
 
         Args:
-            time_history: [batch_size, seq_size]
+            time_history: [batch_size, seq_len, 1]
+            time_next:    [batch_size, seq_len, 1]
         '''
         # generate time
-        time_outside = self.time_outside(time_next)                            # [batch_size, seq_size, d_history]
+        time_outside = self.time_outside(time_next)                            # [batch_size, seq_len, d_history]
 
         # Let the weight change with the input time.
         # We discover that the intensity may be affected and start increasing when the relative time is too big.
         # Try to add a concave activation here, like log
         time_weight = self.time_weight(self.activate_time(
-            F.softplus(self.activate_time_factor) * time_next))                # [batch_size, seq_size, d_history]
+            F.softplus(self.activate_time_factor) * time_next))                # [batch_size, seq_len, d_history]
 
         # weight generation
-        output, (_, _) = self.history(time_history)                            # [batch_size, seq_size, d_history]
+        output, (_, _) = self.history(time_history)                            # [batch_size, seq_len, d_history]
         hidden = output + time_weight \
-                    if not self.no_time_weight else torch.zeros_like(output)   # [batch_size, seq_size, d_history]
-        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_size, d_history, 1]  
-        time_weight = self.weight_gen(hidden).transpose(-1, -2)                # [batch_size, seq_size, d_intensity, d_history]
-        time_weight = self.activate(time_weight)                               # [batch_size, seq_size, d_intensity, d_history]
+                    if not self.no_time_weight else torch.zeros_like(output)   # [batch_size, seq_len, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len, d_history, 1]  
+        time_weight = self.weight_gen(hidden).transpose(-1, -2)                # [batch_size, seq_len, d_intensity, d_history]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len, d_intensity, d_history]
 
         # Mingle history and relative time embedding.
-        time_outside = time_outside.unsqueeze(-1)                              # [batch_size, seq_size, d_history, 1]
-        output = torch.matmul(time_weight, time_outside).squeeze()             # [batch_size, seq_size, d_intensity]
+        time_outside = time_outside.unsqueeze(-1)                              # [batch_size, seq_len, d_history, 1]
+        output = torch.matmul(time_weight, time_outside).squeeze()             # [batch_size, seq_len, d_intensity]
 
         for layer_idx, layer in enumerate(self.mlp):
-            output = layer(output)                                             # [batch_size, seq_size, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, d_intensity]
             # Imitate a weaker ReLU activation
             output = F.softplus(self.activate_factor[layer_idx]) * output
 
-        output = self.accu(output)                                             # [batch_size, seq_size, 1]
+        output = self.accu(output)                                             # [batch_size, seq_len, 1]
         return output
     
     def show_time_scale_factor(self):
@@ -96,3 +97,40 @@ class DynamicMLP(nn.Module):
 
     def show_activate_factor(self):
         return F.softplus(self.activate_factor)
+
+    def intensity(self, time_history, time_next, resolution):
+        '''
+        Model intensity prober. Perhaps, we can support intensity integral as well.
+        Args:
+        time_history: [batch_size, seq_len, 1]
+        time_next:    [batch_size, seq_len, 1]
+        resolution:   int
+        '''     
+        history_output, (_, _) = self.history(time_history)                    # [batch_size, seq_len, d_history]
+        batch_size, seq_len, d_history = history_output.shape
+
+        history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
+                                                                               # [batch_size, seq_len * resolution, d_history]
+        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
+        time_weight = self.time_weight(self.activate_time(
+            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len * resolution, d_history]
+        hidden = history_expand + time_weight \
+                    if not self.no_time_weight else torch.zeros_like(history_output)
+                                                                               # [batch_size, seq_len * resolution, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len * resolution, d_history, 1]  
+        time_weight = self.weight_gen(hidden).transpose(-1, -2)                # [batch_size, seq_len * resolution, d_intensity, d_history]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len * resolution, d_intensity, d_history]
+
+        # Mingle history and relative time embedding.
+        time_outside = time_outside.unsqueeze(-1)                              # [batch_size, seq_len * resolution, d_history, 1]
+        output = torch.matmul(time_weight, time_outside).squeeze()             # [batch_size, seq_len * resolution, d_intensity]
+
+        for layer_idx, layer in enumerate(self.mlp):
+            output = layer(output)                                             # [batch_size, seq_len * resolution, d_intensity]
+            # Imitate a weaker ReLU activation
+            output = F.softplus(self.activate_factor[layer_idx]) * output
+
+        output = self.accu(output)                                             # [batch_size, seq_len * resolution, 1]
+        return output, time_expand

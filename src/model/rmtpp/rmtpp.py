@@ -23,7 +23,7 @@ class Model(nn.Module):
         self.time_scalar = torch.tensor(.1)
         self.base_intensity = torch.tensor(.1)
 
-    def forward(self, event, time, mean, var):
+    def forward(self, event, time):
         # time_norm = ((time - mean)/var).float()
         event_vec = self.event_embedding(event.long())
         time_vec = self.time_embedding(time.unsqueeze(-1))

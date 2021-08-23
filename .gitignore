@@ -123,3 +123,6 @@ events*
 
 # shell scripts
 *.sh
+
+# Figures
+*.png

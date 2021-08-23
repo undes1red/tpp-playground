@@ -103,9 +103,10 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 # We will store the checkpoint after model evaluation.
                 if opt.fp16:
                     checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict(),
-                                 'optimizer': optimizer.state_dict(), 'amp': amp.state_dict()}
+                                  'optimizer': optimizer.state_dict(), 'amp': amp.state_dict()}
                 else:
-                    checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict(), 'optimizer': optimizer.state_dict()}
+                    checkpoint = {'step': current_step, 'settings': opt, 'model': model.module.state_dict(),
+                                  'optimizer': optimizer.state_dict()}
             
                 if opt.save_model and current_step > opt.n_warmup_steps:
                     if opt.save_mode == 'all':
@@ -253,10 +254,10 @@ if __name__ == '__main__':
     parser.add_argument("--opt_level", type=str, default='O1',
                         help="The optimization level of mixed precision training. Only effective when --fp16 training is enabled.")
 
-
     # Input data
     parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
     parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
+    parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
     parser.add_argument('--n_worker', default=0, type=int,
               help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
                   if you meet \'received 0 items of ancdata\' exception.')
@@ -277,8 +278,7 @@ if __name__ == '__main__':
                                                                       value is bigger than 0.')
 
     # Model-related hyperparameters
-    parser.add_argument('--model_name', default=None,
-                        help="The model name.")
+    parser.add_argument('--model_name', default=None, help="The model name.")
     parser.add_argument('--model_json', type=str, default=None,
                         help="The path of json file that contains model hyperparameters.")
 
@@ -303,11 +303,11 @@ if __name__ == '__main__':
     # Reproducibility
     if opt.no_seed:
         opt.seed = random.randint(0, 2**16)
-        logger.warning(f'Random seed is not given explicitly. This time we utilize {opt.seed} as the random seed.')
+        logger.warning(f'Random seed is not given explicitly. This time we employ {opt.seed} as the random seed.')
     np.random.seed(opt.seed)
     torch.manual_seed(opt.seed)
     random.seed(opt.seed)
-    torch.cuda.manual_seed_all(opt.seed)
+    torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
 
     # Relative path to absolute path
@@ -316,6 +316,7 @@ if __name__ == '__main__':
     opt.save_model = os.path.join(root_path, 'data', 'outputs', opt.dataset_name)
     opt.model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json)
     opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
+    opt.dataloader_json = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
 
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))

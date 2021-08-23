@@ -1,6 +1,7 @@
 import torch.nn as nn
 import numpy as np
 from .nonneg import NonNegLinear
+import torch
 
 TA = {
     'softplus': nn.Softplus,
@@ -19,6 +20,7 @@ class FullyNN(nn.Module):
 
     def __init__(self, d_history, d_intensity, dropout, rnn_layers, mlp_layers, nonlinear, device):
         super(FullyNN, self).__init__()
+        self.device = device
 
         self.rnn = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = rnn_layers, batch_first = True, dropout = dropout).to(device)
 
@@ -56,3 +58,45 @@ class FullyNN(nn.Module):
 
         output = self.activate_final(self.agg(output))                         # [batch_size, seq_len, 1]
         return output
+
+    def integral_intensity(self, time_history, time_next, resolution):
+        '''
+        Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
+        Args:
+        time_history: [batch_size, seq_len, 1]
+        time_next:    [batch_size, seq_len, 1]
+        resolution:   int
+        '''
+        output, (_, _) = self.rnn(time_history)                                # [batch_size, seq_len, d_history]
+        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
+        batch_size, seq_len, d_intensity = hidden.shape
+
+        hidden_expand = hidden.repeat(1, 1, resolution).reshape(batch_size, -1, d_intensity)
+                                                                               # [batch_size, seq_len * resolution, d_intensity]
+        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = True
+        emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]
+        output = self.activate(emb_time_expand + hidden_expand)                # [batch_size, seq_len * resolution, d_intensity]
+
+        for layer in self.mlp:
+            output = layer(output)                                             # [batch_size, seq_len * resolution, d_intensity]
+            output = self.activate(output)                                     # [batch_size, seq_len * resolution, d_intensity]
+
+        expand_integral = self.activate_final(self.agg(output))                # [batch_size, seq_len * resolution, 1]
+
+        expand_intensity = torch.autograd.grad(
+            outputs=expand_integral,
+            inputs=time_expand,
+            grad_outputs=torch.ones_like(expand_integral),
+            create_graph=True,
+        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = False
+        timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
+                                                                               # [batch_size, seq_len, resolution]
+        timestamp = torch.cat(
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            dim = -1)                                                          # [batch_size, seq_len, resolution]
+        timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
+
+        return expand_integral, expand_intensity, timestamp
