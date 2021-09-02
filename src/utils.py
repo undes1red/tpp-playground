@@ -1,5 +1,6 @@
 from functools import reduce
 import math, logging, json
+from tqdm import tqdm
 
 # Logger settings
 def getEventLogger(name, root):
@@ -123,13 +124,12 @@ def suffix(opt, *args):
     return output
 
 # General evaluation procedure.
-def evaluation(data, model, model_class, device, output_length):
+def evaluation(data, model, model_class, device, output_length, desc):
     r = range(1, len(data) + 1)
     data_itr = iter(data)
     sum_ = [0] * output_length
     
-    # for _ in tqdm(r, desc=desc, disable=True):
-    for _ in r:
+    for _ in tqdm(r, desc, leave = False):
         minibatch = next(data_itr)
         batch_sum = model_class.evaluation_step(model, minibatch, device)
         sum_ = lst_add_lst(sum_, batch_sum)

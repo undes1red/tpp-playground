@@ -105,7 +105,7 @@ class TemporalModel(BasicModule):
     metric_number = 2 # metric number is the length of the output of choose_metric
 
     # All methods not required by BasicModule are intensity plotter exclusive.
-    def functoin_prober(self, input_time, resolution):
+    def function_prober(self, input_time, resolution):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -117,7 +117,12 @@ class TemporalModel(BasicModule):
         time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
         time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         time_next = time_next.unsqueeze(-1)                                    # [batch_size, seq_len, 1]
-        return self.model.intensity(time_history, time_next, resolution)       # [batch_size, seq_len * resolution, 1]
+        integral, intensity, timestamp = self.model.intensity(time_history, time_next, resolution)
+                                                                               # [batch_size, seq_len * resolution, 1]
+        check_tensor(intensity)
+        assert intensity.shape == integral.shape
+
+        return integral, intensity, timestamp
 
 def loss_f(intensity, intensity_integral):
     '''

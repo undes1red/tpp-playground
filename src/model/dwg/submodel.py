@@ -19,6 +19,7 @@ class DynamicMLP(nn.Module):
         super(DynamicMLP, self).__init__()
         self.device = device
         self.no_time_weight = no_time_weight
+        self.d_intensity = d_intensity
 
         self.history = nn.LSTM(input_size=1, hidden_size=d_history,
                                num_layers=num_layers, batch_first=True, dropout=dropout).to(self.device)
@@ -105,7 +106,7 @@ class DynamicMLP(nn.Module):
         time_history: [batch_size, seq_len, 1]
         time_next:    [batch_size, seq_len, 1]
         resolution:   int
-        '''     
+        '''
         history_output, (_, _) = self.history(time_history)                    # [batch_size, seq_len, d_history]
         batch_size, seq_len, d_history = history_output.shape
 
@@ -113,6 +114,7 @@ class DynamicMLP(nn.Module):
                                                                                # [batch_size, seq_len * resolution, d_history]
         time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = True
         time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
         time_weight = self.time_weight(self.activate_time(
             F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len * resolution, d_history]
@@ -125,12 +127,30 @@ class DynamicMLP(nn.Module):
 
         # Mingle history and relative time embedding.
         time_outside = time_outside.unsqueeze(-1)                              # [batch_size, seq_len * resolution, d_history, 1]
-        output = torch.matmul(time_weight, time_outside).squeeze()             # [batch_size, seq_len * resolution, d_intensity]
+        integral = torch.matmul(time_weight, time_outside)                     # [batch_size, seq_len * resolution, d_intensity, 1]
+        integral = integral.reshape(batch_size, seq_len * resolution, self.d_intensity)
+                                                                               # [batch_size, seq_len * resolution, d_intensity]
 
         for layer_idx, layer in enumerate(self.mlp):
-            output = layer(output)                                             # [batch_size, seq_len * resolution, d_intensity]
+            integral = layer(integral)                                         # [batch_size, seq_len * resolution, d_intensity]
             # Imitate a weaker ReLU activation
-            output = F.softplus(self.activate_factor[layer_idx]) * output
+            integral = F.softplus(self.activate_factor[layer_idx]) * integral
 
-        output = self.accu(output)                                             # [batch_size, seq_len * resolution, 1]
-        return output, time_expand
+        integral = self.accu(integral)                                         # [batch_size, seq_len * resolution, 1]
+
+        intensity = torch.autograd.grad(
+            outputs = integral,
+            inputs = time_expand,
+            grad_outputs = torch.ones_like(integral),
+            create_graph = True
+        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = False
+
+        timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
+                                                                               # [batch_size, seq_len, resolution]
+        timestamp = torch.cat(
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            dim = -1)                                                          # [batch_size, seq_len, resolution]
+        timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
+
+        return integral, intensity, timestamp

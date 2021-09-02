@@ -5,52 +5,16 @@
 from src.utils import suffix, read_json, getLogger
 from src.model import get_model
 from src.dataloader import prepare_dataloaders
+from src.plotter_utils import draw
 import os, argparse, torch
-import matplotlib.pyplot as plt
-import seaborn as sns
+
 
 root = os.path.dirname(os.path.abspath(__file__))
-
-def draw_intensity(model, data, desc, plot_count):
-    '''
-    Now you should investigate your own model implementations and modify this function.
-    Because of the design of training_step() and evaluation_step(), intensity and integral outputs can not be handled automatically.
-
-    data: [time_diff, score, target_intensity]
-    '''
-    # Intensity probe
-    intensity_integral, intensity = model(data[0])
-    print(intensity.squeeze())
-    print(data[2].squeeze())
-    mse = torch.nn.functional.mse_loss(intensity.squeeze(), data[2].squeeze())
-    logger.info(f'The MSE loss between model intensity and target intensity at event points is {mse.item()}.')
-
-    _, expand_intensity, timestamp = model.function_prober(data[0], resolution = 100)
-    intensity = expand_intensity.squeeze().detach().cpu().numpy()
-    timestamp = timestamp.detach().cpu().numpy().cumsum()
-
-    # Draw plot.
-    fig = plt.figure()
-    sns.lineplot(x = timestamp[1:], y = intensity[1:])
-    plt.savefig(os.path.join(root, 'intensity_' + desc + '_' + str(plot_count) + '.png'), dpi = 1000)
-    plt.close(fig = fig)
-
-
-def draw_probability(model, data, desc, plot_count):
-    pass
-
-def draw(model, data, desc, plot_count, type):
-    if type == 'intensity':
-        draw_intensity(model, data, desc, plot_count)
-    elif type == 'probability':
-        draw_probability(model, data, desc, plot_count)
-    else:
-        raise Exception('Unknown plot type detected!')
-    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--seed', type=int, default=42, help='Set global random seed.')
     parser.add_argument('--model_name', type=str, help='The model name of the required checkpoint.')
     parser.add_argument('--model_config', type=str, help='The config file containing hyperparameters corresponding to the required checkpoint.')
     parser.add_argument('--lr', type=float, help='The learning rate used for training the required model.')
@@ -79,8 +43,10 @@ if __name__ == '__main__':
     param_names = list(model_param.keys())
     opt.__dict__.update(model_param)
     logger.info(opt)
-    if not os.path.exists(os.path.join(root, 'output')):
-        os.mkdir(os.path.join(root, 'output'))
+    # location
+    opt.store_dir = os.path.join(root, 'output', opt.dataset_name, opt.model_name)
+    if not os.path.exists(opt.store_dir):
+        os.makedirs(opt.store_dir)
 
     # Find the checkpoint file.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *param_names)
@@ -98,7 +64,6 @@ if __name__ == '__main__':
     model_state_dict = model_raw['model']
     model_setting = model_raw['settings']
     model.load_state_dict(model_state_dict)
-    opt.seed = model_setting.seed
     opt.n_worker = model_setting.n_worker
     logger.info('Model restore completed.')
 
@@ -108,22 +73,25 @@ if __name__ == '__main__':
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
     train, evaluation, test = prepare_dataloaders(opt)
+    iter_train = iter(train)
+    iter_test = iter(test)
+    iter_eva = iter(evaluation)
 
     # We will get three records from the training set, test set, and evaluation set, respectively.
     for figure_index in range(opt.figure_count):
         if opt.train:
-            train_data = next(iter(train))
-            draw(model, train_data, 'train', figure_index, type = 'intensity')
+            train_data = next(iter_train)
+            draw(model, train_data, 'train', figure_index, type = 'intensity', opt = opt)
             logger.info(f'Figure train_{figure_index} finished drawing.')
 
         if opt.evaluation:
-            evaluation_data = next(iter(evaluation))
-            draw(model, evaluation_data, 'evaluation', figure_index, type = 'intensity')
+            evaluation_data = next(iter_eva)
+            draw(model, evaluation_data, 'evaluation', figure_index, type = 'intensity', opt = opt)
             logger.info(f'Figure evaluation_{figure_index} finished drawing.')
 
         if opt.test:
-            test_data = next(iter(test))
-            draw(model, test_data, 'test', figure_index, type = 'intensity')
+            test_data = next(iter_test)
+            draw(model, test_data, 'test', figure_index, type = 'intensity', opt = opt)
             logger.info(f'Figure test_{figure_index} finished drawing.')
     
     logger.info('Task finished')
