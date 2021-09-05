@@ -24,9 +24,13 @@ class CTLSTMDataset(utils.data.Dataset):
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            # Currently, we just have dummy event labels. This will be fixed in the future by generating MTPP synthetic datasets.
-            # Later, we will have native marked datasets.
-            # Move to sequence datasets.
+            '''
+            Outputs:
+            event_tensor
+            dtime_tensor
+            token_num_tensor
+            duration_tensor
+            '''
             event_tensor = torch.tensor(self.data.iloc[index].event)
             dtime_tensor = torch.diff(torch.tensor([0] + self.data.iloc[index].time_seq))
             dtime_tensor = torch.cat(

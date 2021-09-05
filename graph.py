@@ -60,7 +60,7 @@ if __name__ == '__main__':
     model.eval()
 
     # load model checkpoint
-    model_raw = torch.load(os.path.join(checkpoint_folder, 'checkpoint.chkpt'))
+    model_raw = torch.load(os.path.join(checkpoint_folder, 'checkpoint.chkpt'), map_location=torch.device(opt.device))
     model_state_dict = model_raw['model']
     model_setting = model_raw['settings']
     model.load_state_dict(model_state_dict)

@@ -1,5 +1,4 @@
 import torch.nn as nn
-import numpy as np
 from .nonneg import NonNegLinear
 import torch
 

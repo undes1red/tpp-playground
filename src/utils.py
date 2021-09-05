@@ -170,3 +170,10 @@ class Metric():
     
     def show(self):
         return self.best_metric
+
+# add a prefix for all keys in a dict.
+# wandb use only
+def add_prefix_to_keys(dct, temp):
+    tmp_dct = dict(dct)
+    del tmp_dct['num_format']
+    return {temp + str(key): item for key, item in tmp_dct.items()}

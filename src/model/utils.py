@@ -83,4 +83,3 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         You'd better to mark the name of each object in the output list as a reminder, like:
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-

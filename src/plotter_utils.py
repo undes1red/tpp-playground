@@ -35,21 +35,23 @@ def draw_intensity(model, data, desc, plot_count, opt):
     # torch.tensor to numpy.array
     model_intensity = model_intensity.squeeze().detach().cpu().numpy()
     timestamp = timestamp.detach().cpu().numpy().cumsum()
-    if true_intensity:
+    if true_intensity is not None:
         true_intensity = true_intensity.squeeze().detach().cpu().numpy()
     
-    if true_intensity:
+    if true_intensity is not None:
         df = pd.DataFrame.from_dict(
-            {'Time': timestamp, 'Prediction': model_intensity, 'Truth': true_intensity}
+            {'Time': timestamp, 'Predicted Intensity': model_intensity, 'Truth': true_intensity}
         )
     else:
         df = pd.DataFrame.from_dict(
-            {'Time': timestamp, 'Prediction': model_intensity}
+            {'Time': timestamp, 'Predicted Intensity': model_intensity}
         )
 
+    df_plot = pd.melt(df, 'Time')
+    df_plot.columns = ['Time', '', 'Intensity']
     # Draw plot
     fig = plt.figure()
-    sns.lineplot(x = 'Time', y = 'value', hue = 'variable', data = pd.melt(df, 'Time'))
+    sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_plot)
     plt.savefig(os.path.join(opt.store_dir, 'intensity_' + desc + '_' + str(plot_count) + '.png'), dpi = 1000)
     plt.close(fig = fig)
 
@@ -131,20 +133,32 @@ def poisson(time, intensity, resolution):
     lam = 1
 
     batch_size, seq_len = intensity.shape
-    return torch.ones((batch_size, seq_len * resolution)) * lam
+    return torch.ones((batch_size, seq_len * resolution)) * lam                # [batch_size, seq_len * resolution]
 
 def sta_renew(time, intensity, resolution):
     '''
-    The stationary renewal process: \lambda(t) = -0.797885*np.exp(-0.5*(np.log(t))**2) / (-t + t * erf(0.707107 * np.log(t)))
+    The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
     The intensity function only matches the explicitly-given lognorm distribution. please check and modify this function if you use
     another hyperparameters for stationary renewal process during data generation.
 
+    Timestamp 0 will be shifted to a very small value.
+
     Args:
-    time       : [batch_size, seq_len]  (not used in this function)
+    time       : [batch_size, seq_len]
     intensity  : [batch_size, seq_len]
                The value of true intensity function.
     resolution : int
     '''
+
+    batch_size, _ = time.shape
+    time_multiplier = torch.linspace(0, 1, 100)
+    expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
+    expand_time[:, :, 0] += 1e-8
+    expand_true_intensity = -0.797885*torch.exp(-0.5*(torch.log(expand_time))**2) / (-expand_time + expand_time * torch.erf(0.707107 * torch.log(expand_time)))
+                                                                               # [batch_size, seq_len, resolution]
+    expand_true_intensity = expand_true_intensity.reshape(batch_size, -1)      # [batch_size, seq_len * resolution]
+    return expand_true_intensity
+
 
 def self_correct(time, intensity, resolution):
     pass

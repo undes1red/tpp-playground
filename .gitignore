@@ -114,6 +114,7 @@ output/
 raw_input/
 output/
 config/
+wandb/
 
 # The test scripts
 scripts/

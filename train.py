@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric
+from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric, add_prefix_to_keys
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
 from src.dataloader import prepare_dataloaders
@@ -52,9 +52,13 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         }
         best_model_logger = FileLogger(metric_format_dict, best_model = log_best_model_file)
 
-        if opt.tensorboard:
-            from torch.utils.tensorboard import SummaryWriter
-            writer = SummaryWriter(log_dir = os.path.join(opt.log, log_folder))
+        if opt.wandb:
+            import wandb
+            wandb.init(project = 'Temporal point process', config = vars(opt), group = opt.dataset_name, \
+                       name = '-'.join([opt.model_name, opt.dataset_name, os.path.basename(opt.model_json)]), dir = os.path.join(opt.log, log_folder), \
+                       resume = 'never'
+                       )
+            wandb.watch(model, log = 'all', log_freq = opt.n_report_steps)
 
     metric_checker = Metric(model_class.metric_number)
     report_sum = [0] * opt.report_result_length
@@ -64,6 +68,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
     training = cycle(iter(training_data))
     optimizer.zero_grad()
 
+    # Start training
     for current_step in tqdm(step_range, desc=desc, leave=False):
         data = next(training)
         step_result = model_class.train_step(model, data, device = opt.device)
@@ -79,6 +84,10 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             logger.warning(f'Brief training status report at step {current_step}.')
             report_sum = model_class.postprocess(lst_divide(report_sum, opt.n_report_steps))
             print_performances(logger = logger, procedure='Training', lr = optimizer.get_lr(), **(model_class.log_print_format(report_sum)))
+            if opt.wandb:
+                wandb.log(
+                    add_prefix_to_keys(model_class.log_print_format(report_sum), temp = 'train_'), commit = False, step = current_step)
+                wandb.log({'lr': optimizer.get_lr()}, step = current_step)
             if rank == 0 and file_logger:
                 report = model_class.logfile_print_format(report_sum)
                 file_logger.print(logger_name = 'training_log', step = current_step, **report)
@@ -99,6 +108,9 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             if rank == 0:
                 print_performances(logger = logger, procedure='Evaluation', lr = optimizer.get_lr(), **(model_class.log_print_format(eva_report)))
                 print_performances(logger = logger, procedure='Test', lr = optimizer.get_lr(), **(model_class.log_print_format(test_report)))
+                if opt.wandb:
+                    wandb.log(add_prefix_to_keys(model_class.log_print_format(eva_report), temp = 'evaluation_'), step = current_step)
+                    wandb.log(add_prefix_to_keys(model_class.log_print_format(test_report), temp = 'test_'), step = current_step)
             
                 # We will store the checkpoint after model evaluation.
                 if opt.fp16:
@@ -123,6 +135,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                                 model_class.choose_metric(eva_report, test_report)
                                 ))
                             best_model_logger.print(logger_name = 'best_model', step = current_step, **best_model_dict)
+                            if opt.wandb:
+                                wandb.run.summary = best_model_dict
                 if file_logger:
                     eva = model_class.logfile_print_format(eva_report)
                     test = model_class.logfile_print_format(test_report)
@@ -139,6 +153,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             writer.flush()
             writer.close()
         logger.warning('Training finished!')
+        if opt.wandb:
+            wandb.finish()
 
 def _main(rank, logger, opt):
     '''
@@ -258,13 +274,13 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
     parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
     parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
-    parser.add_argument('--n_worker', default=0, type=int,
+    parser.add_argument('--n_worker', default=1, type=int,
               help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
                   if you meet \'received 0 items of ancdata\' exception.')
 
     # Model save and log management
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
-    parser.add_argument('--tensorboard', action='store_true', help='Use tensorboard to visualize the training result.')
+    parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
     parser.add_argument('--report_result_length', type=int, default=2, help='The number of metric numbers each running step returns.')
 
     # Training procedure related hyperparameters
@@ -300,7 +316,7 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     logger = getLogger("MP_parser")
 
-    # Reproducibility
+    # Reproducibility and pytorch pretraining settings
     if opt.no_seed:
         opt.seed = random.randint(0, 2**16)
         logger.warning(f'Random seed is not given explicitly. This time we employ {opt.seed} as the random seed.')

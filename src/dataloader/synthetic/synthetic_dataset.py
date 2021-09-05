@@ -2,7 +2,10 @@ import torch
 import torch.utils as utils
 import os
 import pandas as pd
+import numpy as np
 
+def data_preprocess(per_line):
+    return np.concatenate([np.zeros(1), per_line])
 
 class SynDataset(utils.data.Dataset):
     '''
@@ -16,19 +19,32 @@ class SynDataset(utils.data.Dataset):
         self.device = device
         self.plot = plot
 
+        # Data preprocessing
+        self.data.time_seq = self.data.time_seq.apply(data_preprocess)
+        self.data.time_seq = self.data.time_seq.apply(np.diff)
+        self.data.time_seq = self.data.time_seq.apply(data_preprocess)
+
+        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
+        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+
     def __getitem__(self, index):
+        '''
+        Synthetic dataloader is very simple. It doesn't have any event infomation at each timestamp,
+        and only the time differences between two neighboring events are available.
+        '''
         if isinstance(index, slice):
             return [
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            raw_time = torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].time_seq)))
-            diff_time = torch.cat((torch.tensor([0.]), torch.diff(raw_time)))
             if self.plot:
-                return diff_time, torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score)))
+                return torch.from_numpy(self.data.iloc[index].time_seq), \
+                       torch.from_numpy(self.data.iloc[index].score),\
+                       torch.from_numpy(self.data.iloc[index].intensity)
             else:
-                return diff_time, torch.cat((torch.tensor([0.]), torch.tensor(self.data.iloc[index].score))),\
-                       torch.tensor(self.data.iloc[index].intensity)
+                return torch.from_numpy(self.data.iloc[index].time_seq), \
+                       torch.from_numpy(self.data.iloc[index].score)
 
     def __len__(self):
         return self.data.shape[0]
