@@ -1,7 +1,6 @@
 from functools import reduce
 import math, logging, json
 from tqdm import tqdm
-import numpy as np
 
 # Logger settings
 def getEventLogger(name, root):

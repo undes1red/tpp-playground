@@ -48,8 +48,8 @@ class CTLSTMDataset(utils.data.Dataset):
             '''
             event_tensor = torch.from_numpy(self.data.iloc[index].event)
             dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            duration_tensor = torch.from_numpy(self.data.iloc[index].duation)
-            return [event_tensor, dtime_tensor, self.token_num_tensor, duration_tensor], \
+            # duration_tensor = torch.from_numpy(self.data.iloc[index].duation)
+            return [event_tensor, dtime_tensor, self.token_num_tensor, self.data.iloc[index].duation], \
                    torch.tensor(self.data.iloc[index].score)
 
     def __len__(self):

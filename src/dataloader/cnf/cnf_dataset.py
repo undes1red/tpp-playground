@@ -20,11 +20,11 @@ class CNFDataset(utils.data.Dataset):
 
         # Data preprocessing
         if not have_mask:
-            self.data['mask'] = [np.ones(self.sequence_length)] * self.data.size
+            self.data['mask'] = [np.ones(self.sequence_length)] * self.data.shape[0]
 
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
-        self.data.mask = self.data.mask.apply(np.array, dtype = np.int8)
+        self.data['mask'] = self.data['mask'].apply(np.array, dtype = np.int8)
         self.data.event = self.data.event.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.reshape, newshape = (-1, 1))
 
