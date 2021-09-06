@@ -67,11 +67,13 @@ if __name__ == '__main__':
     opt.n_worker = model_setting.n_worker
     logger.info('Model restore completed.')
 
-    # we don't need large batch of data, so we minimize the batch size.
+    # we don't need large batch of data, so we minimize the batch size to 1.
     opt.batch_size = 1
 
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
+    if opt.dataloader_json:
+        opt.dataloader_json = os.path.join(root, 'config', opt.model_name, opt.dataloader_json)
     train, evaluation, test = prepare_dataloaders(opt)
     iter_train = iter(train)
     iter_test = iter(test)

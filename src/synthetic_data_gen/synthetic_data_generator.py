@@ -136,7 +136,7 @@ def generate_stationary_renewal_intensity(n):
     lpdf = -lognorm.logpdf(tau,s=s,scale=np.exp(mu))
     T = tau.cumsum()
 
-    # Intensity calculated by Wolfram Alpha
+    # Intensity function calculated by Wolfram Alpha
     Intensity = -0.797885*np.exp(-0.5*(np.log(tau))**2) / (-tau + tau * erf(0.707107 * np.log(tau)))
     
     return T, lpdf, Intensity

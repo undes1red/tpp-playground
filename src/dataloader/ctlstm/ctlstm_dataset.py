@@ -2,7 +2,10 @@ import torch
 import torch.utils as utils
 import os
 import pandas as pd
+import numpy as np
 
+def concate(per_line, item1 = np.array([]), item2 = np.array([])):
+    return np.concatenate([item1, per_line, item2])
 
 class CTLSTMDataset(utils.data.Dataset):
     '''
@@ -16,6 +19,18 @@ class CTLSTMDataset(utils.data.Dataset):
         self.device = device
         # All input data has the same sequence length. This sequence length does not contain special start and end events.
         self.sequence_length = len(self.data.iloc[0].time_seq)
+        self.token_num_tensor = torch.tensor([self.sequence_length])
+
+        # Data preprocessing
+        self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([0]))
+        self.data.time_seq = self.data.time_seq.apply(np.diff)
+        self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([0]), item2 = np.array([0.1]))
+
+        self.data['duation'] = self.data.time_seq.apply(np.sum)
+
+        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
+        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
+        self.data.duation = self.data.duation.apply(np.array, dtype = np.float32)
 
     def __getitem__(self, index):
         # score is the global fact. So we need to modify the first part of the minibatch
@@ -31,14 +46,10 @@ class CTLSTMDataset(utils.data.Dataset):
             token_num_tensor
             duration_tensor
             '''
-            event_tensor = torch.tensor(self.data.iloc[index].event)
-            dtime_tensor = torch.diff(torch.tensor([0] + self.data.iloc[index].time_seq))
-            dtime_tensor = torch.cat(
-                (torch.tensor([0.0]), dtime_tensor, (torch.tensor([0.1])))
-            )
-            token_num_tensor = torch.tensor([self.sequence_length])
-            duration_tensor = torch.sum(dtime_tensor, dim = -1)
-            return [event_tensor, dtime_tensor, token_num_tensor, duration_tensor], \
+            event_tensor = torch.from_numpy(self.data.iloc[index].event)
+            dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
+            duration_tensor = torch.from_numpy(self.data.iloc[index].duation)
+            return [event_tensor, dtime_tensor, self.token_num_tensor, duration_tensor], \
                    torch.tensor(self.data.iloc[index].score)
 
     def __len__(self):

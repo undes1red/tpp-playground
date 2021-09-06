@@ -48,8 +48,10 @@ class IflDataset(utils.data.Dataset):
             self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
         self.data.time_seq = self.data.time_seq.apply(np.diff) + 1e-5
 
+        # pd.DataFrame already has a method called 'mask', so self.data.mask will fail and
+        # one should use self.data['mask'] instead.
         if self.have_mask:
-            self.data.mask = self.data['mask'].apply(concate, item2 = np.zeros(1))
+            self.data['mask'] = self.data['mask'].apply(concate, item2 = np.zeros(1))
         else:
             self.data['mask'] = [np.concatenate((np.ones(self.sequence_length), np.zeros(1)))] * self.data.time_seq.size
         
