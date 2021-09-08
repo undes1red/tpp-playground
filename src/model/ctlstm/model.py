@@ -22,13 +22,6 @@ class CTLSTMwrapper(BasicModule):
         '''
 
         event_tensor, dtime_tensor, token_num_tensor, duration_tensor = minibatch
-        batch_size = event_tensor.shape[0]
-        event_tensor = torch.cat(
-            (torch.tensor([self.event_num]).repeat(batch_size, 1).to(self.device),\
-             event_tensor,\
-             torch.tensor([self.event_num + 1]).repeat(batch_size, 1).to(self.device)),
-            dim = 1
-        )
 
         return self.model(event_tensor = event_tensor, dtime_tensor = dtime_tensor, 
                           token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, 

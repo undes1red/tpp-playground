@@ -11,26 +11,30 @@ class CTLSTMDataset(utils.data.Dataset):
     '''
     Self defined dataset. The required pandas DataFrame are listed in train.py.
     But...what can we do if we need prediction? It is strange.
+
+    event_number is the number of all existing events, dummy events are not included.
     '''
 
-    def __init__(self, data, device):
+    def __init__(self, data, device, event_number = 10):
         super(CTLSTMDataset, self).__init__()
         self.data = data
         self.device = device
         # All input data has the same sequence length. This sequence length does not contain special start and end events.
         self.sequence_length = len(self.data.iloc[0].time_seq)
         self.token_num_tensor = torch.tensor([self.sequence_length])
+        self.event_number = event_number
 
         # Data preprocessing
+        # Add dummy start and end events.
+        self.data.event = self.data.event.apply(concate, item1 = np.array([self.event_number]), item2 = np.array([self.event_number + 1]))
+
         self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([0]))
         self.data.time_seq = self.data.time_seq.apply(np.diff)
         self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([0]), item2 = np.array([0.1]))
 
-        self.data['duation'] = self.data.time_seq.apply(np.sum)
-
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
-        self.data.duation = self.data.duation.apply(np.array, dtype = np.float32)
+        self.data['duation'] = self.data.time_seq.apply(np.sum, dtype = np.float32)
 
     def __getitem__(self, index):
         # score is the global fact. So we need to modify the first part of the minibatch
