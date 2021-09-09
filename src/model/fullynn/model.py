@@ -91,6 +91,8 @@ class FullyNNModel(BasicModule):
         format_dict['relative_loss'] = input[1]
         format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
         return format_dict
+
+    format_dict_length = 2
     
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
 

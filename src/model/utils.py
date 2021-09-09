@@ -52,7 +52,9 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
             'num_format': {'loss_a': ':.5f', 'relative_loss': ':.5f'}
         }
         '''
-
+    
+    # The length of the format_dict
+    format_dict_length = 0
     
     '''
     Q: Why is the print format function different from the file print format function?

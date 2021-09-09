@@ -61,7 +61,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             wandb.watch(model, log = 'all', log_freq = opt.n_report_steps)
 
     metric_checker = Metric(model_class.metric_number)
-    report_sum = [0] * opt.report_result_length
+    format_dict_length = model_class.format_dict_length
+    report_sum = [0] * format_dict_length
 
     desc = '  - (Training)   '
     step_range = range(1, opt.n_training_steps + 1)
@@ -94,16 +95,16 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 if writer:
                     for key, value in report.items():
                         writer.add_scalar(tag = 'Train/' + key, scalar_value = value, global_step = current_step)
-            report_sum = [0] * opt.report_result_length
+            report_sum = [0] * format_dict_length
             
         if current_step % opt.n_evaluation_steps == 0:
             if rank == 0:
                 logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
             eva_report = model_class.postprocess(
-                evaluation(evaluation_data, model, model_class, device = opt.device, output_length = opt.report_result_length, desc = '  - (Evaluation)   ')
+                evaluation(evaluation_data, model, model_class, device = opt.device, output_length = format_dict_length, desc = '  - (Evaluation)   ')
             )
             test_report = model_class.postprocess(
-                evaluation(test_data, model, model_class, device = opt.device, output_length = opt.report_result_length, desc = '  - (Test)   ')
+                evaluation(test_data, model, model_class, device = opt.device, output_length = format_dict_length, desc = '  - (Test)   ')
             )
             if rank == 0:
                 print_performances(logger = logger, procedure='Evaluation', lr = optimizer.get_lr(), **(model_class.log_print_format(eva_report)))
@@ -281,7 +282,6 @@ if __name__ == '__main__':
     # Model save and log management
     parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
     parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
-    parser.add_argument('--report_result_length', type=int, default=2, help='The number of metric numbers each running step returns.')
 
     # Training procedure related hyperparameters
     parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')

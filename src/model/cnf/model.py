@@ -165,6 +165,8 @@ class CNFWrapper(BasicModule):
         format_dict['relative_loss'] = input[2]
         format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'spatial_loss': ':8.5f'}
         return format_dict
+
+    format_dict_length = 3
     
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'spatial_loss': ':8.5f'}
 
