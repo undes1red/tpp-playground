@@ -128,7 +128,7 @@ def hawkes_2(time, intensity, resolution):
     expand_time = torch.nn.functional.pad(expand_time, p1d)                    # [batch_size, seq_len + 1, resolution]
 
     time_cumsum = torch.cumsum(expand_time.reshape(batch_size, -1), dim = -1)  # [batch_size, (seq_len + 1) * resolution]
-    time_cumsum = time_cumsum.reshape(batch_size, seq_len + 1, resolution)     # [batch_size, (seq_len + 1) * resolution]
+    time_cumsum = time_cumsum.reshape(batch_size, seq_len + 1, resolution)     # [batch_size, (seq_len + 1), resolution]
     for seq_index in range(2, seq_len + 1):
         expand_batch_time = time_cumsum[:, seq_index:, :] - time_cumsum[:, seq_index, 0]
                                                                                # [batch_size, seq_len - seq_index + 1, resolution]

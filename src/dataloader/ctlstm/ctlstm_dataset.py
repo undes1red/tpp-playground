@@ -13,6 +13,8 @@ class CTLSTMDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
 
     event_number is the number of all existing events, dummy events are not included.
+
+    You can set event_number = 1 to mask all events by forcing them to have the same label.
     '''
 
     def __init__(self, data, device, event_number = 10):
@@ -26,7 +28,11 @@ class CTLSTMDataset(utils.data.Dataset):
 
         # Data preprocessing
         # Add dummy start and end events.
-        self.data.event = self.data.event.apply(concate, item1 = np.array([self.event_number]), item2 = np.array([self.event_number + 1]))
+        if self.event_number == 1:
+            self.data.event = self.data.event.apply(np.zeros_like)
+            self.data.event = self.data.event.apply(concate, item1 = np.array([self.event_number]), item2 = np.array([self.event_number + 1]))
+        else:
+            self.data.event = self.data.event.apply(concate, item1 = np.array([self.event_number]), item2 = np.array([self.event_number + 1]))
 
         self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([0]))
         self.data.time_seq = self.data.time_seq.apply(np.diff)

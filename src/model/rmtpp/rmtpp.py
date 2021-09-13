@@ -59,8 +59,8 @@ class RMTPP_new(nn.Module):
         self.ei = EI
         # intensity related
         self.intensity = nn.Linear(output_size, 1).to(self.device)
-        self.time_scalar = torch.tensor(.1, device = self.device)
-        self.base_intensity = torch.tensor(.1, device = self.device)
+        self.time_scalar = nn.parameter.Parameter(torch.tensor(0., device = self.device))
+        self.base_intensity = nn.parameter.Parameter(torch.tensor(.1, device = self.device))
 
     def forward(self, event, time):
         # time_norm = ((time - mean)/var).float()
@@ -70,12 +70,14 @@ class RMTPP_new(nn.Module):
         output, (_, _) = self.rnn(input_vec)
         # output shape: (batch, seq_length, H_out)
         # We need (batch, seq_length)
+        time_scalar = torch.nn.functional.softplus(self.time_scalar)
 
-        history_part = self.intensity(torch.tanh(output)).squeeze()
+        history_part = self.intensity(output).squeeze()
+        history_part = torch.tanh(history_part)
         constant = torch.exp(history_part + self.base_intensity)
-        intensity = torch.exp(self.time_scalar * time) * constant
-        integral = (intensity - constant) / self.time_scalar
-        expectation = - torch.exp(constant/ self.time_scalar) * self.ei.apply(-constant/ self.time_scalar) / self.time_scalar
+        intensity = torch.exp(time_scalar * time) * constant
+        integral = (intensity - constant) / time_scalar
+        expectation = - torch.exp(constant/ time_scalar) * self.ei.apply(-constant/ time_scalar) / time_scalar
 
         # For event, we need (batch, seq_length, num_event)
         mark = self.decide(self.marker(output))

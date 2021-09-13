@@ -8,7 +8,7 @@ from .models.temporal.neural import ACTFNS as TPP_ACTFNS
 
 
 class CNFWrapper(BasicModule):
-    def __init__(self, device, model_type, tpp_type, **kwargs):
+    def __init__(self, device, model_type, tpp_type, t0, t1, **kwargs):
         '''
         CNF model wrapper
         '''
@@ -16,8 +16,9 @@ class CNFWrapper(BasicModule):
 
         self.device = device
         # I'm wondering how to get these numbers.
-        self.t_0 = torch.tensor([0.0], device = self.device)
-        self.t_1 = torch.tensor([250.0], device = self.device)
+        self.t_0 = torch.tensor(t0, device = self.device)
+        self.t_1 = torch.tensor(t1, device = self.device)
+        self.cond = kwargs['tpp_cond']
         
         if kwargs.get('tpp_model') is None:
             if kwargs['tpp_actfn'] not in TPP_ACTFNS.keys():
@@ -119,17 +120,21 @@ class CNFWrapper(BasicModule):
         space_loglik, time_loglik = model(
                 timestamps, event, mask
         )
-        space_sum = loss_f(space_loglik.sum())
+
         time_sum = loss_f(time_loglik.sum())
-        loss = space_sum + time_sum
+        if model.module.cond:
+            space_sum = loss_f(space_loglik.sum())
+            space_loss = space_sum.item()
+            loss = space_sum + time_sum
+        else:
+            loss = time_sum
     
         loss.backward()
     
         time_loss = time_sum.item()
-        space_loss = space_sum.item()
         fact = minibatch[1].sum()
     
-        return time_loss, space_loss, fact
+        return time_loss, space_loss, fact if model.module.cond else time_loss, fact
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
@@ -141,29 +146,39 @@ class CNFWrapper(BasicModule):
         space_loglik, time_loglik = model(
             timestamps, event, mask
         )
-        space_sum = loss_f(space_loglik.sum())
+
+        if model.module.cond:
+            space_sum = loss_f(space_loglik.sum())
+            space_loss = space_sum.item()
         time_sum = loss_f(time_loglik.sum())
-        loss = space_sum + time_sum
         
-        loss = loss.item()
         time_loss = time_sum.item()
-        space_loss = space_sum.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[1].sum().item()
     
-        return time_loss, space_loss, fact
+        return time_loss, space_loss, fact if model.module.cond else time_loss, fact
         
     def postprocess(input):
         '''
         [time absolute loss, spatio loss, time relative loss]
         '''
-        return [input[0], input[1], input[0] - input[2]]
+        if len(input == 3):
+            # We take the spatial information into account.
+            return [input[0], input[1], input[0] - input[2]]
+        else:
+            # No spatial information
+            return [input[0], input[0] - input[1]]
 
     def log_print_format(input):
         format_dict = {}
-        format_dict['absolute_loss'] = input[0]
-        format_dict['spatial_loss'] = input[1]
-        format_dict['relative_loss'] = input[2]
-        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'spatial_loss': ':8.5f'}
+        if len(input) == 3:
+            format_dict['absolute_loss'] = input[0]
+            format_dict['spatial_loss'] = input[1]
+            format_dict['relative_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'spatial_loss': ':8.5f'}
+        else:
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
         return format_dict
 
     format_dict_length = 3
@@ -172,9 +187,13 @@ class CNFWrapper(BasicModule):
 
     def logfile_print_format(input):
         format_dict = {}
-        format_dict['absolute loss'] = input[0]
-        format_dict['spatial_loss'] = input[1]
-        format_dict['relative loss'] = input[2]
+        if len(input) == 3:
+            format_dict['absolute loss'] = input[0]
+            format_dict['spatial_loss'] = input[1]
+            format_dict['relative loss'] = input[2]
+        else:
+            format_dict['absolute loss'] = input[0]
+            format_dict['relative loss'] = input[1]
         return format_dict
     
     metric_number = 2 # metric number is the length of the output of choose_metric
@@ -183,7 +202,7 @@ class CNFWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
+        return [abs(evaluation_report[-1]), abs(test_report[-1])]
     
 
 def loss_f(loglik):

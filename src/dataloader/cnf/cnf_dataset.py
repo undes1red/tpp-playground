@@ -11,7 +11,7 @@ class CNFDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, have_mask = False):
+    def __init__(self, data, device, have_mask = False, spatial = False):
         super(CNFDataset, self).__init__()
         self.data = data
         self.device = device
@@ -25,6 +25,8 @@ class CNFDataset(utils.data.Dataset):
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data['mask'] = self.data['mask'].apply(np.array, dtype = np.int8)
+        if not spatial:
+            self.data.event = self.data.event.apply(np.zeros_like)
         self.data.event = self.data.event.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.reshape, newshape = (-1, 1))
 

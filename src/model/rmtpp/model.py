@@ -76,7 +76,7 @@ class RMTPP(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [torch.abs(evaluation_report[1]).item(), torch.abs(test_report[1]).item()]
+        return [abs(evaluation_report[1]), abs(test_report[1])]
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 

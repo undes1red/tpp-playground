@@ -74,6 +74,7 @@ if __name__ == '__main__':
     torch.manual_seed(model_setting.seed)
     if opt.dataloader_json:
         opt.dataloader_json = os.path.join(root, 'config', opt.model_name, opt.dataloader_json)
+    opt.n_worker = 0
     train, evaluation, test = prepare_dataloaders(opt)
     iter_train = iter(train)
     iter_test = iter(test)
