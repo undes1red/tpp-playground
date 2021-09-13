@@ -91,6 +91,11 @@ class CTLSTMwrapper(BasicModule):
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 
+    def function_prober(self, data, resolution):
+        self.model.eval()
+        integral, intensity, timestamp = self.model.intensity(data[0], resolution)
+        return integral, intensity, timestamp
+
 def loss_f(value):
     '''
     The definition of loss.

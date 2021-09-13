@@ -23,7 +23,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--dataset_name', type=str, help='The name of used dataset related to the required checkpoint.')
     parser.add_argument('--dataloader_name', type=str, help='The name of used dataset related to the required checkpoint.')
-    parser.add_argument('--dataloader_json', type=str, default = None, help='The name of used dataset related to the required checkpoint.')
+    parser.add_argument('--dataloader_config', type=str, default = None, help='The name of used dataset related to the required checkpoint.')
     parser.add_argument('--figure_count', type = int, help='We will select \{figure_count\} records from training set(if set),\
                                                       test set(if set), and evaluation set(if set), respectively. So there will be\
                                                       \{enabled_dataset\} * figure_count plots when the plotter finish running.')
@@ -49,7 +49,7 @@ if __name__ == '__main__':
         os.makedirs(opt.store_dir)
 
     # Find the checkpoint file.
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *param_names)
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', *param_names)
     folder_suffix = 'output_' + '_'.join(map(str, model_hyperparameters.values()))
     checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
     logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')
@@ -72,8 +72,8 @@ if __name__ == '__main__':
 
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
-    if opt.dataloader_json:
-        opt.dataloader_json = os.path.join(root, 'config', opt.model_name, opt.dataloader_json)
+    if opt.dataloader_config:
+        opt.dataloader_config = os.path.join(root, 'config', opt.model_name, opt.dataloader_config)
     opt.n_worker = 0
     train, evaluation, test = prepare_dataloaders(opt)
     iter_train = iter(train)

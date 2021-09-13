@@ -28,7 +28,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         import apex.amp as amp
 
     log_train_file, log_eva_file, log_test_file = None, None, None
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', *model_suffix)
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', *model_suffix)
     folder_suffix = "_".join(map(str, model_hyperparameters.values()))
     if not os.path.exists(os.path.join(opt.save_model, 'output_' + folder_suffix)) and rank == 0:
         os.mkdir(os.path.join(opt.save_model, 'output_' + folder_suffix))
@@ -55,7 +55,9 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         if opt.wandb:
             import wandb
             wandb.init(project = 'Temporal point process', config = vars(opt), group = opt.dataset_name, \
-                       name = '-'.join([opt.model_name, opt.dataset_name, os.path.basename(opt.model_json)]), dir = os.path.join(opt.log, log_folder), \
+                       name = '-'.join([opt.model_name, os.path.basename(opt.model_json), \
+                                        opt.dataset_name, os.path.basename(opt.dataloader_config)]), \
+                       dir = os.path.join(opt.log, log_folder), \
                        resume = 'never'
                        )
             wandb.watch(model, log = 'all', log_freq = opt.n_report_steps)
@@ -332,7 +334,7 @@ if __name__ == '__main__':
     opt.save_model = os.path.join(root_path, 'data', 'outputs', opt.dataset_name)
     opt.model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json)
     opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
-    opt.dataloader_json = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
 
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))

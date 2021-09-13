@@ -10,7 +10,7 @@ def expand_true_intensity(time, intensity, resolution, opt):
     return true_intensity_dict[opt.dataset_name](time, intensity, resolution)
 
 def expand_model_intensity(model, data, resolution, opt):
-    if opt.model_name in ['dwg', 'fullynn']:
+    if opt.model_name in ['dwg', 'fullynn', 'ctlstm']:
         return model.function_prober(data, resolution)
     else:
         raise Exception('This model is incompatible with intensity prober!')

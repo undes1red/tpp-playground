@@ -88,6 +88,37 @@ class CTLSTM(nn.Module):
         log_likelihood = torch.sum(log_inten) - torch.sum(integral)
 
         return log_likelihood
+    
+    def intensity(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, resolution):
+        """
+		input
+			model [object of GNHP] : p_theta or simply p
+			event_tensor [B x T+2] : a batch of event types with length T+2
+			dtime_tensor [B x T+2] : a batch of dtimes with length T+2
+			token_num_tensor [B] : # of tokens per seq
+			duration_tensor [B] : duration per seq
+		"""
+        target_tensor, mask_tensor = self.get_target(event_tensor)
+		# B x T+1 , starting from 1st actual event 
+        # forward propagation through CTLSTM module.
+        all_c_p_actual, all_cb_p_actual, all_d_p_actual, all_o_p_actual, _, _ = \
+        self.get_cells_gates_states(event_tensor, dtime_tensor)
+		# B x T+1 x D 
+        inten_p_actual = self.get_intensities_given_types(
+			all_c_p_actual, all_cb_p_actual, all_d_p_actual, all_o_p_actual, 
+			target_tensor.unsqueeze(-1), dtime_tensor[:, 1:]
+		) # B x (T + 1) x 1
+        """
+		NOTE : we sometimes use very small mc sample to train for speed-up
+		but we need >= 1 for stable eval
+		"""
+        all_c_p_noise, all_cb_p_noise, all_d_p_noise, all_o_p_noise, \
+        all_dtime_noise, all_mask_noise = self.get_isometric_mc_samples(
+			all_c_p_actual, all_cb_p_actual,
+			all_d_p_actual, all_o_p_actual,
+			dtime_tensor[:, 1:], resolution,
+			duration_tensor, mask_tensor
+		)
         
     def get_target(self, event_tensor): 
         """
@@ -216,6 +247,89 @@ class CTLSTM(nn.Module):
         last_time = torch.zeros(size=[batch_size], dtype=torch.float32, device=self.device)
         
         for i in range(T_plus_1): 
+            """
+			starting from the 1st (non-BOS) event 
+			find mc samples in this interval
+			"""
+            dtime_i = dtime_tensor[:, i] # batch_size 
+            curr_time = last_time + dtime_i 
+            fallin = (sampled_time > last_time.unsqueeze(-1)) \
+				& (sampled_time <= curr_time.unsqueeze(-1))
+			# 0/1 unit 8 : batch_size x mc_max
+            """
+			find the min rectangle covering all 1 
+			"""
+            fallin_idx = fallin.sum(0) > 0.5
+            
+            mask_inter = fallin[:, fallin_idx].float() 
+            mask_inter *= mask_tensor[:, i].unsqueeze(1)
+            
+            chosen_time = sampled_time[:, fallin_idx]
+            sampled_dt = chosen_time - last_time.unsqueeze(-1)
+            """
+			chosen time may < past time : they are chosen cuz that col is chosen 
+			and they will eventually be masked out in the end 
+			"""
+            sampled_dt[sampled_dt < 0.0] = 0.0
+			# batch_size x S (S may be 0)
+            _, S = sampled_dt.size()
+            
+            c_inter = all_cell[:, i, :].unsqueeze(1).expand(batch_size, S, hidden_dim)
+            cb_inter = all_cell_bar[:, i, :].unsqueeze(1).expand(batch_size, S, hidden_dim)
+            d_inter = all_gate_decay[:, i, :].unsqueeze(1).expand(batch_size, S, hidden_dim)
+            o_inter = all_gate_output[:, i, :].unsqueeze(1).expand(batch_size, S, hidden_dim)
+            
+            last_time = curr_time
+
+            all_c_inter.append(c_inter)
+            all_cb_inter.append(cb_inter)
+            all_d_inter.append(d_inter)
+            all_o_inter.append(o_inter)
+
+            all_dtime_inter.append(sampled_dt)
+            all_mask_inter.append(mask_inter)
+
+        all_c_inter = torch.cat(all_c_inter, dim=1)
+        all_cb_inter = torch.cat(all_cb_inter, dim=1)
+        all_d_inter = torch.cat(all_d_inter, dim=1)
+        all_o_inter = torch.cat(all_o_inter, dim=1)
+        all_dtime_inter = torch.cat(all_dtime_inter, dim=1)
+        all_mask_inter = torch.cat(all_mask_inter, dim=1)
+        
+        return all_c_inter, all_cb_inter, all_d_inter, all_o_inter, \
+               all_dtime_inter, all_mask_inter
+
+    def get_isometric_mc_samples(self,
+        all_cell, all_cell_bar, all_gate_decay, all_gate_output, dtime_tensor, 
+        resolution, duration_tensor, mask_tensor): 
+        """
+		for MLE, sample time points for each interval 
+		for Monte-Carlo approximation of the integral in log-likelihood
+		"""
+        """
+		input 
+			resolution [int] : # of MC samples per time interval 
+			duration_tensor [B] : duration per sequence
+			mask_tensor [B x T+1] : 1.0/0.0 mask of each token of each sequence
+            dtime_tensor [B x T+2]
+		"""
+        all_c_inter, all_cb_inter = [], []
+        all_d_inter, all_o_inter = [], []
+        all_dtime_inter = []
+        all_mask_inter = []
+
+        batch_size, T_plus_1, hidden_dim = all_cell.size()
+        """
+		draw MC time samles 
+		TODO : use randomized rounding when rho * I is not integer !!!
+		"""
+        u = torch.linspace(start = 0, end = 0, step = resolution, dtype=torch.float32, device=self.device)
+                                                                               # [resolution]
+        sampled_time = dtime_tensor.unsqueeze(-1) * u                          # [batch_size, seq_len + 2, resolution]
+        sampled_time = sampled_time.reshape(batch_size, -1)                    # [batch_size, (seq_len + 2) * resolution]
+        last_time = torch.zeros(size=[batch_size], dtype=torch.float32, device=self.device)
+        
+        for i in range(T_plus_1):
             """
 			starting from the 1st (non-BOS) event 
 			find mc samples in this interval

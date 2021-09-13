@@ -43,7 +43,7 @@ def seed_worker(worker_id):
 
 def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True):
     file_names = os.listdir(opt.data_path)
-    dataloader_config_dict = read_json(opt.dataloader_json) if opt.dataloader_json else {}
+    dataloader_config_dict = read_json(opt.dataloader_config) if opt.dataloader_config else {}
 
     logger.info(f"Additional dataloader settings from config files: {dataloader_config_dict}")
 
