@@ -41,6 +41,7 @@ class CTLSTMDataset(utils.data.Dataset):
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data['duation'] = self.data.time_seq.apply(np.sum, dtype = np.float32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
 
     def __getitem__(self, index):
         # score is the global fact. So we need to modify the first part of the minibatch
@@ -58,9 +59,9 @@ class CTLSTMDataset(utils.data.Dataset):
             '''
             event_tensor = torch.from_numpy(self.data.iloc[index].event)
             dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            # duration_tensor = torch.from_numpy(self.data.iloc[index].duation)
+            intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity)
             return [event_tensor, dtime_tensor, self.token_num_tensor, self.data.iloc[index].duation], \
-                   torch.tensor(self.data.iloc[index].score)
+                   torch.tensor(self.data.iloc[index].score), intensity_tensor
 
     def __len__(self):
         return self.data.shape[0]

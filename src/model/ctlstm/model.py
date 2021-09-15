@@ -10,7 +10,7 @@ class CTLSTMwrapper(BasicModule):
         self.event_num = event_num
         self.model = CTLSTM(hidden_dim = hidden_dim, event_num = event_num, beta = beta, device = device, mc_sample_num = mc_sample_num)
     
-    def forward(self, minibatch, eval_tag):
+    def forward(self, minibatch, eval_tag, intensity_instead):
         '''
         The shape of minibatch
         [
@@ -25,7 +25,7 @@ class CTLSTMwrapper(BasicModule):
 
         return self.model(event_tensor = event_tensor, dtime_tensor = dtime_tensor, 
                           token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, 
-                          eval_tag = eval_tag)
+                          eval_tag = eval_tag, intensity_instead = intensity_instead)
 
     def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
@@ -95,6 +95,10 @@ class CTLSTMwrapper(BasicModule):
         self.model.eval()
         integral, intensity, timestamp = self.model.intensity(data[0], resolution)
         return integral, intensity, timestamp
+    
+    def probe_intensity(self, data):
+        self.model.eval()
+        return self.forward(data[0], eval_tag = True, intensity_instead = True)
 
 def loss_f(value):
     '''

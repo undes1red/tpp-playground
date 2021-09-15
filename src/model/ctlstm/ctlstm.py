@@ -40,7 +40,7 @@ class CTLSTM(nn.Module):
         self.mark = nn.Embedding(self.event_num + 3, self.hidden_dim).to(self.device)
         self.intensity = nn.Linear(self.hidden_dim, 1, bias = False).to(self.device)
     
-    def forward(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, eval_tag=False): 
+    def forward(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, eval_tag=False, intensity_instead = False): 
         """
 		input
 			model [object of GNHP] : p_theta or simply p 
@@ -85,9 +85,12 @@ class CTLSTM(nn.Module):
         actual_counts = torch.sum(all_mask_noise, dim=-1) # B 
         integral = torch.sum(integral, dim=-1) / actual_counts
         integral = duration_tensor * integral # B
-        log_likelihood = torch.sum(log_inten) - torch.sum(integral)
 
-        return log_likelihood
+        if intensity_instead:
+            return integral, torch.exp(log_inten)
+        else:
+            log_likelihood = torch.sum(log_inten) - torch.sum(integral)
+            return log_likelihood
     
     def intensity(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, resolution):
         """

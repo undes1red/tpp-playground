@@ -125,6 +125,10 @@ class TemporalModel(BasicModule):
         assert intensity.shape == integral.shape
 
         return integral, intensity, timestamp
+    
+    def probe_intensity(self, data):
+        self.model.eval()
+        return self.forward(data[0])
 
 def loss_f(intensity, intensity_integral):
     '''

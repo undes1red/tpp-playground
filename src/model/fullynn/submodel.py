@@ -1,10 +1,22 @@
 import torch.nn as nn
-from .nonneg import NonNegLinear
 import torch
 
+from .nonneg import NonNegLinear
+from .activate import Log
+
 TA = {
+    # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
+    # That is to say, each scalar in the output vector is bigger than log(1 + num_of_layer(n)) if all hidden layer weights only 
+    # have positive numbers like what FullyNN does.
     'softplus': nn.Softplus,
-    'tanh': nn.Tanh
+    # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
+    # analysis, we argue that this feature is required by approaches like FullyNN to regress long-tail functions like Hawkes intensity function.
+    'tanh': nn.Tanh,
+    # Yet another function that has small gradients when it has big inputs. But as the log function is not bounded above, the hard integral bound introduced
+    # by tanh can be alleviated.
+    'log': Log,
+    # This activation can perfectly show why FullyNN needs tanh to attain a trade-off between intensity function regression ability and extrapolation 
+    'identity': nn.Identity
 }
 
 class FullyNN(nn.Module):

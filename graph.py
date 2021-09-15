@@ -23,7 +23,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--dataset_name', type=str, help='The name of used dataset related to the required checkpoint.')
     parser.add_argument('--dataloader_name', type=str, help='The name of used dataset related to the required checkpoint.')
-    parser.add_argument('--dataloader_config', type=str, default = None, help='The name of used dataset related to the required checkpoint.')
+    parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of used dataset related to the required checkpoint.')
+    parser.add_argument('--dataloader_config', type=str, default = None, \
+                        help='Choose the dataloader config file in the corresponding model config folder for plot drawing.')
     parser.add_argument('--figure_count', type = int, help='We will select \{figure_count\} records from training set(if set),\
                                                       test set(if set), and evaluation set(if set), respectively. So there will be\
                                                       \{enabled_dataset\} * figure_count plots when the plotter finish running.')
@@ -44,12 +46,13 @@ if __name__ == '__main__':
     opt.__dict__.update(model_param)
     logger.info(opt)
     # location
-    opt.store_dir = os.path.join(root, 'output', opt.dataset_name, opt.model_name)
+    opt.store_dir = os.path.join(root, 'output', opt.dataset_name, opt.model_name + '-' + str(opt.model_config) \
+                                               + '-' + opt.dataloader_name + '-' + str(opt.used_dataloader_config))
     if not os.path.exists(opt.store_dir):
         os.makedirs(opt.store_dir)
 
     # Find the checkpoint file.
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', *param_names)
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', *param_names)
     folder_suffix = 'output_' + '_'.join(map(str, model_hyperparameters.values()))
     checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
     logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')

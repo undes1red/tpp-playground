@@ -130,6 +130,10 @@ class FullyNNModel(BasicModule):
         assert expand_intensity.shape == expand_integral.shape
 
         return expand_integral, expand_intensity, timestamp
+
+    def probe_intensity(self, data):
+        self.model.eval()
+        return self.forward(data[0])
         
 
 def loss_f(intensity, intensity_integral):

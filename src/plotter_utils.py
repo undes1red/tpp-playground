@@ -23,11 +23,9 @@ def draw_intensity(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
     # Intensity probe at all event timestamps.
-    intensity_integral, intensity = model(data[0])
+    intensity_integral, intensity = model.probe_intensity(data)
     print(intensity.squeeze())
     print(data[2].squeeze())
-    mse = torch.nn.functional.mse_loss(intensity.squeeze(), data[2].squeeze())
-    logger.info(f'The MSE loss between model intensity and target intensity at event points is {mse.item()}.')
 
     _, model_intensity, timestamp = expand_model_intensity(model, data[0], 100, opt)
     true_intensity = expand_true_intensity(data[0], data[2], 100, opt)

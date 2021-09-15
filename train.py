@@ -55,8 +55,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         if opt.wandb:
             import wandb
             wandb.init(project = 'Temporal point process', config = vars(opt), group = opt.dataset_name, \
-                       name = '-'.join([opt.model_name, os.path.basename(opt.model_json), \
-                                        opt.dataset_name, os.path.basename(opt.dataloader_config)]), \
+                       name = '-'.join([opt.model_name, os.path.basename(str(opt.model_json)), \
+                                        opt.dataset_name, os.path.basename(str(opt.dataloader_config))]), \
                        dir = os.path.join(opt.log, log_folder), \
                        resume = 'never'
                        )
@@ -112,7 +112,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                 print_performances(logger = logger, procedure='Evaluation', lr = optimizer.get_lr(), **(model_class.log_print_format(eva_report)))
                 print_performances(logger = logger, procedure='Test', lr = optimizer.get_lr(), **(model_class.log_print_format(test_report)))
                 if opt.wandb:
-                    wandb.log(add_prefix_to_keys(model_class.log_print_format(eva_report), temp = 'evaluation_'), step = current_step)
+                    wandb.log(add_prefix_to_keys(model_class.log_print_format(eva_report), temp = 'evaluation_'), commit = False, step = current_step)
                     wandb.log(add_prefix_to_keys(model_class.log_print_format(test_report), temp = 'test_'), step = current_step)
             
                 # We will store the checkpoint after model evaluation.
@@ -138,8 +138,6 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                                 model_class.choose_metric(eva_report, test_report)
                                 ))
                             best_model_logger.print(logger_name = 'best_model', step = current_step, **best_model_dict)
-                            if opt.wandb:
-                                wandb.run.summary = best_model_dict
                 if file_logger:
                     eva = model_class.logfile_print_format(eva_report)
                     test = model_class.logfile_print_format(test_report)
