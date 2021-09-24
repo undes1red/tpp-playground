@@ -20,6 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, help='The learning rate used for training the required model.')
     parser.add_argument('--batch_size', type=int, help='The batch size used for training the required model.')
     parser.add_argument('--n_training_steps', type=int, help='The total training step used for training the required model.')
+    parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
 
     parser.add_argument('--dataset_name', type=str, help='The name of used dataset related to the required checkpoint.')
     parser.add_argument('--dataloader_name', type=str, help='The name of used dataset related to the required checkpoint.')
@@ -87,17 +88,17 @@ if __name__ == '__main__':
     for figure_index in range(opt.figure_count):
         if opt.train:
             train_data = next(iter_train)
-            draw(model, train_data, 'train', figure_index, type = 'intensity', opt = opt)
+            draw(model, train_data, 'train', figure_index, opt = opt)
             logger.info(f'Figure train_{figure_index} finished drawing.')
 
         if opt.evaluation:
             evaluation_data = next(iter_eva)
-            draw(model, evaluation_data, 'evaluation', figure_index, type = 'intensity', opt = opt)
+            draw(model, evaluation_data, 'evaluation', figure_index, opt = opt)
             logger.info(f'Figure evaluation_{figure_index} finished drawing.')
 
         if opt.test:
             test_data = next(iter_test)
-            draw(model, test_data, 'test', figure_index, type = 'intensity', opt = opt)
+            draw(model, test_data, 'test', figure_index, opt = opt)
             logger.info(f'Figure test_{figure_index} finished drawing.')
     
     logger.info('Task finished')

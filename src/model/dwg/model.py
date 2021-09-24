@@ -123,6 +123,8 @@ class TemporalModel(BasicModule):
                                                                                # [batch_size, seq_len * resolution, 1]
         check_tensor(intensity)
         assert intensity.shape == integral.shape
+        intensity = intensity.squeeze(-1)                                      # [batch_size, seq_len * resolution]
+        integral = integral.squeeze(-1)                                        # [batch_size, seq_len * resolution]
 
         return integral, intensity, timestamp
     

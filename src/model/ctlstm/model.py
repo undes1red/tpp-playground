@@ -33,7 +33,7 @@ class CTLSTMwrapper(BasicModule):
         model.train()
             
         log_likelihood = model(
-            minibatch[0], eval_tag = False
+            minibatch[0], eval_tag = False, intensity_instead = False
         )
     
         loss = loss_f(
@@ -51,7 +51,7 @@ class CTLSTMwrapper(BasicModule):
     
         model.eval()
         log_likelihood = model(
-            minibatch[0], eval_tag = True
+            minibatch[0], eval_tag = True, intensity_instead = False
         )
     
         loss = loss_f(

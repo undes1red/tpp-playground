@@ -61,17 +61,41 @@ class ClampLinear(nn.Linear):
     Alleviate the negative gradient issue.
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
-    def __init__(self, in_features, out_features, clamp_min = None, bias=True):
+    def __init__(self, in_features, out_features, clamp_min = None, bias=True, clamp_max = None):
         super(ClampLinear, self).__init__(in_features, out_features, bias)
         self.clamp_min = clamp_min
+        self.clamp_max = clamp_max
 
-        if self.clamp_min:
+        if self.clamp_min or self.clamp_max:
             self.clamp_weights()
 
     def clamp_weights(self):
-        self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min)
+        self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min, max = self.clamp_max)
 
     def forward(self, inputs):
-        if self.clamp_min:
-            self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min)
+        if self.clamp_min or self.clamp_max:
+            self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min, max = self.clamp_max)
+        return F.linear(inputs, self.weight, self.bias)
+
+class NonNegNormLinear(nn.Linear):
+    '''
+    Alleviate the negative gradient issue.
+    Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
+    '''
+    def __init__(self, in_features, out_features, norm_min, bias = None):
+        super(NonNegNormLinear, self).__init__(in_features, out_features, bias)
+        self.norm_min = norm_min
+
+        if self.norm_min:
+            self.clamp_weights()
+
+    def regularization(self, x, norm_min):
+        return x if torch.sum(x) >= norm_min else x + (norm_min - torch.sum(x))/(x.numel())
+
+    def clamp_weights(self):
+        self.weight.data = self.regularization(self.weight.data, norm_min = self.norm_min)
+
+    def forward(self, inputs):
+        if self.norm_min:
+            self.weight.data = self.regularization(self.weight.data, norm_min=self.norm_min)
         return F.linear(inputs, self.weight, self.bias)

@@ -51,7 +51,7 @@ class FullyNNModel(BasicModule):
         '''
     
         model.train()
-        intensity_integral, intensity = model(                                 # [batch_size, seq_len, 1]
+        intensity_integral, intensity = model(         # [batch_size, seq_len, 1]
                 minibatch[0]
         )
     
@@ -69,7 +69,7 @@ class FullyNNModel(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        intensity_integral, intensity = model(
+        intensity_integral, intensity = model(         # [batch_size, seq_len, 1]
             minibatch[0]
         )
     
@@ -119,6 +119,7 @@ class FullyNNModel(BasicModule):
         resolution: int
                     How many interpretive numbers we have between an event interval?
         '''
+        batch_size, seq_len_plus_1 = input_time.shape
         self.model.eval()
         time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
         time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
@@ -128,6 +129,8 @@ class FullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len * resolution, 1]
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
+        expand_intensity = expand_intensity.squeeze(-1)                        # [batch_size, seq_len * resolution]
+        expand_integral = expand_integral.squeeze(-1)                          # [batch_size, seq_len * resolution]
 
         return expand_integral, expand_intensity, timestamp
 

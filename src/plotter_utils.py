@@ -6,12 +6,23 @@ from .utils import getLogger
 
 logger = getLogger(name = __file__)
 
-def expand_true_intensity(time, intensity, resolution, opt):
-    return true_intensity_dict[opt.dataset_name](time, intensity, resolution)
+'''
+1. We can draw probability distribution plots and intensity function at the same time.
+2. We will utilize intensity functions values and their integrals for probability distribution.
+   We don't need to implement another model method to obtain them.
+'''
+intensity_available = ['dwg', 'fullynn', 'ctlstm']
 
-def expand_model_intensity(model, data, resolution, opt):
-    if opt.model_name in ['dwg', 'fullynn', 'ctlstm']:
-        return model.function_prober(data, resolution)
+'''
+Intensity function drawing utils
+'''
+def expand_true_intensity(time, intensity, opt):
+    return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution)
+                                                                               # [batch_size, seq_len * resolution]
+
+def expand_model_intensity(model, data, opt):
+    if opt.model_name in intensity_available:
+        return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution]
     else:
         raise Exception('This model is incompatible with intensity prober!')
 
@@ -23,12 +34,14 @@ def draw_intensity(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
     # Intensity probe at all event timestamps.
-    intensity_integral, intensity = model.probe_intensity(data)
+    _, intensity = model.probe_intensity(data)
     print(intensity.squeeze())
     print(data[2].squeeze())
 
-    _, model_intensity, timestamp = expand_model_intensity(model, data[0], 100, opt)
-    true_intensity = expand_true_intensity(data[0], data[2], 100, opt)
+    _, model_intensity, timestamp = expand_model_intensity(model, data[0], opt)
+                                                                               # [batch_size, seq_len * resolution]
+    true_intensity = expand_true_intensity(data[0], data[2], opt)
+                                                                               # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_intensity = model_intensity.squeeze().detach().cpu().numpy()
@@ -50,25 +63,85 @@ def draw_intensity(model, data, desc, plot_count, opt):
     # Draw plot
     fig = plt.figure()
     sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_plot)
-    plt.savefig(os.path.join(opt.store_dir, 'intensity_' + desc + '_' + str(plot_count) + '.png'), dpi = 1000)
+    if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
+        os.makedirs(os.path.join(opt.store_dir, 'intensity'))
+    plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
     plt.close(fig = fig)
 
-def draw_probability(model, data, desc, plot_count, opt):
-    pass
+'''
+Probability distribution drawing utils
+'''
+def expand_true_probability(time, intensity, opt):
+    expand_true_intensity = \
+        true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution)     # [batch_size, seq_len * resolution]
+    expand_true_integral = \
+        true_integral_dict[opt.dataset_name](time, intensity, opt.resolution)      # [batch_size, seq_len * resolution]
+    return expand_true_intensity * torch.exp(-expand_true_integral)                # [batch_size, seq_len * resolution]
 
-def draw(model, data, desc, plot_count, type, opt):
-    if type == 'intensity':
+def draw_probability(model, data, desc, plot_count, opt):
+    '''
+    Now you should investigate your own model implementations and modify this function. If your algorithm is listed in 'intensity_available', its
+    model_probe() should return model-learned intensity function values and integral values at all timestamp samples, or model_probe() should output
+    the probability distribution values directly(Like several intensity-free models). Thanks to the constant and easy relation from intensity functions
+    to correlated probability distributions, we do not require an additional complicated method to probability distribution probe.
+
+    data: [time_diff, score, target_intensity]
+    '''
+    # Intensity probe at all event timestamps.
+    _, intensity = model.probe_intensity(data)
+    print(intensity.squeeze())
+    print(data[2].squeeze())
+
+    if opt.model_name in intensity_available:
+        model_intensity_integral, model_intensity, timestamp = expand_model_intensity(model, data[0], opt)
+                                                                               # [batch_size, seq_len * resolution]
+        model_probability = model_intensity * torch.exp(-model_intensity_integral)
+                                                                               # [batch_size, seq_len * resolution]
+    else:
+        model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(data[0], data[2], opt)
+                                                                               # [batch_size, seq_len * resolution]
+
+    # torch.tensor to numpy.array
+    model_probability = model_probability.squeeze().detach().cpu().numpy()
+    timestamp = timestamp.detach().cpu().numpy().cumsum()
+    if true_probability is not None:
+        true_probability = true_probability.squeeze().detach().cpu().numpy()
+    
+    if true_probability is not None:
+        df = pd.DataFrame.from_dict(
+            {'Time': timestamp, 'Predicted Probability': model_probability, 'Truth': true_probability}
+        )
+    else:
+        df = pd.DataFrame.from_dict(
+            {'Time': timestamp, 'Predicted Probability': model_probability}
+        )
+
+    df_plot = pd.melt(df, 'Time')
+    df_plot.columns = ['Time', '', 'Probability Distribution']
+    # Draw plot
+    fig = plt.figure()
+    sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_plot)
+    if not os.path.exists(os.path.join(opt.store_dir, 'probability_distribution')):
+        os.makedirs(os.path.join(opt.store_dir, 'probability_distribution'))
+    plt.savefig(os.path.join(opt.store_dir, 'probability_distribution', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
+    plt.close(fig = fig)
+
+def draw(model, data, desc, plot_count, opt):
+    if opt.plot_type == 'intensity':
         draw_intensity(model, data, desc, plot_count, opt)
-    elif type == 'probability':
+    elif opt.plot_type == 'probability':
         draw_probability(model, data, desc, plot_count, opt)
     else:
         raise Exception('Unknown plot type detected!')
     
-# The true intensity function definition
+'''
+True intensity function interpolation functions for hawkes process, poisson process, stationary renewal, and self correcting process.
+'''
 def hawkes_1(time, intensity, resolution):
     '''
     Hawkes_1 process: \lambda(t) = \mu + a * b * exp(-b(t - t_l))
-    In this case, \mu = 0.2, a = 0.8, b = 1, and all of the past events are related to the intensity.
+    In this case, \mu = 0.2, a = 0.8, b = 1, and all past events affect the intensity.
 
     Args:
     time      : [batch_size, seq_len + 1]
@@ -99,9 +172,9 @@ def hawkes_1(time, intensity, resolution):
 def hawkes_2(time, intensity, resolution):
     '''
     Hawkes_2 process: \lambda(t) = \mu + a_1 * b_1 * exp(-b_1(t - t_l)) + a_2 * b_2 * exp(-b_2(t - t_l))
-    In this case, \mu = 0.2, a_1 = 0.4, b_1 = 1, a_2 = 0.4, b_2 = 20.0, and all of the past events are related to the intensity.
+    In this case, \mu = 0.2, a_1 = 0.4, b_1 = 1, a_2 = 0.4, b_2 = 20.0, and all past events affect the intensity.
 
-    It seems that we have no choice but have to solve the intensity iteratively.
+    It seems that we have no choice but to solve the intensity iteratively.
 
     Args:
     time      : [batch_size, seq_len + 1]
@@ -158,11 +231,30 @@ def poisson(time, intensity, resolution):
     batch_size, seq_len = intensity.shape
     return torch.ones((batch_size, seq_len * resolution)) * lam                # [batch_size, seq_len * resolution]
 
+def poisson_integral(time, intensity, resolution):
+    '''
+    Poisson process: \lambda(t) = 1 and \Lambda(t) = t (\Lambda(t) is the integral of \lambda(t))
+
+    Args:
+    time       : [batch_size, seq_len + 1]  (not used in this function)
+    intensity  : [batch_size, seq_len]
+               The value of true intensity function.
+    resolution : int
+    '''
+    # hyperparameters
+    lam = 1
+
+    batch_size, _ = intensity.shape
+    time_multiplier = torch.linspace(0, 1, resolution)
+    expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
+
+    return (expand_time * lam).reshape(batch_size, -1)                         # [batch_size, seq_len * resolution]
+
 def sta_renew(time, intensity, resolution):
     '''
     The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
-    The intensity function only matches the explicitly-given lognorm distribution. please check and modify this function if you use
-    another hyperparameters for stationary renewal process during data generation.
+    The intensity function only matches the explicitly given lognorm distribution used in the synthetic data generator. 
+    Please check and modify this function if you want to use another hyperparameter set for the stationary renewal process during data generation.
 
     Timestamp 0 will be shifted to a very small value.
 
@@ -214,4 +306,27 @@ true_intensity_dict = {
     'poisson': poisson,
     'stationary_renewal': sta_renew,
     'self_correct': self_correct
+}
+
+'''
+True intensity integral function interpolation functions for hawkes process, poisson process, stationary renewal, and self correcting process.
+'''
+def hawkes_1_integral(time, intensity, resolution):
+    pass
+
+def hawkes_2_integral(time, intensity, resolution):
+    pass
+
+def sta_renew_integral(time, intensity, resolution):
+    pass
+
+def self_correct_integral(time, intensity, resolution):
+    pass
+
+true_integral_dict = {
+    'hawkes_1': hawkes_1_integral,
+    'hawkes_2': hawkes_2_integral,
+    'poisson': poisson_integral,
+    'stationary_renewal': sta_renew_integral,
+    'self_correct': self_correct_integral
 }

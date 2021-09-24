@@ -53,7 +53,7 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         }
         '''
     
-    # The length of the format_dict
+    # The largest length of the format_dict
     format_dict_length = 0
     
     '''
