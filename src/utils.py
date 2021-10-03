@@ -125,12 +125,9 @@ def suffix(opt, *args):
 
 # General evaluation procedure.
 def evaluation(data, model, model_class, device, output_length, desc):
-    r = range(1, len(data) + 1)
-    data_itr = iter(data)
     sum_ = [0] * output_length
     
-    for _ in tqdm(r, desc, leave = False):
-        minibatch = next(data_itr)
+    for minibatch in tqdm(r, desc, leave = False):
         batch_sum = model_class.evaluation_step(model, minibatch, device)
         sum_ = lst_add_lst(sum_, batch_sum)
 
