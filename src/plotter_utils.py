@@ -17,7 +17,7 @@ intensity_available = ['dwg', 'fullynn', 'ctlstm']
 Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
-    return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution)
+    return true_intensity_dict[opt.dataset_name](preprocess(time, opt.dataloader_name), intensity, opt.resolution)
                                                                                # [batch_size, seq_len * resolution]
 
 def expand_model_intensity(model, data, opt):
@@ -25,6 +25,26 @@ def expand_model_intensity(model, data, opt):
         return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution]
     else:
         raise Exception('This model is incompatible with intensity prober!')
+
+def preprocess(input_time, dataloader_name):
+    '''
+    Form the required input time sequences. The expected time sequences should be in [batch_size, seq_len + 1] shape in which
+    the first item is 0. Other values in a time sequence should be the time interval between adjoint events. Several algorithms
+    may require an escape time to guarantee all event sequences having the same length on the timeline. But for simplicity, one should
+    remove such escape events here.
+
+    Args:
+    input_time      : shape is unknown.
+                      The unformed input time sequences.
+    dataloader_name : A marker for choosing a correct procedure to form the input.
+    '''
+    if dataloader_name == 'syn':
+        return input_time                                                      # [batch_size, seq_len + 1]
+    elif dataloader_name == 'ctlstm':
+        return input_time[:, :-1]                                              # [batch_size, seq_len + 1]
+    else:
+        logger.warning(f'Preprocess procedure for {dataloader_name} is not found. We will directly output the original input. Take your own risk!')
+        return input_time
 
 def draw_intensity(model, data, desc, plot_count, opt):
     '''
@@ -34,13 +54,14 @@ def draw_intensity(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
     # Intensity probe at all event timestamps.
-    _, intensity = model.probe_intensity(data)
-    print(intensity.squeeze())
-    print(data[2].squeeze())
+    # Used for debug
+    # _, intensity = model.probe_intensity(data)
+    # print(intensity.squeeze())
+    # print(data[2].squeeze())
 
-    _, model_intensity, timestamp = expand_model_intensity(model, data[0], opt)
+    _, model_intensity, timestamp = expand_model_intensity(model, data, opt)
                                                                                # [batch_size, seq_len * resolution]
-    true_intensity = expand_true_intensity(data[0], data[2], opt)
+    true_intensity = expand_true_intensity(*extract_data(data, opt), opt = opt)
                                                                                # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
@@ -81,26 +102,26 @@ def expand_true_probability(time, intensity, opt):
 def draw_probability(model, data, desc, plot_count, opt):
     '''
     Now you should investigate your own model implementations and modify this function. If your algorithm is listed in 'intensity_available', its
-    model_probe() should return model-learned intensity function values and integral values at all timestamp samples, or model_probe() should output
+    model_probe() should return model-learned intensity function values and integral values at all timestamp samples, otherwise model_probe() should output
     the probability distribution values directly(Like several intensity-free models). Thanks to the constant and easy relation from intensity functions
-    to correlated probability distributions, we do not require an additional complicated method to probability distribution probe.
+    to correlated probability distributions, we do not require an additional complicated method for probability distribution probe.
 
     data: [time_diff, score, target_intensity]
     '''
     # Intensity probe at all event timestamps.
-    _, intensity = model.probe_intensity(data)
-    print(intensity.squeeze())
-    print(data[2].squeeze())
+    # Used for debug
+    # _, intensity = model.probe_intensity(data)
+    # print(intensity.squeeze())
+    # print(data[2].squeeze())
 
     if opt.model_name in intensity_available:
-        model_intensity_integral, model_intensity, timestamp = expand_model_intensity(model, data[0], opt)
+        model_intensity_integral, model_intensity, timestamp = expand_model_intensity(model, data, opt)
                                                                                # [batch_size, seq_len * resolution]
         model_probability = model_intensity * torch.exp(-model_intensity_integral)
                                                                                # [batch_size, seq_len * resolution]
     else:
         model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
-    true_probability = expand_true_probability(data[0], data[2], opt)
-                                                                               # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(*extract_data(data, opt), opt)   # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
@@ -136,7 +157,7 @@ def draw(model, data, desc, plot_count, opt):
         raise Exception('Unknown plot type detected!')
     
 '''
-True intensity function interpolation functions for hawkes process, poisson process, stationary renewal, and self correcting process.
+True intensity function interpolation functions and their integrals for hawkes process, poisson process, stationary renewal, and self correcting process.
 '''
 def hawkes_1(time, intensity, resolution):
     '''
@@ -168,6 +189,37 @@ def hawkes_1(time, intensity, resolution):
     expand_true_intensity = expand_true_intensity.reshape(batch_size, -1)      # [batch_size, seq_len * resolution]
     expand_true_intensity[:, 0:resolution] = mu
     return expand_true_intensity
+
+def hawkes_1_integral(time, intensity, resolution):
+    '''
+    Hawkes_1 process: \Lambda(t) = \mu * (t - t_l) + a - a * exp(-b(t - t_l)). When t = t_l, \Lambda(t) = 0.
+    Hyperparameters that are used here follow what they are in function hawkes_1.
+
+    Args:
+    time      : [batch_size, seq_len + 1]
+    intensity : [batch_size, seq_len]
+              The value of true intensity function.
+    resolution: int
+    '''
+    # hyperparameters
+    mu = 0.2
+    a = 0.8
+    b = 1.0
+    
+    choosed_time = []
+    batch_size = time.shape[0]
+    time_multiplier = torch.linspace(0, 1, resolution)
+    expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
+    mu_integral = mu * expand_time                                             # [batch_size, seq_len, resolution]
+    basic_exponential_integral = a * torch.exp(-b * expand_time)               # [batch_size, seq_len, resolution]
+    cum_time = torch.cumsum(time)
+
+    expand_true_integral = mu_integral + a - basic_exponential_integral              # [batch_size, seq_len, resolution]
+    expand_true_integral = expand_true_integral.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
+    expand_true_integral[:, 0:resolution] = mu_integral[:, 0, :]               # [batch_size, seq_len * resolution]
+
+    return expand_true_integral
+
 
 def hawkes_2(time, intensity, resolution):
     '''
@@ -213,6 +265,10 @@ def hawkes_2(time, intensity, resolution):
     expand_true_intensity = expand_true_intensity.reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]
     return expand_true_intensity
+
+def hawkes_2_integral(time, intensity, resolution):
+    pass
+
 
 def poisson(time, intensity, resolution):
     '''
@@ -274,6 +330,9 @@ def sta_renew(time, intensity, resolution):
     expand_true_intensity = expand_true_intensity.reshape(batch_size, -1)      # [batch_size, seq_len * resolution]
     return expand_true_intensity
 
+def sta_renew_integral(time, intensity, resolution):
+    pass
+
 def self_correct(time, intensity, resolution):
     '''
     Self correct process has a iterative intensity function. \lambda(t) = exp(mu * tau - alpha * N)
@@ -300,6 +359,9 @@ def self_correct(time, intensity, resolution):
     expand_intensity = expand_intensity.reshape(batch_size, -1)                # [batch_size, seq_len * resolution]
     return expand_intensity
 
+def self_correct_integral(time, intensity, resolution):
+    pass
+
 true_intensity_dict = {
     'hawkes_1': hawkes_1,
     'hawkes_2': hawkes_2,
@@ -308,25 +370,32 @@ true_intensity_dict = {
     'self_correct': self_correct
 }
 
-'''
-True intensity integral function interpolation functions for hawkes process, poisson process, stationary renewal, and self correcting process.
-'''
-def hawkes_1_integral(time, intensity, resolution):
-    pass
-
-def hawkes_2_integral(time, intensity, resolution):
-    pass
-
-def sta_renew_integral(time, intensity, resolution):
-    pass
-
-def self_correct_integral(time, intensity, resolution):
-    pass
-
 true_integral_dict = {
     'hawkes_1': hawkes_1_integral,
     'hawkes_2': hawkes_2_integral,
     'poisson': poisson_integral,
     'stationary_renewal': sta_renew_integral,
     'self_correct': self_correct_integral
+}
+
+def extract_data(data, opt):
+    return extract_data_from_rawdata[opt.dataloader_name](data)
+
+def syn_extract(raw_data):
+    return raw_data[0], raw_data[2]
+
+def ctlstm_extract(raw_data):
+    return raw_data[0][1], raw_data[2]
+
+def cnf_extract(raw_data):
+    pass
+
+def ifl_extract(raw_data):
+    pass
+
+extract_data_from_rawdata = {
+    'syn': syn_extract,
+    'ctlstm': ctlstm_extract,
+    'cnf': cnf_extract,
+    'ifl': ifl_extract
 }

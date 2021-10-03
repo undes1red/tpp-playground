@@ -56,7 +56,7 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             import wandb
             wandb.init(project = 'Temporal point process', config = vars(opt), group = opt.dataset_name, \
                        name = '-'.join([opt.model_name, os.path.basename(str(opt.model_json)), \
-                                        opt.dataset_name, os.path.basename(str(opt.dataloader_config))]), \
+                                        opt.dataset_name, str(opt.dataloader_config)]), \
                        dir = os.path.join(opt.log, log_folder), \
                        resume = 'never'
                        )
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     opt.save_model = os.path.join(root_path, 'data', 'outputs', opt.dataset_name)
     opt.model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json)
     opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
-    opt.dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
 
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))

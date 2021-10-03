@@ -49,6 +49,7 @@ if __name__ == '__main__':
     # location
     opt.store_dir = os.path.join(root, 'output', opt.dataset_name, opt.model_name + '-' + str(opt.model_config) \
                                                + '-' + opt.dataloader_name + '-' + str(opt.used_dataloader_config))
+    opt.abs_dataloader_config = os.path.join(root, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     if not os.path.exists(opt.store_dir):
         os.makedirs(opt.store_dir)
 
@@ -76,8 +77,6 @@ if __name__ == '__main__':
 
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
-    if opt.dataloader_config:
-        opt.dataloader_config = os.path.join(root, 'config', opt.model_name, opt.dataloader_config)
     opt.n_worker = 0
     train, evaluation, test = prepare_dataloaders(opt)
     iter_train = iter(train)

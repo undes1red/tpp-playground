@@ -116,8 +116,7 @@ class CTLSTM(nn.Module):
         all_dtime_noise, all_mask_noise, timestamp = self.get_uniform_samples(
 			all_c_p_actual, all_cb_p_actual,
 			all_d_p_actual, all_o_p_actual,
-			dtime_tensor[:, 1:], resolution,
-			duration_tensor, mask_tensor
+			dtime_tensor[:, 1:], resolution, mask_tensor
 		)
 		# B x T' (x D)
         inten_p_noise = self.get_intensities_all_types(
@@ -334,9 +333,9 @@ class CTLSTM(nn.Module):
 
         batch_size, T_plus_1, hidden_dim = all_cell.size()
         resolution = resolution if resolution > 1 else 1
-        u = torch.linspace(start = 0, end = 1, step = resolution, dtypr = torch.float32, device = self.device)
+        u = torch.linspace(0, 1, resolution, dtype = torch.float32, device = self.device)
                                                                                # [resolution]
-        sampled_time = dtime_tensor.unsuqeeze(-1) * u                          # [batch_size, seq_len + 1, resolution]
+        sampled_time = dtime_tensor.unsqueeze(-1) * u                          # [batch_size, seq_len + 1, resolution]
         timestamp = torch.cat(
             (torch.zeros((batch_size, T_plus_1, 1), device = self.device), sampled_time.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len + 1, resolution]

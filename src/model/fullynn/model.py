@@ -111,7 +111,7 @@ class FullyNNModel(BasicModule):
     metric_number = 2 # metric number is the length of the output of choose_metric
 
     # All methods not required by BasicModule are intensity plotter exclusive.
-    def function_prober(self, input_time, resolution):
+    def function_prober(self, input_data, resolution):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -119,8 +119,8 @@ class FullyNNModel(BasicModule):
         resolution: int
                     How many interpretive numbers we have between an event interval?
         '''
-        batch_size, seq_len_plus_1 = input_time.shape
         self.model.eval()
+        input_time = input_data[0]
         time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
         time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         time_next = time_next.unsqueeze(-1)                                    # [batch_size, seq_len, 1]
