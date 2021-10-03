@@ -121,7 +121,7 @@ def draw_probability(model, data, desc, plot_count, opt):
                                                                                # [batch_size, seq_len * resolution]
     else:
         model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
-    true_probability = expand_true_probability(*extract_data(data, opt), opt)   # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(*extract_data(data, opt), opt)  # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
@@ -158,6 +158,10 @@ def draw(model, data, desc, plot_count, opt):
     
 '''
 True intensity function interpolation functions and their integrals for hawkes process, poisson process, stationary renewal, and self correcting process.
+'''
+
+'''
+Hawkes process whose intensity function only has one kernel.
 '''
 def hawkes_1(time, intensity, resolution):
     '''
@@ -206,21 +210,38 @@ def hawkes_1_integral(time, intensity, resolution):
     a = 0.8
     b = 1.0
     
-    choosed_time = []
+    # Integral part 1
     batch_size = time.shape[0]
     time_multiplier = torch.linspace(0, 1, resolution)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     mu_integral = mu * expand_time                                             # [batch_size, seq_len, resolution]
-    basic_exponential_integral = a * torch.exp(-b * expand_time)               # [batch_size, seq_len, resolution]
-    cum_time = torch.cumsum(time)
+    basic_exponential_integral = a - a * torch.exp(-b * expand_time)           # [batch_size, seq_len, resolution]
 
-    expand_true_integral = mu_integral + a - basic_exponential_integral              # [batch_size, seq_len, resolution]
+    # Integral part 2
+    table = torch.diag_embed(time[:, 2:-1], offset = -2)                       # [batch_size, seq_len, seq_len]
+    table = torch.cumsum(table, dim = -2)                                      # [batch_size, seq_len, seq_len]
+    reversed_cumsum_of_table = torch.cumsum(table.flip(-1), dim = -1).flip(-1) # [batch_size, seq_len, seq_len]
+    table_mask = (table != 0).int()                                            # [batch_size, seq_len, seq_len]
+    reversed_cumsum_of_table *= table_mask                                     # [batch_size, seq_len, seq_len]
+    historical_multiplier = torch.exp(-b * reversed_cumsum_of_table)           # [batch_size, seq_len, seq_len]
+    historical_multiplier *= table_mask                                        # [batch_size, seq_len, seq_len]
+
+    historical_integral = basic_exponential_integral.unsqueeze(-1) * historical_multiplier.unsqueeze(-2)
+                                                                               # [batch_size, seq_len, resolution, seq_len]
+    historical_integral = torch.sum(historical_integral, dim = -1)             # [batch_size, seq_len, resolution]
+
+    # Get the integral
+    expand_true_integral = mu_integral + basic_exponential_integral + historical_integral
+                                                                               # [batch_size, seq_len, resolution]
     expand_true_integral = expand_true_integral.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
     expand_true_integral[:, 0:resolution] = mu_integral[:, 0, :]               # [batch_size, seq_len * resolution]
 
     return expand_true_integral
 
 
+'''
+Hawkes process whose intensity function has multiple kernels.
+'''
 def hawkes_2(time, intensity, resolution):
     '''
     Hawkes_2 process: \lambda(t) = \mu + a_1 * b_1 * exp(-b_1(t - t_l)) + a_2 * b_2 * exp(-b_2(t - t_l))
@@ -269,7 +290,9 @@ def hawkes_2(time, intensity, resolution):
 def hawkes_2_integral(time, intensity, resolution):
     pass
 
-
+'''
+Time-independent poisson process
+'''
 def poisson(time, intensity, resolution):
     '''
     Poisson process: \lambda(t) = 1
@@ -306,7 +329,10 @@ def poisson_integral(time, intensity, resolution):
 
     return (expand_time * lam).reshape(batch_size, -1)                         # [batch_size, seq_len * resolution]
 
-def sta_renew(time, intensity, resolution):
+'''
+Stationary renewal process, whose probability distribution instead of intensity function is defined.
+'''
+def stationary_renew(time, intensity, resolution):
     '''
     The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
     The intensity function only matches the explicitly given lognorm distribution used in the synthetic data generator. 
@@ -330,9 +356,12 @@ def sta_renew(time, intensity, resolution):
     expand_true_intensity = expand_true_intensity.reshape(batch_size, -1)      # [batch_size, seq_len * resolution]
     return expand_true_intensity
 
-def sta_renew_integral(time, intensity, resolution):
+def stationary_renew_integral(time, intensity, resolution):
     pass
 
+'''
+Self-correct process, which the latest events would drastically decrease the probability of next events in a small time period.
+'''
 def self_correct(time, intensity, resolution):
     '''
     Self correct process has a iterative intensity function. \lambda(t) = exp(mu * tau - alpha * N)
@@ -366,7 +395,7 @@ true_intensity_dict = {
     'hawkes_1': hawkes_1,
     'hawkes_2': hawkes_2,
     'poisson': poisson,
-    'stationary_renewal': sta_renew,
+    'stationary_renewal': stationary_renew,
     'self_correct': self_correct
 }
 
@@ -374,11 +403,21 @@ true_integral_dict = {
     'hawkes_1': hawkes_1_integral,
     'hawkes_2': hawkes_2_integral,
     'poisson': poisson_integral,
-    'stationary_renewal': sta_renew_integral,
+    'stationary_renewal': stationary_renew_integral,
     'self_correct': self_correct_integral
 }
 
 def extract_data(data, opt):
+    '''
+    Why do we need this function?
+    Because different dataloaders would give minibatches in quite different manners, and there is no way
+    to force all dataloader to comply a pre-defined data output structure. 
+
+    extract_data should choose the proper extract data function stored in dictionary 'extract_data_from_rawdata'
+    by the name of used dataloader.
+    All functions defined in 'extract_data_from_rawdata' may receive raw data from the dataloader(batch_size is always 1), extract
+    time and intensity sequences, and output them.
+    '''
     return extract_data_from_rawdata[opt.dataloader_name](data)
 
 def syn_extract(raw_data):
