@@ -173,4 +173,5 @@ class Metric():
 def add_prefix_to_keys(dct, temp):
     tmp_dct = dict(dct)
     del tmp_dct['num_format']
-    return {temp + str(key): item for key, item in tmp_dct.items()}
+    result = {temp + str(key): item for key, item in tmp_dct.items()}
+    return result
