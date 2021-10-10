@@ -106,7 +106,8 @@ class FullyNN(nn.Module):
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
             create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
+        )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution]
+        expand_integral = expand_integral.squeeze(-1)                          # [batch_size, seq_len * resolution]
         time_expand.requires_grad = False
         timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
                                                                                # [batch_size, seq_len, resolution]
@@ -116,3 +117,66 @@ class FullyNN(nn.Module):
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         return expand_integral, expand_intensity, timestamp
+
+    def model_probe_function(self, time_history, time_next, resolution):
+        '''
+        We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
+        Args:
+        time_history: [batch_size, seq_len, 1]
+        time_next:    [batch_size, seq_len, 1]
+        resolution:   int
+        '''
+        output, (_, _) = self.rnn(time_history)                                # [batch_size, seq_len, d_history]
+        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
+        batch_size, seq_len, d_intensity = hidden.shape
+
+        hidden_expand = hidden.repeat(1, 1, resolution).reshape(batch_size, -1, d_intensity)
+                                                                               # [batch_size, seq_len * resolution, d_intensity]
+        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = True
+        emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]
+        output = self.activate(emb_time_expand + hidden_expand)                # [batch_size, seq_len * resolution, d_intensity]
+        output_storage = [output]                                              # [batch_size, seq_len * resolution, d_intensity]
+
+        for layer in self.mlp:
+            output = layer(output)                                             # [batch_size, seq_len * resolution, d_intensity]
+            output = self.activate(output)                                     # [batch_size, seq_len * resolution, d_intensity]
+            output_storage.append(output)                                      # [batch_size, seq_len * resolution, d_intensity] * (self.mlp.size + 1)
+
+        expand_integral = self.activate_final(self.agg(output))                # [batch_size, seq_len * resolution, 1]
+
+        timestamp = time_expand.reshape(batch_size, seq_len, resolution)
+                                                                               # [batch_size, seq_len, resolution]
+        timestamp = torch.cat(
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            dim = -1)                                                          # [batch_size, seq_len, resolution]
+        timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
+
+        # Gradient 1: Integral -> time
+        accumulated_gradient = torch.autograd.grad(
+            outputs=expand_integral,
+            inputs=time_expand,
+            grad_outputs=torch.ones_like(expand_integral),
+            create_graph=True,
+        )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution]
+
+        # Gradient 2: All layer output -> time
+        output_storage_gradient = {}
+        for idx, item in enumerate(output_storage):
+            subgradient = torch.autograd.grad(
+            outputs=item,
+            inputs=time_expand,
+            grad_outputs=torch.ones_like(item),
+            create_graph=True,
+            )[0].squeeze(-1)                                                   # [batch_size, seq_len * resolution]
+            output_storage_gradient['grad_' + str(idx)] = subgradient          # [batch_size, seq_len * resolution] * (self.mlp.size + 1)
+        
+        time_expand.requires_grad = True
+
+        result = {**{'accumulated_gradient': accumulated_gradient},\
+                  **output_storage_gradient,\
+                  **{ "output_" + str(idx): torch.norm(item, dim = -1) for idx, item in enumerate(output_storage)},\
+                  **{"final_output": expand_integral.squeeze(-1)}}
+
+        return result, timestamp

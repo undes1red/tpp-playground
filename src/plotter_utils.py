@@ -7,6 +7,9 @@ from .utils import getLogger
 
 logger = getLogger(name = __file__)
 
+length = 20
+height = 5
+
 '''
 1. We can draw probability distribution plots and intensity function at the same time.
 2. We will utilize intensity functions values and their integrals for probability distribution.
@@ -34,11 +37,6 @@ def draw_intensity(model, data, desc, plot_count, opt):
 
     data: [time_diff, score, target_intensity]
     '''
-    # Intensity probe at all event timestamps.
-    # Used for debug
-    # _, intensity = model.probe_intensity(data)
-    # print(intensity.squeeze())
-    # print(data[2].squeeze())
 
     _, model_intensity, timestamp = expand_model_intensity(model, data, opt)
                                                                                # [batch_size, seq_len * resolution]
@@ -65,6 +63,7 @@ def draw_intensity(model, data, desc, plot_count, opt):
     # Draw plot
     fig = plt.figure()
     sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_plot)
+    fig.set_size_inches(length,height)
     if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
         os.makedirs(os.path.join(opt.store_dir, 'intensity'))
     plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
@@ -103,11 +102,6 @@ def draw_probability(model, data, desc, plot_count, opt):
 
     data: [time_diff, score, target_intensity]
     '''
-    # Intensity probe at all event timestamps.
-    # Used for debug
-    # _, intensity = model.probe_intensity(data)
-    # print(intensity.squeeze())
-    # print(data[2].squeeze())
 
     if opt.model_name in intensity_available:
         model_intensity_integral, model_intensity, timestamp = expand_model_intensity(model, data, opt)
@@ -138,16 +132,46 @@ def draw_probability(model, data, desc, plot_count, opt):
     # Draw plot
     fig = plt.figure()
     sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_plot)
+    fig.set_size_inches(length,height)
     if not os.path.exists(os.path.join(opt.store_dir, 'probability_distribution')):
         os.makedirs(os.path.join(opt.store_dir, 'probability_distribution'))
     plt.savefig(os.path.join(opt.store_dir, 'probability_distribution', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
     plt.close(fig = fig)
+
+def draw_features(model, data, desc, plot_count, opt):
+    '''
+    This function is for model probing. It can be super useful when you need to dig into a model and see
+    what really happens.
+    data: [time_diff, score, target_intensity]
+    '''
+
+    probed_data, timestamp = model.model_prober(data, opt.resolution)
+    timestamp = timestamp.detach().cpu().numpy().cumsum()
+    if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(plot_count))):
+        os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(plot_count)))
+
+    for key, value in probed_data.items():
+        value = value.squeeze().detach().cpu().numpy()
+        df = pd.DataFrame.from_dict(
+                {'Time': timestamp, key: value}
+            )
+
+        # Draw plot
+        fig = plt.figure()
+        sns.lineplot(x = 'Time', y = key, data = df)
+
+        fig.set_size_inches(length,height)
+        plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
+        plt.close(fig = fig)
+    
 
 def draw(model, data, desc, plot_count, opt):
     if opt.plot_type == 'intensity':
         draw_intensity(model, data, desc, plot_count, opt)
     elif opt.plot_type == 'probability':
         draw_probability(model, data, desc, plot_count, opt)
+    elif opt.plot_type == 'debug':
+        draw_features(model, data, desc, plot_count, opt)
     else:
         raise Exception('Unknown plot type detected!')
     

@@ -33,7 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--evaluation', action='store_true')
-    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability'], default = 'intensity', help='Temporal point process only.')
+    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'debug'], default = 'intensity', help='Temporal point process only.')
 
     parser.add_argument('--cuda', action='store_true', help='Use GPUs to accelerate model evaluation speed.')
     logger = getLogger(name = 'Plotter')

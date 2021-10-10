@@ -129,7 +129,7 @@ class TemporalModel(BasicModule):
 
         return integral, intensity, timestamp
     
-    def probe_intensity(self, data):
+    def model_prober(self, data):
         self.model.eval()
         return self.forward(data[0])
 
