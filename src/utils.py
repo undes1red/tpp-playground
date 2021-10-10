@@ -127,7 +127,7 @@ def suffix(opt, *args):
 def evaluation(data, model, model_class, device, output_length, desc):
     sum_ = [0] * output_length
     
-    for minibatch in tqdm(r, desc, leave = False):
+    for minibatch in tqdm(data, desc, leave = False):
         batch_sum = model_class.evaluation_step(model, minibatch, device)
         sum_ = lst_add_lst(sum_, batch_sum)
 

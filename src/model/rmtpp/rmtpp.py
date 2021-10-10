@@ -74,7 +74,8 @@ class RMTPP_new(nn.Module):
 
         history_part = self.intensity(output).squeeze()
         history_part = torch.tanh(history_part)
-        constant = torch.exp(history_part + self.base_intensity)
+        needed = torch.exp(history_part)
+        constant = needed * torch.exp(self.base_intensity)
         intensity = torch.exp(time_scalar * time) * constant
         integral = (intensity - constant) / time_scalar
         expectation = - torch.exp(constant/ time_scalar) * self.ei.apply(-constant/ time_scalar) / time_scalar
@@ -82,4 +83,4 @@ class RMTPP_new(nn.Module):
         # For event, we need (batch, seq_length, num_event)
         mark = self.decide(self.marker(output))
 
-        return intensity, integral, mark, expectation, constant
+        return intensity, integral, mark, expectation, needed

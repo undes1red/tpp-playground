@@ -143,8 +143,9 @@ class FullyNN(nn.Module):
             output = layer(output)                                             # [batch_size, seq_len * resolution, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len * resolution, d_intensity]
             output_storage.append(output)                                      # [batch_size, seq_len * resolution, d_intensity] * (self.mlp.size + 1)
-
-        expand_integral = self.activate_final(self.agg(output))                # [batch_size, seq_len * resolution, 1]
+        
+        output = self.agg(output)                                              # [batch_size, seq_len * resolution, 1]
+        expand_integral = self.activate_final(output)                          # [batch_size, seq_len * resolution, 1]
 
         timestamp = time_expand.reshape(batch_size, seq_len, resolution)
                                                                                # [batch_size, seq_len, resolution]
@@ -174,9 +175,12 @@ class FullyNN(nn.Module):
         
         time_expand.requires_grad = True
 
-        result = {**{'accumulated_gradient': accumulated_gradient},\
-                  **output_storage_gradient,\
-                  **{ "output_" + str(idx): torch.norm(item, dim = -1) for idx, item in enumerate(output_storage)},\
-                  **{"final_output": expand_integral.squeeze(-1)}}
+        result = {
+            **{'accumulated_gradient': accumulated_gradient},\
+            **output_storage_gradient,\
+            **{"output_mlp_" + str(idx): torch.norm(item, dim = -1) for idx, item in enumerate(output_storage)},\
+            **{"accumulate_layer_output": output.squeeze(-1)},\
+            **{"final_output": expand_integral.squeeze(-1)}
+            }
 
         return result, timestamp
