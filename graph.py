@@ -2,7 +2,7 @@
 # Should work for both synthetic datasets and real-word datasets.
 # Conduct comparisons between learned distributions and real distributions to show the fidelity of learned models.
 
-from src.utils import suffix, read_json, getLogger
+from src.utils import suffix, read_json, getLogger, print_args
 from src.model import get_model
 from src.dataloader import prepare_dataloaders
 from src.plotter_utils import draw
@@ -45,26 +45,28 @@ if __name__ == '__main__':
     model_param = read_json(os.path.join(root, 'config', opt.model_name, opt.model_config))
     param_names = list(model_param.keys())
     opt.__dict__.update(model_param)
-    logger.info(opt)
-    # location
-    opt.store_dir = os.path.join(root, 'output', opt.dataset_name, opt.model_name + '-' + str(opt.model_config) \
-                                               + '-' + opt.dataloader_name + '-' + str(opt.used_dataloader_config))
+    logger.info(print_args(opt))
+
+    # Find the checkpoint file.
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', *param_names)
+    folder_suffix = 'output_' + model_hyperparameters
+    checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
+    logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')
+
+    # where these figures output.
+    opt.store_dir = os.path.join(root, 'output', opt.dataset_name, '_'.join([opt.model_name, str(opt.model_config) \
+                                               , opt.dataloader_name, str(opt.used_dataloader_config),\
+                                               suffix(opt, 'lr', 'batch_size', 'n_training_steps')]))
     opt.abs_dataloader_config = os.path.join(root, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     if not os.path.exists(opt.store_dir):
         os.makedirs(opt.store_dir)
 
-    # Find the checkpoint file.
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', *param_names)
-    folder_suffix = 'output_' + '_'.join(map(str, model_hyperparameters.values()))
-    checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
-    logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')
-
-    # Create model object
+    # Create model object.
     model_class = get_model(name = opt.model_name)
     model = model_class(device = opt.device, **model_param)
     model.eval()
 
-    # load model checkpoint
+    # Load model checkpoint.
     model_raw = torch.load(os.path.join(checkpoint_folder, 'checkpoint.chkpt'), map_location=torch.device(opt.device))
     model_state_dict = model_raw['model']
     model_setting = model_raw['settings']
@@ -72,7 +74,7 @@ if __name__ == '__main__':
     opt.n_worker = model_setting.n_worker
     logger.info('Model restore completed.')
 
-    # we don't need large batch of data, so we minimize the batch size to 1.
+    # we don't need large batch for figure evaluation, so we minimize the batch size to 1.
     opt.batch_size = 1
 
     # Read in original dataset and create corresponding dataset loader.

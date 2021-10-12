@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric, add_prefix_to_keys
+from src.utils import getLogger, print_performances, FileLogger, read_json, suffix, lst_add_lst, lst_divide, evaluation, Metric, add_prefix_to_keys, print_args
 from src.model import get_model
 from src.optimizer.optim import ScheduledOptim
 from src.dataloader import prepare_dataloaders
@@ -28,12 +28,11 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
         import apex.amp as amp
 
     log_train_file, log_eva_file, log_test_file = None, None, None
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', *model_suffix)
-    folder_suffix = "_".join(map(str, model_hyperparameters.values()))
+    folder_suffix = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', *model_suffix)
     if not os.path.exists(os.path.join(opt.save_model, 'output_' + folder_suffix)) and rank == 0:
         os.mkdir(os.path.join(opt.save_model, 'output_' + folder_suffix))
 
-    writer, file_logger = None, None
+    file_logger = None
     if opt.log and rank == 0:
         log_folder = 'log_' + folder_suffix
         if not os.path.exists(os.path.join(opt.log, log_folder)):
@@ -94,9 +93,6 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
             if rank == 0 and file_logger:
                 report = model_class.logfile_print_format(report_sum)
                 file_logger.print(logger_name = 'training_log', step = current_step, **report)
-                if writer:
-                    for key, value in report.items():
-                        writer.add_scalar(tag = 'Train/' + key, scalar_value = value, global_step = current_step)
             report_sum = [0] * format_dict_length
             
         if current_step % opt.n_evaluation_steps == 0:
@@ -143,16 +139,8 @@ def train(model, model_class, training_data, evaluation_data, test_data, optimiz
                     test = model_class.logfile_print_format(test_report)
                     file_logger.print(logger_name = 'evaluation_log', step = current_step, **eva)
                     file_logger.print(logger_name = 'test_log', step = current_step, **test)
-                    if writer:
-                        for key in eva.keys():
-                            writer.add_scalar(tag = 'Evaluation/' + key, scalar_value = eva[key], global_step = current_step)
-                            writer.add_scalar(tag = 'Test/' + key, scalar_value = test[key], global_step = current_step)
                     
     if rank == 0:
-        if writer:
-            writer.add_hparams(model_hyperparameters, model_class.logfile_print_format(metric_checker.show()))
-            writer.flush()
-            writer.close()
         logger.warning('Training finished!')
         if opt.wandb:
             wandb.finish()
@@ -212,7 +200,7 @@ def _main(rank, logger, opt):
     )
 
     if rank == 0:
-        logger.info(opt)
+        logger.info(print_args(opt))
         logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(training_data):5.5f}')
         logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
 

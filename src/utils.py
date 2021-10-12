@@ -117,9 +117,11 @@ def read_json(json_path):
 
 # Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
-    output = {}
+    output = []
     for item in args:
-        output[item] = getattr(opt, item)
+        output.append(getattr(opt, item))
+    
+    output = "_".join(map(str, output))
     
     return output
 
@@ -175,3 +177,11 @@ def add_prefix_to_keys(dct, temp):
     del tmp_dct['num_format']
     result = {temp + str(key): item for key, item in tmp_dct.items()}
     return result
+
+# A more neat way to print hyperparameters:
+def print_args(opt):
+    output = '\nAll inputed hyperparameters:\n'
+    for key, value in opt.__dict__.items():
+        output += str(key) + ': ' + str(value) + '\n'
+
+    return output
