@@ -263,7 +263,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
     parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
     parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
-    parser.add_argument('--n_worker', default=4, type=int,
+    parser.add_argument('--n_worker', default=8, type=int,
               help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
                   if you meet \'received 0 items of ancdata\' exception.')
 

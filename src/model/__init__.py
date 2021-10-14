@@ -1,43 +1,74 @@
-# Legacy models. They only fits legacy datasets.
-from .dwg_legacy.model import TemporalModel_legacy
-from .dwg_new_legacy.model import TemporalModel as TemporalModel_legacy_new
-from .fullynn_legacy.model import FullyNNModel_legacy
-
-# Models aganist new datasets.
-from .ctlstm.model import CTLSTMwrapper
-from .cnf.model import CNFWrapper
-from .ifl.model import ifl
-from .rmtpp.model import RMTPP
-from .fullynn.model import FullyNNModel
-from .dwg.model import TemporalModel
-
 from ..utils import getLogger
 
 logger = getLogger(__name__)
 
 # One should register their models here.
 # The key of each model is foremost.
-model_zoo = {
-    # legacy models: these models do not support sequencial datasets.
-    'dwg_legacy': TemporalModel_legacy,
-    'dwg_new_legacy': TemporalModel_legacy_new,
-    'fullynn_legacy': FullyNNModel_legacy,
-
-    # New implementations: these models support sequencial datasets.
-    'dwg': TemporalModel,
-    'fullynn': FullyNNModel,
-    'ctlstm': CTLSTMwrapper,
-    'cnf': CNFWrapper,
-    'ifl': ifl,
-    'rmtpp': RMTPP
-}
 
 def get_model(name, rank = 0):
     try:
-        model = model_zoo[name]
+        model = model_zoo[name]()
         if rank == 0:
             logger.info(f"Model named {name} is retrieved.")
         return model
     except:
         if rank == 0:
             logger.exception(f"Model named {name} is not found! Please register your model in src/model/__init__.py and try again.")
+
+'''
+Without this, we can not continue our work when we conduct model training procedures.
+'''
+def dwg():
+    '''
+    New dwg model loader.
+    '''
+    from .dwg.model import TemporalModel
+    return TemporalModel
+
+def fullynn():
+    '''
+    FullyNN model loader
+    '''
+    from .fullynn.model import FullyNNModel
+    return FullyNNModel
+
+def ctlstm():
+    '''
+    CTLSTM model loader
+    '''
+    from .ctlstm.model import CTLSTMwrapper
+    return CTLSTMwrapper
+
+def cnf():
+    '''
+    Continuous normalized flow based model loader.
+    '''
+    from .cnf.model import CNFWrapper
+    return CNFWrapper
+
+def ifl():
+    '''
+    Intensity-free learning model loader.
+    '''
+    from .ifl.model import IFL
+    return IFL
+
+def rmtpp():
+    '''
+    RMTPP loader.
+    '''
+    from .rmtpp.model import RMTPP
+    return RMTPP
+
+
+model_zoo = {
+    'dwg': dwg,
+    'fullynn': fullynn,
+    'ctlstm': ctlstm,
+    'cnf': cnf,
+    'ifl': ifl,
+    'rmtpp': rmtpp,
+
+    # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
+    # Please take your own risk when you readd and use them. 
+}

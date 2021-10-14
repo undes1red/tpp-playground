@@ -5,29 +5,11 @@ import numpy as np
 import random
 import os
 
-# Dataset registration
-from .synthetic import synthetic_dataset
-from .ctlstm import ctlstm_dataset as ctdata
-from .cnf import cnf_dataset as cnf
-from .ifl import ifl_dataset as ifl
-from .synthetic_legacy import synthetic_dataset_legacy
-
 logger = getLogger(__name__)
-
-dataloader_zoo = {
-    # This dataloader fits all legacy models.
-    'syn_legacy': [synthetic_dataset_legacy.SynDataset_legacy, synthetic_dataset_legacy.read_data],
-
-    # These following dataloaders fits all other models.
-    'syn': [synthetic_dataset.SynDataset, synthetic_dataset.read_data],
-    'ctlstm': [ctdata.CTLSTMDataset, ctdata.read_data],
-    'cnf': [cnf.CNFDataset, cnf.read_data],
-    'ifl': [ifl.IflDataset, ifl.read_data]
-}
 
 def find_dataset(name, rank):
     try:
-        dataloader_combo = dataloader_zoo[name]
+        dataloader_combo = dataloader_zoo[name]()
         if rank == 0:
             logger.info(f"Dataloader named {name} is retrieved.")
         return dataloader_combo
@@ -69,3 +51,44 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
             num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = True)
 
     return train_iterator, evaluation_iterator, test_iterator
+
+def syn_dataloader():
+    '''
+    Synthetic dataloader for all synthetic datasets.
+    '''
+    from .synthetic import synthetic_dataset
+    return [synthetic_dataset.SynDataset, synthetic_dataset.read_data]
+
+def ctlstm_dataloader():
+    '''
+    Dataloader for ctlstm mainly. Perhaps, it can be used against another suitable models.
+    '''
+    from .ctlstm import ctlstm_dataset as ctdata
+    return [ctdata.CTLSTMDataset, ctdata.read_data]
+
+def cnf_dataloader():
+    '''
+    Dataloader for cnf-based models.
+    '''
+    from .cnf import cnf_dataset as cnf
+    return [cnf.CNFDataset, cnf.read_data]
+
+def ifl_dataloader():
+    '''
+    Dataloader for IFL model.
+    '''
+    from .ifl import ifl_dataset as ifl
+    return [ifl.IflDataset, ifl.read_data]
+    
+
+dataloader_zoo = {
+    # These following dataloaders fits all other models.
+    'syn': syn_dataloader,
+    'ctlstm': ctlstm_dataloader,
+    'cnf': cnf_dataloader,
+    'ifl': ifl_dataloader
+
+    # This dataloader fits all legacy models.
+    # 2021-10-14 update: The same as legacy models, legacy dataloaders are deprecated now.
+    # Take your own risk to readd and use them.
+}
