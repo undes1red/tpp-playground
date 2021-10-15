@@ -180,7 +180,7 @@ def add_prefix_to_keys(dct, temp):
 
 # A more neat way to print hyperparameters:
 def print_args(opt):
-    output = '\nAll inputed hyperparameters:\n'
+    output = '\nAll hyperparameters:\n'
     for key, value in opt.__dict__.items():
         output += str(key) + ': ' + str(value) + '\n'
 

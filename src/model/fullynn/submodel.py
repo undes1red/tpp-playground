@@ -171,14 +171,21 @@ class FullyNN(nn.Module):
             grad_outputs=torch.ones_like(item),
             create_graph=True,
             )[0].squeeze(-1)                                                   # [batch_size, seq_len * resolution]
-            output_storage_gradient['grad_' + str(idx)] = subgradient          # [batch_size, seq_len * resolution] * (self.mlp.size + 1)
+            output_storage_gradient[f'mlp_{idx}_grad'] = subgradient           # [batch_size, seq_len * resolution] * (self.mlp.size + 1)
         
         time_expand.requires_grad = True
 
         result = {
             **{'accumulated_gradient': accumulated_gradient},\
             **output_storage_gradient,\
-            **{"output_mlp_" + str(idx): torch.norm(item, dim = -1) for idx, item in enumerate(output_storage)},\
+            **{"output_mlp_norm_" + str(idx): torch.norm(item, dim = -1) for idx, item in enumerate(output_storage)},\
+            **{"output_mlp_mean_" + str(idx): torch.mean(item, dim = -1) for idx, item in enumerate(output_storage)},\
+            **{"output_mlp_max_" + str(idx): torch.max(item, dim = -1)[0] for idx, item in enumerate(output_storage)},\
+            **{"output_mlp_min_" + str(idx): torch.min(item, dim = -1)[0] for idx, item in enumerate(output_storage)},\
+            **{"output_rnn_norm": torch.norm(hidden_expand, dim = -1)},\
+            **{"output_rnn_mean": torch.mean(hidden_expand, dim = -1)},\
+            **{"output_rnn_max": torch.max(hidden_expand, dim = -1)[0]},\
+            **{"output_rnn_min": torch.min(hidden_expand, dim = -1)[0]},\
             **{"accumulate_layer_output": output.squeeze(-1)},\
             **{"final_output": expand_integral.squeeze(-1)}
             }

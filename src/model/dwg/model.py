@@ -129,9 +129,21 @@ class TemporalModel(BasicModule):
 
         return integral, intensity, timestamp
     
-    def model_prober(self, data):
+    def model_prober(self, input_data, resolution):
+        '''
+        Args:
+        time: [batch_size(always 1), seq_len + 1]
+              The original dataset records. 
+        resolution: int
+                    How many interpretive numbers we have between an event interval?
+        '''
         self.model.eval()
-        return self.forward(data[0])
+        input_time = input_data[0]
+        time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
+        time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
+        time_next = time_next.unsqueeze(-1)                                    # [batch_size, seq_len, 1]
+        probed_results, timestamp = self.model.model_probe_function(time_history, time_next, resolution)
+        return probed_results, timestamp
 
 def loss_f(intensity, intensity_integral):
     '''

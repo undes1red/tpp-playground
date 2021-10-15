@@ -46,21 +46,20 @@ training_hyperparameter_list = [
 plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "42", \
-    "--model_name", "ctlstm", \
-    "--model_config", "ctlstm.json", \
-    "--lr", "0.02", \
-    "--batch_size", "16", \
-    "--n_training_steps", "10000", \
-    "--dataset_name", "hawkes_1", \
-    "--dataloader_name", "ctlstm", \
+    "--model_name", "fullynn", \
+    "--model_config", "fullynn.json", \
+    "--lr", "0.001", \
+    "--batch_size", "128", \
+    "--n_training_steps", "100000", \
+    "--dataset_name", ["hawkes_1", "hawkes_2", "poisson", "self_correct"], \
+    "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", "intensity", \
-    "--dataloader_config", "ctlstm_dl.json", \
-    "--used_dataloader_config", "ctlstm_dl.json", \
-    "--resolution", "16"
+    "--plot_type", ["intensity", "probability"], \
+    "--dataloader_config", "plot.json", \
+    "--resolution", "100"
 ]
 
 hyperparameters_dict = {
@@ -109,8 +108,9 @@ def list_generator(hyperparameter_list):
 
     # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
     # generation loop.
+    multi_hp_count = len(multiple_parameters.values())
     count_of_each_multiple_hp = [len(item) for item in multiple_parameters.values()]
-    current_index_of_each_list = [0] * len(multiple_parameters.values())
+    current_index_of_each_list = [0] * multi_hp_count
     the_number_of_task = math.prod(count_of_each_multiple_hp)
     logger.info(f'Totally, {the_number_of_task} tasks are planned.')
 
@@ -133,12 +133,12 @@ def list_generator(hyperparameter_list):
     
             current_index_of_each_list[-1] += 1
             add_mark = False
-            for current_index, max_unreachable_index in zip(current_index_of_each_list[::-1], count_of_each_multiple_hp[::-1]):
+            for idx, (current_index, max_unreachable_index) in enumerate(zip(current_index_of_each_list[::-1], count_of_each_multiple_hp[::-1])):
                 if add_mark:
-                    current_index += 1
+                    current_index_of_each_list[multi_hp_count - idx - 1] += 1
                     add_mark = False
                 if current_index >= max_unreachable_index:
-                    current_index = 0
+                    current_index_of_each_list[multi_hp_count - idx - 1] = 0
                     add_mark = True
 
 task_count = 1

@@ -154,3 +154,91 @@ class DynamicMLP(nn.Module):
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         return integral, intensity, timestamp
+
+    def model_probe_function(self, time_history, time_next, resolution):
+        '''
+        Model intensity prober. Perhaps, we can support intensity integral as well.
+        Args:
+        time_history: [batch_size, seq_len, 1]
+        time_next:    [batch_size, seq_len, 1]
+        resolution:   int
+        '''
+        # Part 1: forward propagation.
+        history_output, (_, _) = self.history(time_history)                    # [batch_size, seq_len, d_history]
+        batch_size, seq_len, d_history = history_output.shape
+
+        history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
+                                                                               # [batch_size, seq_len * resolution, d_history]
+        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_expand.requires_grad = True
+        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
+        time_weight = self.time_weight(self.activate_time(
+            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len * resolution, d_history]
+        hidden = history_expand + time_weight \
+                    if not self.no_time_weight else torch.zeros_like(history_output)
+                                                                               # [batch_size, seq_len * resolution, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len * resolution, d_history, 1]  
+        time_weight = self.weight_gen(hidden).transpose(-1, -2)                # [batch_size, seq_len * resolution, d_intensity, d_history]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len * resolution, d_intensity, d_history]
+
+        # Mingle history and relative time embedding.
+        time_outside = time_outside.unsqueeze(-1)                              # [batch_size, seq_len * resolution, d_history, 1]
+        integral = torch.matmul(time_weight, time_outside)                     # [batch_size, seq_len * resolution, d_intensity, 1]
+        integral = integral.reshape(batch_size, seq_len * resolution, self.d_intensity)
+                                                                               # [batch_size, seq_len * resolution, d_intensity]
+        output_after_dwg_layer = integral                                      # [batch_size, seq_len * resolution, d_intensity]
+
+        mlp_output = []
+        for layer_idx, layer in enumerate(self.mlp):
+            integral = layer(integral)                                         # [batch_size, seq_len * resolution, d_intensity]
+            # Imitate a weaker ReLU activation
+            integral = F.softplus(self.activate_factor[layer_idx]) * integral
+            mlp_output.append(integral)                                        # [batch_size, seq_len * resolution, d_intensity] * layer
+
+        integral = self.accu(integral)                                         # [batch_size, seq_len * resolution, 1]
+
+        intensity = torch.autograd.grad(
+            outputs = integral,
+            inputs = time_expand,
+            grad_outputs = torch.ones_like(integral),
+            create_graph = True
+        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
+
+        timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
+                                                                               # [batch_size, seq_len, resolution]
+        timestamp = torch.cat(
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            dim = -1)                                                          # [batch_size, seq_len, resolution]
+        timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
+
+        # Part 2: Model detection part
+        # MLP gradient
+        mlp_gradient = {}
+        for idx, item in enumerate(mlp_output):
+            mlp_gradient[f'mlp_{idx}_grad'] = torch.autograd.grad(
+                outputs = item,
+                inputs = time_expand,
+                grad_outputs = torch.ones_like(item),
+                create_graph = True
+            )[0]                                                               # [batch_size, seq_len * resolution, 1]
+        
+        dwg_gradient = torch.autograd.grad(
+            outputs = output_after_dwg_layer,
+            inputs = time_expand,
+            grad_outputs = torch.ones_like(output_after_dwg_layer),
+            create_graph = True
+        )[0]                                                               # [batch_size, seq_len * resolution, 1]
+
+        time_expand.requires_grad = False
+        result = {
+            'final_output': integral,
+            'accumulated_gradient': intensity,
+            **mlp_gradient,
+            'dwg_gradient': dwg_gradient,
+            **{"output_mlp_" + str(idx): torch.mean(item, dim = -1) for idx, item in enumerate(mlp_output)},\
+            **{"output_mlp_max_" + str(idx): torch.max(item, dim = -1)[0] for idx, item in enumerate(mlp_output)},\
+            **{"output_mlp_min_" + str(idx): torch.min(item, dim = -1)[0] for idx, item in enumerate(mlp_output)},\
+        }
+
+        return result, timestamp
