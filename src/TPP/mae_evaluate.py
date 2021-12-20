@@ -3,9 +3,9 @@ import argparse, torch, os
 import numpy as np
 from tqdm import tqdm
 
-from src.model import get_model
-from src.dataloader import prepare_dataloaders
-from src.utils import read_json, suffix
+from .model import get_model
+from .dataloader import prepare_dataloaders
+from .utils import read_json, suffix
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 root = os.path.abspath('../..')
@@ -69,7 +69,7 @@ def median_prediction(model,history,l,r):
 
     return (l+r)/2
 
-def mean_absolute_error(model, history, target, *args):
+def mean_absolute_error(model, history, target):
     '''
     The input should be the history, its shape is [batch_size, history_length = 15]
     '''

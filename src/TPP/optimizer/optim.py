@@ -1,9 +1,9 @@
 '''A wrapper class for scheduled optimizer '''
 
 import math
-from ..utils import getLogger, mean, read_json
-import torch.nn as nn
+from ..utils import mean, read_json
 import torch.optim as optim
+from ..utils import getLogger
 
 logger = getLogger(__name__)
 
@@ -30,10 +30,6 @@ class ScheduledOptim():
             self._optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
         else:
             self._optimizer = top.get(opt.op_name)(model.parameters(), opt.lr, **param)
-
-        if opt.fp16:
-            import apex.amp as amp
-            self._model, self._optimizer = amp.initialize(model, self._optimizer, opt_level = opt.opt_level)
         
         if opt.lr_sched:
             self.n_warmup_steps = opt.n_warmup_steps

@@ -2,14 +2,14 @@
 # Should work for both synthetic datasets and real-word datasets.
 # Conduct comparisons between learned distributions and real distributions to show the fidelity of learned models.
 
-from src.utils import suffix, read_json, getLogger, print_args
-from src.model import get_model
-from src.dataloader import prepare_dataloaders
-from src.plotter_utils import draw
+from ..utils import suffix, read_json, getLogger, print_args
+from ..model import get_model
+from ..dataloader import prepare_dataloaders
+from .plotter_utils import draw
 import os, argparse, torch
 
-
-root = os.path.dirname(os.path.abspath(__file__))
+# It is nasty
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

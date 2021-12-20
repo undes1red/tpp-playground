@@ -1,8 +1,96 @@
-from functools import reduce
-import math, logging, json
-from tqdm import tqdm
+import datetime, logging, os, sys, torch
+import numpy as np
 
-# Logger settings
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import src.TPP as TPP
+
+
+'''
+All the following two functions constructs the pytorch multiprocessing backbones, referring to neural_stpp created by Facebook.
+'''
+class TrainingHost:
+    def __init__(self, root_path):
+        self.logger = getLogger('__TrainingHost__')
+        self.root_path = root_path
+    
+    def start(self):
+        opt = TPP.TPParguments(self.root_path).get_args()
+
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
+        try:
+            mp.set_start_method("forkserver")
+            mp.spawn(self.main, args = (opt.ngpus, opt), nprocs=opt.ngpus, join=True)
+        except Exception:
+            import traceback
+            self.logger.error(traceback.format_exc())
+            sys.exit(1)
+    
+    def main(self, rank, ngpus, opt):
+        '''
+        Multiprocessing training controller.
+        '''
+        dist.init_process_group("nccl" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+
+        '''
+        Gradient aggergation check
+        '''
+        if opt.agg_update_step > 1 and rank == 0:
+            self.logger.warning(f'Gradient aggregation is detected! The number of practical training steps is multiplied by {opt.agg_update_step}!')
+            opt.n_training_steps *= opt.agg_update_step
+            opt.n_evaluation_steps *= opt.agg_update_step
+            opt.n_report_steps *= opt.agg_update_step
+            opt.n_warmup_steps *= opt.agg_update_step
+    
+        '''
+        Host tries to avoid pytorch issue #36313
+        '''
+        if torch.__version__ == '1.4.0' and rank == 0:
+            raise self.logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
+        
+        '''
+        Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
+        '''
+        if not opt.log and not opt.save_model and rank == 0:
+            self.logger.warning('No experiment result will be saved.')
+    
+        '''
+        Report device status
+        '''
+        opt.device = torch.device(
+            f'cuda:{rank:d}' if opt.cuda and torch.cuda.is_available() else 'cpu')
+    
+        if rank == 0:
+            if opt.device.type == 'cuda':
+                self.logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
+                for i in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(i)
+                    self.logger.info('{} \t Memory: {:.2f}GB'.format(props.name, props.total_memory / (1024**3)))
+            else:
+                self.logger.info('WARNING: Using device {}'.format(opt.device))
+    
+        '''
+        Create there dirs if they don't exist.
+        '''
+        if not os.path.isdir(opt.log):
+            os.makedirs(opt.log)
+        if not os.path.isdir(opt.save_model):
+            os.makedirs(opt.save_model)
+    
+        try:
+            TPP.train(rank = rank, logger = self.logger, opt = opt)
+        except:
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
+    
+        dist.destroy_process_group()
+
+
+'''
+Logger settings are everywhere!
+'''
 def getEventLogger(name, root):
     logger = logging.getLogger(name)
     if root:
@@ -61,35 +149,9 @@ def getLogger(name = None, file = None, root = True):
 
 logger_ = getLogger(__name__)
 
-# Several extensive operations for python list.
-def add(a, b):
-    return a + b
-
-def mean(iter):
-    return reduce(add, iter)/len(iter)
-
-def lst_add_lst(list1, list2):
-    assert len(list1) == len(list2)
-    return [sum(x) for x in zip(list1, list2)]
-
-def lst_divide(lst, denominator):
-    if isinstance(denominator, list):
-        assert len(lst) == len(denominator)
-        return [x/y for x, y in zip(lst, denominator)]
-    return [x/denominator for x in lst]
-
-# How to print formated logs via logger and format definitions.
-def print_performances(logger, procedure, lr = None, num_format = None, **kwargs):
-    if num_format is None or len(num_format) != len(kwargs):
-        logger_.exception('Bad num_format dictoinary.')
-
-    info = f'{procedure:12}' + (f' ,lr: {lr:8.5f}' if lr else '')
-    for key in kwargs.keys():
-        info += ' ,' + key + ': {' + key + num_format[key] + '}'
-    logger.info(info.format_map(kwargs))
-
-
-# File logger handler.
+'''
+File logger handler.
+'''
 class FileLogger(object):
     def __init__(self, print_format, **kwargs):
         self.loggers = dict()
@@ -108,80 +170,3 @@ class FileLogger(object):
     def print(self, logger_name, **kwargs):
         logger = self.loggers[logger_name]
         logger.info(self.format_string.format_map(kwargs))
-
-# Read and convert a json file into a dict object.
-def read_json(json_path):
-    with open(json_path, 'r') as f:
-        a = json.load(f)
-    return a
-
-# Help construct the output dir name using model hyperparameters.
-def suffix(opt, *args):
-    output = []
-    for item in args:
-        output.append(getattr(opt, item))
-    
-    output = "_".join(map(str, output))
-    
-    return output
-
-# General evaluation procedure.
-def evaluation(data, model, model_class, device, output_length, desc):
-    sum_ = [0] * output_length
-    
-    for minibatch in tqdm(data, desc, leave = False):
-        batch_sum = model_class.evaluation_step(model, minibatch, device)
-        sum_ = lst_add_lst(sum_, batch_sum)
-
-    return lst_divide(sum_, len(data))
-
-class Metric():
-    '''
-    A Metric handler.
-    1. metric_number: How many metric do you have?
-    2. smaller_is_better: If model performance is better with lower metric value, you should set it to true. Otherwise, it is false.
-    If smaller_is_better is set, its length must match argument 'metric_number'.
-    '''
-    def __init__(self, metric_number, smaller_is_better = None):
-        self.metric_number = metric_number
-        self.map = {True:1, False: -1}
-        self.best_metric = [math.inf] * self.metric_number
-        if smaller_is_better is None:
-            self.mask = [1] * self.metric_number
-        else:
-            assert len(smaller_is_better) == self.metric_number
-            self.mask = [self.map[item] for item in smaller_is_better]
-    
-    def compare(self, input_metric):
-        assert len(input_metric) == len(self.mask)
-        tmp = lst_divide(input_metric, self.mask)
-        output = True
-
-        for input_number, recorded in zip(tmp, self.best_metric):
-            if input_number >= recorded:
-                output = False
-                break
-        
-        if output:
-            self.best_metric = input_metric
-        
-        return output
-    
-    def show(self):
-        return self.best_metric
-
-# add a prefix for all keys in a dict.
-# wandb use only
-def add_prefix_to_keys(dct, temp):
-    tmp_dct = dict(dct)
-    del tmp_dct['num_format']
-    result = {temp + str(key): item for key, item in tmp_dct.items()}
-    return result
-
-# A more neat way to print hyperparameters:
-def print_args(opt):
-    output = '\nAll hyperparameters:\n'
-    for key, value in opt.__dict__.items():
-        output += str(key) + ': ' + str(value) + '\n'
-
-    return output

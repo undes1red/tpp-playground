@@ -1,6 +1,7 @@
 from .submodel import DynamicMLP
 from ..utils import BasicModule
 import torch
+import numpy as np
 
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
@@ -158,3 +159,27 @@ def loss_f(intensity, intensity_integral):
     loss = torch.clamp(loss, max=10)
     loss = torch.sum(loss)
     return loss
+
+'''
+MAE evaluation part, dwg and fullynn exclusive
+'''
+def bisect_target(model,history,taus):
+    return model(history, torch.from_numpy(taus))[0].detach().cpu().numpy() - np.log(5)
+
+def median_prediction(model,history,l,r):
+    for _ in range(30):
+        c = (l+r)/2
+        v = bisect_target(model,history,c)
+        l = np.where(v<0,c,l)
+        r = np.where(v>=0,c,r)
+
+    return (l+r)/2
+
+def mean_absolute_error(model, history, target):
+    '''
+    The input should be the history, its shape is [batch_size, history_length = 15]
+    '''
+    l=0.0001*np.ones((history.shape[0], 1), dtype = np.float32)
+    r=6500.0*np.ones((history.shape[0], 1), dtype = np.float32)
+    tau_pred = median_prediction(model,history,l,r) 
+    return np.mean(np.abs(tau_pred-target.cpu().numpy()))
