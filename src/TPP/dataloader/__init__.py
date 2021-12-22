@@ -42,13 +42,13 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
 
     if train:
         train_iterator = DataLoader(train, shuffle = True, batch_size=opt.batch_size, \
-            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = True)
+            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
     if evaluate:
         evaluation_iterator = DataLoader(evaluate, batch_size=opt.batch_size, \
-            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = True)
+            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
     if test:
         test_iterator = DataLoader(test, batch_size=opt.batch_size, \
-            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = True)
+            num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
 
     return train_iterator, evaluation_iterator, test_iterator
 

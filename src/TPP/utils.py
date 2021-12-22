@@ -11,7 +11,6 @@ def mean(iter):
     return reduce(add, iter)/len(iter)
 
 def lst_add_lst(list1, list2):
-    assert len(list1) == len(list2)
     return [sum(x) for x in zip(list1, list2)]
 
 def lst_divide(lst, denominator):
@@ -166,8 +165,6 @@ def getLogger(name = None, file = None, root = True):
         return getFileLogger(name, file, root)
     else:
         return getEventLogger(name, root)
-
-logger_ = getLogger(__name__)
 
 '''
 File logger handler.

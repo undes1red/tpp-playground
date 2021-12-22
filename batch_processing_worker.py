@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import subprocess, os, argparse, itertools, math
-from src.utils import getLogger
+from src.traininghost import getLogger
 
 logger = getLogger(__name__)
 

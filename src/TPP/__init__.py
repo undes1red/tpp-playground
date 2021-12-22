@@ -1,2 +1,2 @@
 from .arguments import TPParguments
-from .training_process import train
+from .training_process import TPPTrainer

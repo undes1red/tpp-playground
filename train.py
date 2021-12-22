@@ -5,5 +5,6 @@ import os
 root_path = os.path.dirname(os.path.abspath(__file__))
 
 if __name__ == '__main__':
-    agent = TrainingHost(root_path)
+    # Train 
+    agent = TrainingHost(root_path = root_path, procedure_name = 'TPP')
     agent.start()

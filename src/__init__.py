@@ -1,1 +1,1 @@
-from .utils import TrainingHost
+from .traininghost import TrainingHost
