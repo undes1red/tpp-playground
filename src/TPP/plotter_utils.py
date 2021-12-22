@@ -3,7 +3,7 @@ import seaborn as sns
 import torch, os
 import pandas as pd
 import numpy as np
-from ..utils import getLogger
+from .utils import getLogger
 
 logger = getLogger(name = __file__)
 

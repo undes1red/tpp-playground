@@ -1,15 +1,14 @@
 from torch.utils.data import DataLoader
 from ..utils import getLogger, read_json
-import torch
+import torch, importlib, random, os
 import numpy as np
-import random
-import os
+
 
 logger = getLogger(__name__)
 
 def find_dataset(name, rank):
     try:
-        dataloader_combo = dataloader_zoo[name]()
+        dataloader_combo = dataloader_zoo(name)
         if rank == 0:
             logger.info(f"Dataloader named {name} is retrieved.")
         return dataloader_combo
@@ -52,43 +51,20 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
 
     return train_iterator, evaluation_iterator, test_iterator
 
-def syn_dataloader():
-    '''
-    Synthetic dataloader for all synthetic datasets.
-    '''
-    from .synthetic import synthetic_dataset
-    return [synthetic_dataset.SynDataset, synthetic_dataset.read_data]
 
-def ctlstm_dataloader():
-    '''
-    Dataloader for ctlstm mainly. Perhaps, it can be used against another suitable models.
-    '''
-    from .ctlstm import ctlstm_dataset as ctdata
-    return [ctdata.CTLSTMDataset, ctdata.read_data]
-
-def cnf_dataloader():
-    '''
-    Dataloader for cnf-based models.
-    '''
-    from .cnf import cnf_dataset as cnf
-    return [cnf.CNFDataset, cnf.read_data]
-
-def ifl_dataloader():
-    '''
-    Dataloader for IFL model.
-    '''
-    from .ifl import ifl_dataset as ifl
-    return [ifl.IflDataset, ifl.read_data]
-    
-
-dataloader_zoo = {
+dataloader_modulepath = {
     # These following dataloaders fits all other models.
-    'syn': syn_dataloader,
-    'ctlstm': ctlstm_dataloader,
-    'cnf': cnf_dataloader,
-    'ifl': ifl_dataloader
+    'syn': ['synthetic.synthetic_dataset', 'syn_dataloader'],
+    'ctlstm': ['ctlstm.ctlstm_dataset', 'ctlstm_dataloader'],
+    'cnf': ['cnf.cnf_dataset', 'cnf_dataloader'],
+    'ifl': ['ifl.ifl_dataset', 'ifl_dataloader']
 
     # This dataloader fits all legacy models.
     # 2021-10-14 update: The same as legacy models, legacy dataloaders are deprecated now.
     # Take your own risk to readd and use them.
 }
+
+def dataloader_zoo(name):
+    path, function_name = dataloader_modulepath[name]
+    module = importlib.import_module('.' + path, package = 'src.TPP.dataloader')
+    return getattr(module, function_name)()

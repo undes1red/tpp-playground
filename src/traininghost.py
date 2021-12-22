@@ -15,6 +15,8 @@ class TrainingHost:
     def __init__(self, root_path, procedure_name):
         self.root_path = root_path
         self.procedure_name = procedure_name
+        logger.info(f'Root path: {self.root_path}')
+        logger.info(f'Procedure name: {self.procedure_name}')
 
     def start(self):
         '''

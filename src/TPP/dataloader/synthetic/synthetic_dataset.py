@@ -69,3 +69,9 @@ def read_data(path, file_names):
             f"Wrong datafile format. Please check your data file in {path}")
     
     return data_raw
+
+def syn_dataloader():
+    '''
+    Synthetic dataloader for all synthetic datasets.
+    '''
+    return [SynDataset, read_data]

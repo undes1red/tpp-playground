@@ -66,3 +66,9 @@ def read_data(path, file_names):
             f"Wrong datafile format. Please check your data file in {path}")
     
     return data_raw
+
+def cnf_dataloader():
+    '''
+    Dataloader for cnf-based models.
+    '''
+    return [CNFDataset, read_data]

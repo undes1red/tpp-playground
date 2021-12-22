@@ -86,3 +86,9 @@ def read_data(path, file_names):
             f"Wrong datafile format. Please check your data file in {path}")
     
     return data_raw
+
+def ctlstm_dataloader():
+    '''
+    Dataloader for ctlstm mainly. Perhaps, it can be used against another suitable models.
+    '''
+    return [CTLSTMDataset, read_data]

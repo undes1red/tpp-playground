@@ -3,9 +3,9 @@ import argparse, torch, os
 import numpy as np
 from tqdm import tqdm
 
-from .model import get_model
-from .dataloader import prepare_dataloaders
-from .utils import read_json, suffix
+from ..src.TPP.model import get_model
+from ..src.TPP.dataloader import prepare_dataloaders
+from ..src.TPP.utils import read_json, suffix
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 root = os.path.abspath('../..')

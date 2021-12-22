@@ -2,19 +2,16 @@
 # Should work for both synthetic datasets and real-word datasets.
 # Conduct comparisons between learned distributions and real distributions to show the fidelity of learned models.
 
-from ..utils import suffix, read_json, getLogger, print_args
-from ..model import get_model
-from ..dataloader import prepare_dataloaders
-from .plotter_utils import draw
+from src.TPP.utils import suffix, read_json, getLogger, print_args
+from src.TPP.model import get_model
+from src.TPP.dataloader import prepare_dataloaders
+from src.TPP.plotter_utils import draw
 import os, argparse, torch
-
-# It is nasty
-root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--seed', type=int, default=42, help='Set global random seed.')
+    parser.add_argument('--seed', type=int, default=32, help='Set global random seed.')
     parser.add_argument('--model_name', type=str, help='The model name of the required checkpoint.')
     parser.add_argument('--model_config', type=str, help='The config file containing hyperparameters corresponding to the required checkpoint.')
     parser.add_argument('--lr', type=float, help='The learning rate used for training the required model.')
@@ -37,6 +34,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--cuda', action='store_true', help='Use GPUs to accelerate model evaluation speed.')
     logger = getLogger(name = 'Plotter')
+
+    # It is nasty
+    root = os.path.dirname(os.path.abspath(__file__))
+    logger.info(f'Root path is {root}')
 
     opt = parser.parse_args()
     # Read in model hyperparameters

@@ -107,3 +107,9 @@ def read_data(path, file_names):
             f"Wrong datafile format. Please check your data file in {path}")
     
     return data_raw
+
+def ifl_dataloader():
+    '''
+    Dataloader for IFL model.
+    '''
+    return [IflDataset, read_data]
