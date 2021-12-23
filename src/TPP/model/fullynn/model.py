@@ -42,6 +42,22 @@ class FullyNNModel(BasicModule):
 
         return integral, intensity, mae
 
+    def evaluate(self, input_time_hisotry, input_time_next):
+        input_time_next.requires_grad = True
+
+        integral = self.model(input_time_hisotry, input_time_next)             # [batch_size, seq_len, 1]                                                                               # int
+        
+        intensity = torch.autograd.grad(
+            outputs=integral,
+            inputs=input_time_next,
+            grad_outputs=torch.ones_like(integral),
+            create_graph=True,
+        )[0]                                                                   # [batch_size, seq_len, 1]
+        check_tensor(intensity)
+        input_time_next.requires_grad = False
+
+        return integral, intensity
+
     def divide_history_and_next(self, input_time):
         time_history, time_next = input_time.clone()[:, :-1], input_time.clone()[:, 1:]
         time_history = time_history.unsqueeze(-1)                              # [batch_size, seq_len, 1]
@@ -143,7 +159,7 @@ class FullyNNModel(BasicModule):
     
         model.eval()
         intensity_integral, intensity, mae = model(         # [batch_size, seq_len, 1]
-            minibatch[0]
+            minibatch[0], evaluate = True
         )
     
         loss = loss_f(
