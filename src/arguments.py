@@ -12,6 +12,11 @@ class BasicArguments:
                             help="Set it to true if you want to use GPU to accelerate model training.")
         self.parser.add_argument("--ngpus", type=int, default=1,
                             help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1.")
+
+        # The number of Dataloader worker
+        self.parser.add_argument('--n_worker', default=0, type=int,
+                  help='The number of dataloader workers. For most datasets, multiprocessing can speed up the training procedure. But you should set it to lower value, even 0 \
+                      if you meet \'received 0 items of ancdata\' exception.')
                 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')

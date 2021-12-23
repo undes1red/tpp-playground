@@ -41,7 +41,9 @@ class TrainingHost:
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
             logger.info(f'It seems that your model loves {opt.seed} this time.')
+        random.seed(opt.seed)
         torch.manual_seed(opt.seed)
+        np.random.seed(opt.seed)
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
 
