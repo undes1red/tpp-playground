@@ -1,21 +1,11 @@
-import argparse, os
+import os
+from ..arguments import BasicArguments
 
-class TPParguments:
+class TPPArguments(BasicArguments):
     def __init__(self, root_path):
-        self.root_path = root_path
-        self.parser = argparse.ArgumentParser()
-        # The Ultimate
-        self.parser.add_argument('--no_seed', action='store_true',
-                            help='Do not freeze random seed. Use this option if you want to explore your model\'s robustness.')
-        self.parser.add_argument('--seed', type=int, default=42,
-                            help='Set global random seed.')
-        self.parser.add_argument('--cuda', action='store_true', 
-                            help="Set it to true if you want to use GPU to accelerate model training.")
-        self.parser.add_argument("--ngpus", type=int, default=1,
-                            help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1.")
-        self.parser.add_argument("--opt_level", type=str, default='O1',
-                            help="The optimization level of mixed precision training. Only effective when --fp16 training is enabled.")
-        
+        super().__init__()
+
+        self.root_path = root_path        
         # Input data
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
         self.parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
@@ -29,12 +19,7 @@ class TPParguments:
         self.parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
         
         # Training procedure related hyperparameters
-        self.parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')
-        self.parser.add_argument('--n_evaluation_steps', type=int, default=200, help='The number of steps that follows a model evaluation.')
-        self.parser.add_argument('--n_report_steps', type = int, default=200, help='After a given number of steps, report the current model training status.')
         self.parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
-        self.parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
-                                                                            agg_update_step * n_training_steps')
         self.parser.add_argument('--grad_clip', type=float, default=0.0, help='Clips gradient norm of an iterable of parameters. It only comes info effect when the argument \
                                                                           value is bigger than 0.')
         
@@ -52,8 +37,6 @@ class TPParguments:
                             help='The name of optimizer. All optimizer hyperparameters are set as default.')
         self.parser.add_argument('--lr_sched', action='store_true', 
                             help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\'t come into effect.')
-        self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
-                            help='The number of warmup steps. Models during warmup won\'t be stored.')
         self.parser.add_argument('--lr', type=float, default=0.1, 
                             help='Input learning rate. The real learning rate could change due to the lr scheduler.')
         self.parser.add_argument('--n_cycles', type=float, default=0.5)

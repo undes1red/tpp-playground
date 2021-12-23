@@ -17,9 +17,6 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 11. STRODE (Huang et al. Planning)
 12. NSMTPP (Zhu et al. Planning)
 
-To stepinsilence:
-PLEASE, LOAD THE FUCKIN MODEL STATE DICT INTO YOUR MODEL OBJECT BEFORE EVALUATION! YOU FUCKING IDIOT!
-
 ## Additional
 
 1. RMTPP can not model the hawkes_2 process and there is no way to resolve it.

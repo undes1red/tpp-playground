@@ -28,9 +28,22 @@ class TrainingHost:
         2. The name of the entry function should be 'train'.
         '''
         procedure = importlib.import_module('src.' + self.procedure_name)
-        argument_class_name = self.procedure_name + 'arguments'
+        argument_class_name = self.procedure_name + 'Arguments'
         opt = getattr(procedure, argument_class_name)(self.root_path).get_args()
         self.trainer = getattr(procedure, self.procedure_name + 'Trainer')()
+
+        '''
+        Reproducibility
+        '''
+        if opt.no_seed:
+            import random, time
+            logger.warning(f'No explicit random seed is available. Now, model will choose a number as the random seed by itself.')
+            random.seed(int(time.time()) % 65535)
+            opt.seed = random.randint(0, 65535)
+            logger.info(f'It seems that your model loves {opt.seed} this time.')
+        torch.manual_seed(opt.seed)
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
 
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
