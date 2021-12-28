@@ -17,10 +17,12 @@ class TemporalModel(BasicModule):
                  no_time_weight,
                  no_scale,
                  device,
+                 mae_threshold = 2,
                  weight_gen_min = None,
                  time_weight_min = None):
         super(TemporalModel, self).__init__()
         self.device = device
+        self.mae_threshold = mae_threshold
         self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, weight_gen_min = weight_gen_min,
                                 time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
                                 no_time_weight = no_time_weight, no_scale = no_scale, device = device)
@@ -74,7 +76,7 @@ class TemporalModel(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         def bisect_target(history, taus):
-            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(2, device = history.device))
+            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(self.mae_threshold, device = history.device))
         
         def median_prediction(history, l, r):
             for _ in range(30):

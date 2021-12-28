@@ -63,7 +63,9 @@ def draw_intensity(model, data, desc, plot_count, opt):
 
     _, model_intensity, timestamp = expand_model_intensity(model, data, opt)
                                                                                # [batch_size, seq_len * resolution]
-    true_intensity = expand_true_intensity(*extract_data(data, opt), opt = opt)
+    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
+    true_intensity = expand_true_intensity(time, intensity, opt = opt)
                                                                                # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
@@ -80,13 +82,15 @@ def draw_intensity(model, data, desc, plot_count, opt):
         df = pd.DataFrame.from_dict(
             {'Time': timestamp, 'Predicted Intensity': model_intensity}
         )
-
     df_plot = pd.melt(df, 'Time')
     df_plot.columns = ['Time', '', 'Intensity']
+
     # Draw plot
     fig = plt.figure()
     sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_plot)
+    sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
     fig.set_size_inches(length,height)
+
     if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
         os.makedirs(os.path.join(opt.store_dir, 'intensity'))
     plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
@@ -133,7 +137,9 @@ def draw_probability(model, data, desc, plot_count, opt):
                                                                                # [batch_size, seq_len * resolution]
     else:
         model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
-    true_probability = expand_true_probability(*extract_data(data, opt), opt)  # [batch_size, seq_len * resolution]
+    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
+    true_probability = expand_true_probability(time, intensity, opt)  # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
@@ -149,13 +155,15 @@ def draw_probability(model, data, desc, plot_count, opt):
         df = pd.DataFrame.from_dict(
             {'Time': timestamp, 'Predicted Probability': model_probability}
         )
-
     df_plot = pd.melt(df, 'Time')
     df_plot.columns = ['Time', '', 'Probability Distribution']
+
     # Draw plot
     fig = plt.figure()
     sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_plot)
+    sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
     fig.set_size_inches(length,height)
+
     if not os.path.exists(os.path.join(opt.store_dir, 'probability_distribution')):
         os.makedirs(os.path.join(opt.store_dir, 'probability_distribution'))
     plt.savefig(os.path.join(opt.store_dir, 'probability_distribution', desc + '_' + str(plot_count) + '.png'), dpi = 1000)
@@ -168,6 +176,8 @@ def draw_features(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
 
+    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
     probed_data, timestamp = model.model_prober(data, opt.resolution)
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(plot_count))):
@@ -182,8 +192,9 @@ def draw_features(model, data, desc, plot_count, opt):
         # Draw plot
         fig = plt.figure()
         sns.lineplot(x = 'Time', y = key, data = df)
-
+        sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
         fig.set_size_inches(length,height)
+
         plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
         plt.close(fig = fig)
     

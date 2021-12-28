@@ -14,9 +14,11 @@ class FullyNNModel(BasicModule):
                  rnn_layers,
                  mlp_layers,
                  nonlinear,
-                 device):
+                 device,
+                 mae_threshold = 2):
         super(FullyNNModel, self).__init__()
         self.device = device
+        self.mae_threshold = mae_threshold
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity,
                              dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
                              nonlinear = nonlinear, device = device)
@@ -70,7 +72,7 @@ class FullyNNModel(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         def bisect_target(history, taus):
-            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(2, device = history.device))
+            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(self.mae_threshold, device = history.device))
         
         def median_prediction(history, l, r):
             for _ in range(30):

@@ -58,21 +58,47 @@ class RecurrentTPP(nn.Module):
                 shape (batch_size, seq_len, num_features)
 
         """
-        features = torch.log(batch[1] + 1e-8).unsqueeze(-1)  # (batch_size, seq_len, 1)
-        features = (features - batch[3][0])/batch[4][0]
+        features = torch.log(batch[1] + 1e-8).unsqueeze(-1)                    # [batch_size, seq_len, 1]
+        features = (features - batch[3][0])/batch[4][0]                        # [batch_size, seq_len, 1]
         if self.num_marks > 1:
-            mark_emb = self.mark_embedding(batch[0])  # (batch_size, seq_len, mark_embedding_size)
+            mark_emb = self.mark_embedding(batch[0])                           # [batch_size, seq_len, mark_embedding_size]
             features = torch.cat([features, mark_emb], dim=-1)
-        return features  # (batch_size, seq_len, num_features)
+        return features                                                        # [batch_size, seq_len, mark_embedding_size + 1]
+    
+    def get_features_prober(self, batch, resolution) -> torch.Tensor:
+        """
+        Convert each event in a sequence into a feature vector using normalization after expand the original data into distribution prober
+        batch.
 
-    def get_context(self, features: torch.Tensor, remove_last: bool = True) -> torch.Tensor:
+        Args:
+            batch: Batch of sequences in padded format.
+            resolution: how many small intervals we would have between two adjacent events.
+
+        Returns:
+            features: Feature vector corresponding to each event,
+                shape (batch_size, seq_len, num_features)
+
+        """
+        time = torch.log(batch[1] + 1e-8).unsqueeze(-1)                        # [batch_size, seq_len, 1]
+        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        expanded_time = time * time_multiplier                                 # [batch_size, seq_len, resolution]
+        expanded_time = (expanded_time - batch[3][0])/batch[4][0]              # [batch_size, seq_len, resolution]
+        expanded_time = expanded_time.unsqueeze(-1)                            # [batch_size, seq_len, resolution, 1]
+
+        if self.num_marks > 1:
+            event_expander = torch.ones(resolution)                            # [resolution]
+            expand_events = batch[0] * event_expander                          # [batch_size, seq_len, resolution]
+            expended_mark_emb = self.mark_embedding(expand_events)             # [batch_size, seq_len, resolution, mark_embedding_size]
+            features = torch.cat([expanded_time, expended_mark_emb], dim=-1)   # [batch_size, seq_len, resolution, mark_embedding_size + 1]
+        return features                                                        # [batch_size, seq_len, resolution, mark_embedding_size + 1]
+
+    def get_context(self, features: torch.Tensor) -> torch.Tensor:
         """
         Get the context (history) embedding from the sequence of events.
 
         Args:
             features: Feature vector corresponding to each event,
                 shape (batch_size, seq_len, num_features)
-            remove_last: Whether to remove the context embedding for the last event.
 
         Returns:
             context: Context vector used to condition the distribution of each event,
@@ -80,12 +106,36 @@ class RecurrentTPP(nn.Module):
                 shape (batch_size, seq_len + 1, context_size) if remove_last == True
 
         """
-        context = self.rnn(features)[0]
+        context = self.rnn(features)[0]                                        # [batch_size, seq_len, context_size]
         batch_size, seq_len, context_size = context.shape
-        context_init = self.context_init[None, None, :].expand(batch_size, 1, -1)  # (batch_size, 1, context_size)
+        context_init = self.context_init[None, None, :].expand(batch_size, 1, -1)
+                                                                               # [batch_size, 1, context_size]
         # Shift the context by vectors by 1: context embedding after event i is used to predict event i + 1
-        if remove_last:
-            context = context[:, :-1, :]
+        context = context[:, :-1, :]                                           # [batch_size, seq_len - 1, context_size]
+        context = torch.cat([context_init, context], dim=1)                    # [batch_size, seq_len, context_size]
+        return context
+
+    def get_context_prober(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Get the context (history) embedding from the sequence of events.
+
+        Args:
+            features: Feature vector corresponding to each event,
+                shape [batch_size, seq_len, resolution, num_features]
+
+        Returns:
+            context: Context vector used to condition the distribution of each event,
+                shape (batch_size, seq_len, context_size) if remove_last == False
+                shape (batch_size, seq_len + 1, context_size) if remove_last == True
+
+        """
+        resolution = features.shape[2]
+        context = self.rnn(features)[0]                                        # [batch_size, seq_len, resolution, context_size]
+        batch_size, seq_len, context_size = context.shape
+        context_init = self.context_init[None, None, :].expand(batch_size, resolution, -1)
+                                                                               # [batch_size, resolution, context_size]
+        # Shift the context by vectors by 1: context embedding after event i is used to predict event i + 1
+        context = context[:, :-1, :]
         context = torch.cat([context_init, context], dim=1)
         return context
 
@@ -115,14 +165,55 @@ class RecurrentTPP(nn.Module):
 
         """
         # extract features from minibatch, data normalization applies here.
-        features = self.get_features(batch)
-        if features.isnan().any():
-            print(batch)
+        features = self.get_features_prober(batch)                    # [batch_size, seq_len, mark_embedding_size + 1]
+        # I think this statement is for debugging.
+        # if features.isnan().any():
+        #     print(batch)
         # RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         # metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         # distribution.
         # inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
-        context = self.get_context(features)
+        context = self.get_context_prober(features)
+        inter_time_dist = self.get_inter_time_dist(context)
+        inter_times = batch[1].clamp(1e-10)
+        # Using obtained invertible distribution we can obatin the log probability for each inter time.
+        log_p = inter_time_dist.log_prob(inter_times)  # (batch_size, seq_len)
+
+        # Survival probability of the last interval (from t_N to t_end).
+        # You can comment this section of the code out if you don't want to implement the log_survival_function
+        # for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
+        # but the difference shouldn't be significant if you are working with long sequences.
+        last_event_idx = batch[2].sum(-1, keepdim=True).long()  # (batch_size, 1)
+        log_surv_all = inter_time_dist.log_survival_function(inter_times)  # (batch_size, seq_len)
+        log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)  # (batch_size,)
+
+        if self.num_marks > 1:
+            mark_logits = torch.log_softmax(self.mark_linear(context), dim=-1)  # (batch_size, seq_len, num_marks)
+            mark_dist = Categorical(logits=mark_logits)
+            log_p += mark_dist.log_prob(batch[0])  # (batch_size, seq_len)
+        log_p *= batch[2]  # (batch_size, seq_len)
+        return log_p.sum(-1) + log_surv_last  # (batch_size,)
+
+    def log_prob_prober(self, batch) -> torch.Tensor:
+        """Compute log-likelihood for a batch of sequences.
+
+        Args:
+            batch: the input minibatch
+            [mark, time, mask]
+
+        Returns:
+            log_p: shape (batch_size,)
+
+        """
+        # extract features from minibatch, data normalization applies here.
+        expanded_features = self.get_features_prober(batch)                    # [batch_size, seq_len, resolution, mark_embedding_size + 1]
+        # if features.isnan().any():
+        #     print(batch)
+        # RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
+        # metadata and sequence embedding from the context representation. These embeddings are the backbone of the
+        # distribution.
+        # inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        context = self.get_context(expanded_features)
         inter_time_dist = self.get_inter_time_dist(context)
         inter_times = batch[1].clamp(1e-10)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.

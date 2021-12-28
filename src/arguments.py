@@ -6,7 +6,7 @@ class BasicArguments:
         # The Ultimate
         self.parser.add_argument('--no_seed', action='store_true',
                             help='Do not freeze random seed. Use this option if you want to explore your model\'s robustness.')
-        self.parser.add_argument('--seed', type=int, default=42,
+        self.parser.add_argument('--seed', type=int, default=32,
                             help='Set global random seed.')
         self.parser.add_argument('--cuda', action='store_true', 
                             help="Set it to true if you want to use GPU to accelerate model training.")

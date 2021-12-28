@@ -228,7 +228,7 @@ class DynamicMLP(nn.Module):
             inputs = time_expand,
             grad_outputs = torch.ones_like(output_after_dwg_layer),
             create_graph = True
-        )[0]                                                               # [batch_size, seq_len * resolution, 1]
+        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
 
         time_expand.requires_grad = False
         result = {

@@ -5,9 +5,12 @@ import torch
 
 class IFL(BasicModule):
     def __init__(self, num_marks: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
-                       context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU"):
+                       context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU",
+                       mae_threshold = 2):
         super(IFL, self).__init__()
         self.device = device
+        self.mae_threshold = mae_threshold
+
         self.model = LogNormMix(
             num_marks,
             mean_log_inter_time,
@@ -28,6 +31,46 @@ class IFL(BasicModule):
         ]
         '''
         return self.model.log_prob(minibatch)
+
+    def evaluate(self, input_time_hisotry, input_time_next):
+        input_time_next.requires_grad = True
+
+        integral = self.model(input_time_hisotry, input_time_next)             # [batch_size, seq_len, 1]                                                                               # int
+        
+        intensity = torch.autograd.grad(
+            outputs=integral,
+            inputs=input_time_next,
+            grad_outputs=torch.ones_like(integral),
+            create_graph=True,
+        )[0]                                                                   # [batch_size, seq_len, 1]
+
+        return integral, intensity
+    
+    def mean_absolute_error(self, history, target):
+        '''
+        The input should be the original minibatch.
+        MAE evaluation part for intensity-free model.
+        '''
+        def bisect_target(history, taus):
+            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(self.mae_threshold, device = history.device))
+        
+        def median_prediction(history, l, r):
+            for _ in range(30):
+                c = (l + r)/2
+                v = bisect_target(history, c)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones_like(history, dtype = torch.float32)             # [batch_size, seq_len, 1]
+        r = 6500.0*torch.ones_like(history, dtype = torch.float32)             # [batch_size, seq_len, 1]
+        tau_pred = median_prediction(history, l, r)
+        gap = tau_pred - target
+        return torch.mean(torch.abs(gap)).item()
+    
+    def function_prober(self, data, resolution):
+        self.model.eval()
 
     def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
