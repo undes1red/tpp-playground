@@ -38,13 +38,13 @@ This function should return
 2. We will utilize intensity functions values and their integrals for probability distribution.
    We don't need to implement another model method to obtain them.
 '''
-intensity_available = ['dwg', 'fullynn', 'ctlstm']
+intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp']
 
 '''
 Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
-    return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution)
+    return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution, device = opt.device)
                                                                                # [batch_size, seq_len * resolution]
 def expand_model_intensity(model, data, opt):
     if opt.model_name in intensity_available:
@@ -63,14 +63,14 @@ def draw_intensity(model, data, desc, plot_count, opt):
 
     _, model_intensity, timestamp = expand_model_intensity(model, data, opt)
                                                                                # [batch_size, seq_len * resolution]
-    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
-    true_intensity = expand_true_intensity(time, intensity, opt = opt)
-                                                                               # [batch_size, seq_len * resolution]
+    time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze().cpu()       # [batch_size, seq_len]
+    true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_intensity = model_intensity.squeeze().detach().cpu().numpy()
     timestamp = timestamp.detach().cpu().numpy().cumsum()
+    event = event[:, 1:].squeeze().cpu().numpy()
     if true_intensity is not None:
         true_intensity = true_intensity.squeeze().detach().cpu().numpy()
     
@@ -82,13 +82,16 @@ def draw_intensity(model, data, desc, plot_count, opt):
         df = pd.DataFrame.from_dict(
             {'Time': timestamp, 'Predicted Intensity': model_intensity}
         )
-    df_plot = pd.melt(df, 'Time')
-    df_plot.columns = ['Time', '', 'Intensity']
+    df_intensity_plot = pd.melt(df, 'Time')
+    df_intensity_plot.columns = ['Time', '', 'Intensity']
+    df_time = pd.DataFrame.from_dict(
+            {'Time': aggregate_time, 'Point': np.zeros_like(aggregate_time), 'Event': [f'Event {item}' for item in event]}
+    )
 
     # Draw plot
     fig = plt.figure()
-    sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_plot)
-    sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
+    sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_intensity_plot)
+    sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
     fig.set_size_inches(length,height)
 
     if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
@@ -107,18 +110,25 @@ def expand_true_probability(time, intensity, opt):
         obtain the final probability distribution.
         '''
         expand_true_intensity = \
-            functions[0](time, intensity, opt.resolution)                      # [batch_size, seq_len * resolution]
+            functions[0](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len * resolution]
         expand_true_integral = \
-            functions[1](time, intensity, opt.resolution)                      # [batch_size, seq_len * resolution]
+            functions[1](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len * resolution]
         return expand_true_intensity * torch.exp(-expand_true_integral)        # [batch_size, seq_len * resolution]
     else:
         '''
         While for several special tpps defined by probability distributions instead of intensity functions, thing are quite
         easier: go find the distribution and the task is done.
         '''
-        expand_true_probability = functions[0](time, intensity, opt.resolution)# [batch_size, seq_len * resolution]
+        expand_true_probability = functions[0](time, intensity, opt.resolution, device = opt.device)
+                                                                               # [batch_size, seq_len * resolution]
         return expand_true_probability
 
+
+probability_available = ['dwg', 'fullynn']
+
+def expand_model_probability(opt):
+    if opt.model_name not in probability_available:
+        raise Exception('This model is incompatible with intensity prober!')
 
 def draw_probability(model, data, desc, plot_count, opt):
     '''
@@ -129,6 +139,7 @@ def draw_probability(model, data, desc, plot_count, opt):
 
     data: [time_diff, score, target_intensity]
     '''
+    expand_model_probability(opt)
 
     if opt.model_name in intensity_available:
         model_intensity_integral, model_intensity, timestamp = expand_model_intensity(model, data, opt)
@@ -137,13 +148,15 @@ def draw_probability(model, data, desc, plot_count, opt):
                                                                                # [batch_size, seq_len * resolution]
     else:
         model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
-    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
+
+    time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().squeeze()       # [batch_size, seq_len]
     true_probability = expand_true_probability(time, intensity, opt)  # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
     timestamp = timestamp.detach().cpu().numpy().cumsum()
+    event = event[:, 1:].squeeze().cpu().numpy()
     if true_probability is not None:
         true_probability = true_probability.squeeze().detach().cpu().numpy()
     
@@ -155,13 +168,16 @@ def draw_probability(model, data, desc, plot_count, opt):
         df = pd.DataFrame.from_dict(
             {'Time': timestamp, 'Predicted Probability': model_probability}
         )
-    df_plot = pd.melt(df, 'Time')
-    df_plot.columns = ['Time', '', 'Probability Distribution']
+    df_probability_plot = pd.melt(df, 'Time')
+    df_probability_plot.columns = ['Time', '', 'Probability Distribution']
+    df_time = pd.DataFrame.from_dict(
+            {'Time': aggregate_time, 'Point': np.zeros_like(aggregate_time), 'Event': [f'Event {item}' for item in event]}
+    )
 
     # Draw plot
     fig = plt.figure()
-    sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_plot)
-    sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
+    sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_probability_plot)
+    sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
     fig.set_size_inches(length,height)
 
     if not os.path.exists(os.path.join(opt.store_dir, 'probability_distribution')):
@@ -176,12 +192,18 @@ def draw_features(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
 
-    time, intensity = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze()             # [batch_size, seq_len]
+    time, event, _ = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().squeeze()      # [batch_size, seq_len]
     probed_data, timestamp = model.model_prober(data, opt.resolution)
     timestamp = timestamp.detach().cpu().numpy().cumsum()
+    event = event[:, 1:].squeeze().cpu().numpy()
+
     if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(plot_count))):
         os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(plot_count)))
+    
+    df_time = pd.DataFrame.from_dict(
+            {'Time': aggregate_time, 'Point': np.zeros_like(aggregate_time), 'Event': [f'Event {item}' for item in event]}
+    )
 
     for key, value in probed_data.items():
         value = value.squeeze().detach().cpu().numpy()
@@ -192,7 +214,7 @@ def draw_features(model, data, desc, plot_count, opt):
         # Draw plot
         fig = plt.figure()
         sns.lineplot(x = 'Time', y = key, data = df)
-        sns.scatterplot(x = aggregate_time, y = np.zeros_like(aggregate_time), palette = 'pastel')
+        sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
         fig.set_size_inches(length,height)
 
         plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
@@ -216,7 +238,7 @@ True intensity function interpolation functions and their integrals for hawkes p
 '''
 Hawkes process whose intensity function only has one kernel.
 '''
-def hawkes_1(time, intensity, resolution):
+def hawkes_1(time, intensity, resolution, device):
     '''
     Hawkes_1 process: \lambda(t) = \mu + a * b * exp(-b(t - t_l))
     In this case, \mu = 0.2, a = 0.8, b = 1, and all past events affect the intensity.
@@ -226,6 +248,7 @@ def hawkes_1(time, intensity, resolution):
     intensity : [batch_size, seq_len]
               The value of true intensity function.
     resolution: int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     mu = 0.2
@@ -234,10 +257,10 @@ def hawkes_1(time, intensity, resolution):
 
     batch_size = time.shape[0]
     intensity = torch.cat(
-        (torch.zeros((batch_size, 1)), intensity[:, :-1]), dim = -1
+        (torch.zeros((batch_size, 1), device = device), intensity[:, :-1]), dim = -1
     )
 
-    time_multiplier = torch.linspace(0, 1, resolution)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     true_intensity = intensity.unsqueeze(-1).repeat(1, 1, resolution) - mu + a * b
                                                                                # [batch_size, seq_len, resolution]
@@ -247,7 +270,7 @@ def hawkes_1(time, intensity, resolution):
     expand_true_intensity[:, 0:resolution] = mu
     return expand_true_intensity
 
-def hawkes_1_integral(time, intensity, resolution):
+def hawkes_1_integral(time, intensity, resolution, device):
     '''
     Hawkes_1 process: \Lambda(t) = \mu * (t - t_l) + a - a * exp(-b(t - t_l)). When t = t_l, \Lambda(t) = 0.
     Hyperparameters that are used here follow what they are in function hawkes_1.
@@ -257,6 +280,7 @@ def hawkes_1_integral(time, intensity, resolution):
     intensity : [batch_size, seq_len]
               The value of true intensity function.
     resolution: int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     mu = 0.2
@@ -265,7 +289,7 @@ def hawkes_1_integral(time, intensity, resolution):
     
     # Integral part 1
     batch_size = time.shape[0]
-    time_multiplier = torch.linspace(0, 1, resolution)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     mu_integral = mu * expand_time                                             # [batch_size, seq_len, resolution]
     basic_exponential_integral = a - a * torch.exp(-b * expand_time)           # [batch_size, seq_len, resolution]
@@ -295,7 +319,7 @@ def hawkes_1_integral(time, intensity, resolution):
 '''
 Hawkes process whose intensity function has multiple kernels.
 '''
-def hawkes_2(time, intensity, resolution):
+def hawkes_2(time, intensity, resolution, device):
     '''
     Hawkes_2 process: \lambda(t) = \mu + a_1 * b_1 * exp(-b_1(t - t_l)) + a_2 * b_2 * exp(-b_2(t - t_l))
     In this case, \mu = 0.2, a_1 = 0.4, b_1 = 1, a_2 = 0.4, b_2 = 20.0, and all past events affect the intensity.
@@ -307,6 +331,7 @@ def hawkes_2(time, intensity, resolution):
     intensity : [batch_size, seq_len]
               The value of true intensity function.
     resolution: int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     mu = 0.2
@@ -319,7 +344,8 @@ def hawkes_2(time, intensity, resolution):
     seq_len -= 1
     p1d = (1, 0, 0, 0)
 
-    expand_true_intensity = torch.ones((batch_size, seq_len, resolution)) * mu # [batch_size, seq_len, resolution]
+    expand_true_intensity = torch.ones((batch_size, seq_len, resolution), device = device) * mu
+                                                                               # [batch_size, seq_len, resolution]
     expand_time = (time.unsqueeze(-1) / (resolution - 1)).repeat(1, 1, resolution - 1)
                                                                                # [batch_size, seq_len + 1, resolution - 1]
     expand_time = torch.nn.functional.pad(expand_time, p1d)                    # [batch_size, seq_len + 1, resolution]
@@ -340,7 +366,7 @@ def hawkes_2(time, intensity, resolution):
                                                                                # [batch_size, seq_len * resolution]
     return expand_true_intensity
 
-def hawkes_2_integral(time, intensity, resolution):
+def hawkes_2_integral(time, intensity, resolution, device):
     '''
     Hawkes_2 process: \Lambda(t) = \mu * (t - t_l) + a_1 - a_1 * exp(-b_1(t - t_l)) + a_2 - a_2 * exp(-b_2(t - t_l)).
     When t = t_l, \Lambda(t) = 0.
@@ -351,6 +377,7 @@ def hawkes_2_integral(time, intensity, resolution):
     intensity : [batch_size, seq_len]
               The value of true intensity function.
     resolution: int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     mu = 0.2
@@ -361,7 +388,7 @@ def hawkes_2_integral(time, intensity, resolution):
 
     # Integral part 1
     batch_size = time.shape[0]
-    time_multiplier = torch.linspace(0, 1, resolution)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     mu_integral = mu * expand_time                                             # [batch_size, seq_len, resolution]
     basic_exponential_integral_1 = a_1 - a_1 * torch.exp(-b_1 * expand_time)   # [batch_size, seq_len, resolution]
@@ -398,7 +425,7 @@ def hawkes_2_integral(time, intensity, resolution):
 '''
 Time-independent poisson process
 '''
-def poisson(time, intensity, resolution):
+def poisson(time, intensity, resolution, device):
     '''
     Poisson process: \lambda(t) = 1
     The intensity function of poisson process is a constant.
@@ -408,14 +435,16 @@ def poisson(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                The value of true intensity function.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     lam = 1
 
     batch_size, seq_len = intensity.shape
-    return torch.ones((batch_size, seq_len * resolution)) * lam                # [batch_size, seq_len * resolution]
+    return torch.ones((batch_size, seq_len * resolution), device = device) * lam
+                                                                               # [batch_size, seq_len * resolution]
 
-def poisson_integral(time, intensity, resolution):
+def poisson_integral(time, intensity, resolution, device):
     '''
     Poisson process: \lambda(t) = 1 and \Lambda(t) = t (\Lambda(t) is the integral of \lambda(t))
 
@@ -424,12 +453,13 @@ def poisson_integral(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                The value of true intensity function.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     lam = 1
 
     batch_size, _ = intensity.shape
-    time_multiplier = torch.linspace(0, 1, resolution)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
 
     return (expand_time * lam).reshape(batch_size, -1)                         # [batch_size, seq_len * resolution]
@@ -438,7 +468,7 @@ def poisson_integral(time, intensity, resolution):
 '''
 Stationary renewal process, whose probability distribution instead of intensity function is defined.
 '''
-def stationary_renew(time, intensity, resolution):
+def stationary_renew(time, intensity, resolution, device):
     '''
     The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
     The intensity function only matches the explicitly given lognorm distribution used in the synthetic data generator. 
@@ -451,10 +481,11 @@ def stationary_renew(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                The value of true intensity function.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
 
     batch_size, _ = time.shape
-    time_multiplier = torch.linspace(0, 1, resolution)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     expand_time[:, :, 0] += 1e-8
     expand_true_intensity = -0.797885*torch.exp(-0.5*(torch.log(expand_time))**2) / (-expand_time + expand_time * torch.erf(0.707107 * torch.log(expand_time)))
@@ -462,7 +493,7 @@ def stationary_renew(time, intensity, resolution):
     expand_true_intensity = expand_true_intensity.reshape(batch_size, -1)      # [batch_size, seq_len * resolution]
     return expand_true_intensity
 
-def stationary_renew_probability(time, intensity, resolution):
+def stationary_renew_probability(time, intensity, resolution, device):
     '''
     We won't implement the integral of stationary renewal's intensity function.
     We will directly use the distribution, instead.
@@ -473,6 +504,7 @@ def stationary_renew_probability(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                  The value of ture intensity function at all event points.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameter
     s = np.sqrt(1)
@@ -480,7 +512,7 @@ def stationary_renew_probability(time, intensity, resolution):
 
     batch_size = time.shape[0]
     from scipy.stats import lognorm
-    time_multiplier = torch.linspace(0, 1, resolution)                         # [resolution]
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)        # [resolution]
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     distribution_values = lognorm.pdf(expand_time.cpu().numpy(), s = s, scale = np.exp(mu))
                                                                                # [batch_size, seq_len, resolution]
@@ -492,7 +524,7 @@ def stationary_renew_probability(time, intensity, resolution):
 '''
 Self-correct process, which the latest events would drastically decrease the probability of next events in a small time period.
 '''
-def self_correct(time, intensity, resolution):
+def self_correct(time, intensity, resolution, device):
     '''
     Self correct process has a iterative intensity function. \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events.
@@ -502,23 +534,25 @@ def self_correct(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                The value of true intensity function when a event happens.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # Hyperparameters
     mu = 1
     alpha = 1
 
     batch_size = time.shape[0]
-    time_multiplier = torch.linspace(0, 1, resolution)
-    shift_intensity = torch.cat((torch.ones(batch_size, 1), intensity[:, :-1]), dim = -1)
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
+    shift_intensity = torch.cat((torch.ones(batch_size, 1, device = device), intensity[:, :-1]), dim = -1)
                                                                                # [batch_size, seq_len]
     start_intensity = shift_intensity / torch.exp(torch.tensor(alpha))         # [batch_size, seq_len]
     expand_time = time_multiplier * time[:, 1:].unsqueeze(-1)                  # [batch_size, seq_len, resolution]
     start_intensity = start_intensity.unsqueeze(-1).repeat(1, 1, resolution)   # [batch_size, seq_len, resolution]
     expand_intensity = start_intensity * torch.exp(mu * expand_time)           # [batch_size, seq_len, resolution]
     expand_intensity = expand_intensity.reshape(batch_size, -1)                # [batch_size, seq_len * resolution]
+
     return expand_intensity
 
-def self_correct_integral(time, intensity, resolution):
+def self_correct_integral(time, intensity, resolution, device):
     '''
     self correct process has intensity function: \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events. Omi et al. claim self correct process doesn't aggregate intensity functions of all
@@ -529,6 +563,7 @@ def self_correct_integral(time, intensity, resolution):
     intensity  : [batch_size, seq_len]
                The value of true intensity function when a event happens.
     resolution : int
+    device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
     mu = 1
@@ -536,9 +571,11 @@ def self_correct_integral(time, intensity, resolution):
     
     time_interval = time[:, 1:]                                                # [batch_size, seq_len]
     batch_size, seq_len = time_interval.shape
-    N = torch.arange(0, seq_len).repeat(batch_size, 1).repeat_interleave(resolution, dim = -1).reshape(batch_size, seq_len, -1)
-                                                                               # [batch_size, seq_len, resolution]
-    time_multiplier = torch.linspace(0, 1, resolution)
+    N = torch.arange(0, seq_len, device = device)\
+             .repeat(batch_size, 1)\
+             .repeat_interleave(resolution, dim = -1)\
+             .reshape(batch_size, seq_len, -1)                                 # [batch_size, seq_len, resolution]
+    time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time_interval.unsqueeze(-1)                # [batch_size, seq_len, resolution]
     historical_part = torch.exp(mu * time[:, :-1])                             # [batch_size, seq_len]
     historical_part = torch.cumprod(historical_part, dim = -1)                 # [batch_size, seq_len]
@@ -583,7 +620,7 @@ def extract_data(data, opt):
     return extract_data_from_rawdata[opt.dataloader_name](data)
 
 def syn_extract(raw_data):
-    return raw_data[0], raw_data[2]
+    return raw_data[0], raw_data[1], raw_data[-1]
 
 def ctlstm_extract(raw_data):
     return raw_data[0][1][:, :-1], raw_data[2]

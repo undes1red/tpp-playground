@@ -37,9 +37,11 @@ class CNFDataset(utils.data.Dataset):
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            event_tensor = torch.tensor(self.data.iloc[index].event)
-            time_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            mask_tensor = torch.from_numpy(self.data.iloc[index]['mask'])
+            event_tensor = torch.tensor(self.data.iloc[index].event, device = self.device)
+            time_tensor = torch.from_numpy(self.data.iloc[index].time_seq).to(self.device)
+            mask_tensor = torch.from_numpy(self.data.iloc[index]['mask']).to(self.device)
+
+            
             return [event_tensor, time_tensor, mask_tensor], \
                    torch.from_numpy(self.data.iloc[index].score)
 

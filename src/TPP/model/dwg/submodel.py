@@ -112,7 +112,8 @@ class DynamicMLP(nn.Module):
 
         history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
                                                                                # [batch_size, seq_len * resolution, d_history]
-        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
@@ -169,7 +170,7 @@ class DynamicMLP(nn.Module):
 
         history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
                                                                                # [batch_size, seq_len * resolution, d_history]
-        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_multiplier = torch.linspace(0, 1, resolution, device=self.device) # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]

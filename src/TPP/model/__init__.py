@@ -23,7 +23,8 @@ dataloader_modulepath = {
     'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
     'cnf': ['cnf.model', 'CNFWrapper'],
     'ifl': ['ifl.model', 'IFL'],
-    'rmtpp': ['rmtpp.model', 'RMTPP']
+    'rmtpp': ['rmtpp.model', 'RMTPP'],
+    'thp': ['thp.model', 'THP']
 
     # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
     # Please take your own risk when you readd and use them. 

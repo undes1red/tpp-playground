@@ -27,5 +27,9 @@ class BasicArguments:
         self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
                             help='The number of warmup steps. Models during warmup won\'t be stored.')
 
+        # wandb support
+        self.parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
+
+
     def get_args(self):
         return self.parser.parse_args()

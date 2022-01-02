@@ -13,7 +13,6 @@ class TPPArguments(BasicArguments):
         
         # Model save and log management
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
-        self.parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
         
         # Training procedure related hyperparameters
         self.parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')

@@ -245,6 +245,14 @@ def data_gen(name, dataset, data_size, seq_len, autoregression = False):
     final.to_json(name + ('_auto' if autoregression else '') + '.json')
 
 def event_gen(size, time):
+    time_average = np.mean(time)
+    time_variance = np.var(time)
+
+    '''
+    the length of intervals smaller than time_average - time_variance: type 1
+    [time_average - time_variance, time_average + time_variance]: type 2
+    the length of intervals larger than time_average + time_variance: type 3
+    '''
     return np.random.randint(10, size = size)
 
 if __name__ == '__main__':

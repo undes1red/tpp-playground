@@ -1,7 +1,6 @@
 from .submodel import DynamicMLP
 from ..utils import BasicModule
 import torch
-import numpy as np
 
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
@@ -123,6 +122,7 @@ class TemporalModel(BasicModule):
               The original dataset records. 
         resolution: int
                     How many interpretive numbers we have between an event interval?
+        device: conduct all computations on cpu, gpu, or other devices
         '''
         self.model.eval()
         input_time = input_data[0]
@@ -149,7 +149,7 @@ class TemporalModel(BasicModule):
         loss.backward()
     
         loss = loss.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[-1].sum()
     
         return loss, fact
     
@@ -166,7 +166,7 @@ class TemporalModel(BasicModule):
         )
     
         loss = loss.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[-1].sum()
 
         return loss, fact, mae
 

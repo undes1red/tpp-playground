@@ -89,7 +89,8 @@ class FullyNN(nn.Module):
 
         hidden_expand = hidden.repeat(1, 1, resolution).reshape(batch_size, -1, d_intensity)
                                                                                # [batch_size, seq_len * resolution, d_intensity]
-        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]
@@ -132,7 +133,8 @@ class FullyNN(nn.Module):
 
         hidden_expand = hidden.repeat(1, 1, resolution).reshape(batch_size, -1, d_intensity)
                                                                                # [batch_size, seq_len * resolution, d_intensity]
-        time_multiplier = torch.linspace(0, 1, resolution)                     # [resolution]
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]

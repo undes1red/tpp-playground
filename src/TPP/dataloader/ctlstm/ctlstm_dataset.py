@@ -23,7 +23,7 @@ class CTLSTMDataset(utils.data.Dataset):
         self.device = device
         # All input data has the same sequence length. This sequence length does not contain special start and end events.
         self.sequence_length = len(self.data.iloc[0].time_seq)
-        self.token_num_tensor = torch.tensor([self.sequence_length])
+        self.token_num_tensor = torch.tensor([self.sequence_length], device = self.device)
         self.event_number = event_number
 
         # Data preprocessing
@@ -57,10 +57,13 @@ class CTLSTMDataset(utils.data.Dataset):
             token_num_tensor
             duration_tensor
             '''
-            event_tensor = torch.from_numpy(self.data.iloc[index].event)
-            dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity)
-            return [event_tensor, dtime_tensor, self.token_num_tensor, self.data.iloc[index].duation], \
+            event_tensor = torch.from_numpy(self.data.iloc[index].event).to(self.device)
+            dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq).to(self.device)
+            intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity).to(self.device)
+            duation_tensor = torch.from_numpy(self.data.iloc[index].duation).to(self.device)
+
+            
+            return [event_tensor, dtime_tensor, self.token_num_tensor, duation_tensor], \
                    torch.tensor(self.data.iloc[index].score), intensity_tensor
 
     def __len__(self):

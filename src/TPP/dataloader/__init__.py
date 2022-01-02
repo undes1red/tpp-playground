@@ -59,8 +59,7 @@ dataloader_modulepath = {
     'cnf': ['cnf.cnf_dataset', 'cnf_dataloader'],
     'ifl': ['ifl.ifl_dataset', 'ifl_dataloader']
 
-    # This dataloader fits all legacy models.
-    # 2021-10-14 update: The same as legacy models, legacy dataloaders are deprecated now.
+    # 2021-10-14 update: legacy dataloaders are deprecated and are removed from the dataloader zoo.
     # Take your own risk to readd and use them.
 }
 

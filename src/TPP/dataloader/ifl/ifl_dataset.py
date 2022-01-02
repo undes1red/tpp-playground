@@ -78,9 +78,9 @@ class IflDataset(utils.data.Dataset):
             Seems that t_start and t_end are fixed and stay unchanged unless the dataset get changed.
             finally we should tell the model how many event types the dataset has.(Maybe this can be a model hyperparameter)
             '''
-            event_tensor = torch.from_numpy(self.data.iloc[index].event)
-            time_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            mask_tensor = torch.from_numpy(self.data.iloc[index]['mask'])
+            event_tensor = torch.from_numpy(self.data.iloc[index].event).to(self.device)
+            time_tensor = torch.from_numpy(self.data.iloc[index].time_seq).to(self.device)
+            mask_tensor = torch.from_numpy(self.data.iloc[index]['mask']).to(self.device)
 
             return [event_tensor, time_tensor, mask_tensor, self.mean, self.var] if self.input_norm_data else [event_tensor, time_tensor, mask_tensor], \
                    torch.from_numpy(self.data.iloc[index].score)

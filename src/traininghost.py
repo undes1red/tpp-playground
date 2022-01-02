@@ -7,7 +7,7 @@ import torch.multiprocessing as mp
 from .traininghost_utils import getLogger
 
 '''
-All the following two functions constructs the pytorch multiprocessing backbones, referring to neural_stpp created by Facebook.
+The TrainingHost executes model training using pytorch multiprocessing backbones, referring to neural_stpp created by Facebook.
 '''
 logger = getLogger('__TrainingHost__')
 
@@ -24,7 +24,7 @@ class TrainingHost:
         should match the given procedure name.
         
         Caveats:
-        1. The arguments loader should be named as "procedure_name + arguments"(no whitespace is needed).
+        1. The arguments loader should be named as "procedure_name + arguments"(no whitespace).
         2. The name of the entry function should be 'train'.
         '''
         procedure = importlib.import_module('src.' + self.procedure_name)
@@ -37,7 +37,7 @@ class TrainingHost:
         '''
         if opt.no_seed:
             import random, time
-            logger.warning(f'No explicit random seed is available. Now, model will choose a number as the random seed by itself.')
+            logger.warning(f'No explicit random seed is available. Now, the model will choose a number as the random seed by itself.')
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
             logger.info(f'It seems that your model loves {opt.seed} this time.')
@@ -67,18 +67,19 @@ class TrainingHost:
         Gradient aggergation check
         '''
         if opt.agg_update_step > 1 and rank == 0:
-            logger.warning(f'Gradient aggregation is detected! The number of practical training steps is multiplied by {opt.agg_update_step}!')
+            logger.warning(f'Gradient aggregation is detected! The number of all training steps is multiplied by {opt.agg_update_step}!')
             opt.n_training_steps *= opt.agg_update_step
             opt.n_evaluation_steps *= opt.agg_update_step
             opt.n_report_steps *= opt.agg_update_step
             opt.n_warmup_steps *= opt.agg_update_step
     
         '''
-        Host tries to avoid pytorch issue #36313
+        Avoid pytorch issue #36313
         '''
         if torch.__version__ == '1.4.0' and rank == 0:
-            raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313), several learning rate schedulers including LambdaLR fail to run. Please update PyTorch to 1.5.0 or above.')
-        
+            raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313),\
+            several learning rate schedulers including LambdaLR used by this architecture fail to run. Please update PyTorch to 1.5.0 or above.')
+
         '''
         Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
         '''
@@ -101,7 +102,7 @@ class TrainingHost:
                 logger.info('WARNING: Using device {}'.format(opt.device))
     
         '''
-        Create there dirs if they don't exist.
+        Create log and model-saving dirs if they are not present.
         '''
         if not os.path.isdir(opt.log):
             os.makedirs(opt.log)

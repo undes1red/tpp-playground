@@ -4,8 +4,8 @@ import os
 import pandas as pd
 import numpy as np
 
-def data_preprocess(per_line):
-    return np.concatenate([np.zeros(1), per_line])
+def insert(per_line, number):
+    return np.concatenate([np.array([number]), per_line])
 
 class SynDataset(utils.data.Dataset):
     '''
@@ -13,20 +13,23 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, plot = False):
+    def __init__(self, data, device, plot = False, number_of_events = 10):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
         self.plot = plot
+        self.number_of_events = number_of_events
 
         # Data preprocessing
-        self.data.time_seq = self.data.time_seq.apply(data_preprocess)
+        self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
         self.data.time_seq = self.data.time_seq.apply(np.diff)
-        self.data.time_seq = self.data.time_seq.apply(data_preprocess)
+        self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
+        self.data.event = self.data.event.apply(insert, number = self.number_of_events)
 
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.float32)
 
     def __getitem__(self, index):
         '''
@@ -39,12 +42,14 @@ class SynDataset(utils.data.Dataset):
             ]
         else:
             if self.plot:
-                return torch.from_numpy(self.data.iloc[index].time_seq), \
-                       torch.from_numpy(self.data.iloc[index].score),\
-                       torch.from_numpy(self.data.iloc[index].intensity)
+                return torch.from_numpy(self.data.iloc[index].time_seq).to(self.device), \
+                       torch.from_numpy(self.data.iloc[index].event).to(self.device), \
+                       torch.from_numpy(self.data.iloc[index].score).to(self.device),\
+                       torch.from_numpy(self.data.iloc[index].intensity).to(self.device)
             else:
-                return torch.from_numpy(self.data.iloc[index].time_seq), \
-                       torch.from_numpy(self.data.iloc[index].score)
+                return torch.from_numpy(self.data.iloc[index].time_seq).to(self.device), \
+                       torch.from_numpy(self.data.iloc[index].event).to(self.device), \
+                       torch.from_numpy(self.data.iloc[index].score).to(self.device)
 
     def __len__(self):
         return self.data.shape[0]
