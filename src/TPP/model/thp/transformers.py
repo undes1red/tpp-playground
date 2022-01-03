@@ -79,12 +79,16 @@ class Predictor(nn.Module):
     def __init__(self, dim, num_types, device):
         super(Predictor, self).__init__()
         self.device = device
+        self.num_types = num_types
 
         self.linear = nn.Linear(dim, num_types, bias=False, device = self.device)
 
     def forward(self, data, non_pad_mask):
         out = self.linear(data)                                                # [batch_size, seq_len, num_types]
-        out = out * non_pad_mask
+        out.masked_fill(non_pad_mask != 1, 1e-9)                               # [batch_size, seq_len, num_types]
+
+        if self.num_types > 1:
+            out = F.softmax(out, dim = -1)                                     # [batch_size, seq_len, num_types]
         return out
 
 

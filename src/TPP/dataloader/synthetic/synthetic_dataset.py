@@ -29,7 +29,7 @@ class SynDataset(utils.data.Dataset):
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.float32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
 
     def __getitem__(self, index):
         '''
@@ -42,14 +42,14 @@ class SynDataset(utils.data.Dataset):
             ]
         else:
             if self.plot:
-                return torch.from_numpy(self.data.iloc[index].time_seq).to(self.device), \
-                       torch.from_numpy(self.data.iloc[index].event).to(self.device), \
-                       torch.from_numpy(self.data.iloc[index].score).to(self.device),\
-                       torch.from_numpy(self.data.iloc[index].intensity).to(self.device)
+                return torch.from_numpy(self.data.iloc[index].time_seq), \
+                       torch.from_numpy(self.data.iloc[index].event), \
+                       torch.from_numpy(self.data.iloc[index].score),\
+                       torch.from_numpy(self.data.iloc[index].intensity)
             else:
-                return torch.from_numpy(self.data.iloc[index].time_seq).to(self.device), \
-                       torch.from_numpy(self.data.iloc[index].event).to(self.device), \
-                       torch.from_numpy(self.data.iloc[index].score).to(self.device)
+                return torch.from_numpy(self.data.iloc[index].time_seq), \
+                       torch.from_numpy(self.data.iloc[index].event), \
+                       torch.from_numpy(self.data.iloc[index].score)
 
     def __len__(self):
         return self.data.shape[0]

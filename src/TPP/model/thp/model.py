@@ -24,39 +24,45 @@ class THP(BasicModule):
     '''
     Functions for model propagation and evaluation
     '''
-    def forward(self, minibatch):
+    def forward(self, time, events):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
         Args:
-        1. minibatch: the input data from dataloaders. shape: ['time': [batch_size, seq_len + 1]]
+        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
+        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         '''
 
-        time = minibatch[0]
-        events = None
+        time_history, events_history = time[:, :-1], events[:, :-1]            # [batch_size, seq_len] * 2
+        time_next, events_next = time[:, 1:], events[:, 1:]                    # [batch_size, seq_len] * 2
 
-        history, prediction = self.model(time[:, :-1], events)                 # [batch_size, seq_len, num_types]
+        history, (events_pred, time_pred) = \
+            self.model(time_history, events_history)                           # 2 * [batch_size, seq_len, num_types]
 
+        # temporal point process loss
         log_likeli_loss = self.log_likelihood(
-             history = history, time = time[:, 1:], events = events
+             history = history, time = time_next, events = events_next
         )
+        # event loss
+        events_loss = F.cross_entropy(input = events_pred.reshape(-1, 10), target = events_next.reshape(-1).to(torch.long), reduction='sum')
 
-        return log_likeli_loss
+        return log_likeli_loss, events_loss
     
-    def evaluate(self, minibatch):
+    def evaluate(self, time, events):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
         Args:
-        1. minibatch: the input data from dataloaders. shape: ['time': [batch_size, seq_len + 1]]
+        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
+        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         '''
 
-        time = minibatch[0]
-        events = None
+        time_history, events_history = time[:, :-1], events[:, :-1]            # [batch_size, seq_len] * 2
 
-        history, prediction = self.model(time[:, :-1], events)                 # [batch_size, seq_len, num_types]
+        history, (events_pred, time_pred) = \
+            self.model(time_history, events_history)                           # [batch_size, seq_len, num_types]
 
-        return history, prediction
+        return history, (events_pred, time_pred)
 
     '''
     Loss functions
@@ -69,7 +75,7 @@ class THP(BasicModule):
         '''
         non_pad_mask = get_non_pad_mask(time).squeeze(2)                       # [batch_size, seq_len]
     
-        if events:
+        if events is not None:
             type_mask = torch.zeros([*events.size(), self.num_types], device=history.device)
             for i in range(self.num_types):
                 type_mask[:, :, i] = (events == i + 1).bool().to(history.device)
@@ -124,13 +130,14 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        time = input_data[0][:, 1:]                                            # [batch_size, seq_len]
+        time, events, _ = input_data                                           # 2 * [batch_size, seq_len + 1]
+
         batch_size, seq_len = time.shape
-        events = None
-        history, prediction = self.evaluate(input_data)                        # [batch_size, seq_len, num_types]
+        seq_len -= 1
+        history, (event_pred, time_pred) = self.evaluate(time, events)         # [batch_size, seq_len, num_types]
 
         # intensity part
-        if events:
+        if events is not None:
             type_mask = torch.zeros([*events.size(), self.num_types], device=history.device)
             for i in range(self.num_types):
                 type_mask[:, :, i] = (events == i + 1).bool().to(history.device)
@@ -169,74 +176,56 @@ class THP(BasicModule):
         Maybe need another function to extract data from minibatches.
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
-        loss = model(minibatch)                                                # [batch_size, seq_len, 1]
-        loss.backward()
+        time, event, fact = minibatch                                          # 2 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        tpp_loss, mark_loss = model(time, event)                               # [batch_size, seq_len, 1]
+        tpp_loss.backward()
 
-        loss = loss.item()
-        fact = minibatch[1].sum()
+        tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
+        fact = fact.sum()
     
-        return loss, fact
+        return tpp_loss, mark_loss, fact
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        loss = model(minibatch)                                                # [batch_size, seq_len, 1]
 
-        loss = loss.item()
-        fact = minibatch[1].sum()
+        time, event, fact = minibatch                                          # 2 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        tpp_loss, mark_loss = model(time, event)                               # [batch_size, seq_len, 1]
 
-        return loss, fact
+        tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
+        fact = fact.sum()
+
+        return tpp_loss, mark_loss, fact
 
     def postprocess(input):
-        def train_postprocess(input):
-            '''
-            Training process
-            [absolute loss, relative loss]
-            '''
-            return [input[0], input[0] - input[1]]
-        
-        def test_postprocess(input):
-            '''
-            Evaluation process
-            [absolute loss, relative loss, mae value]
-            '''
-            return [input[0], input[0] - input[1], input[2]]
-        
-        return (train_postprocess(input) if len(input) == 2 else test_postprocess(input))
+        return [input[0], input[0] - input[2], input[1]]
+
 
     def log_print_format(input):
-        def train_log_print_format(input):
-            format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
-            return format_dict
-
-        def test_log_print_format(input):
-            format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['mae'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'mae': ''}
-            return format_dict
+        format_dict = {}
+        format_dict['absolute_loss'] = input[0]
+        format_dict['relative_loss'] = input[1]
+        format_dict['events_loss'] = input[2]
+        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f'}
+        return format_dict
         
-        return (train_log_print_format(input) if len(input) == 2 else test_log_print_format(input))
-
     format_dict_length = 3
     
-    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
+
+    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'events loss': ':8.5f'}
 
     def logfile_print_format(input):
         format_dict = {}
         format_dict['absolute loss'] = input[0]
         format_dict['relative loss'] = input[1]
+        format_dict['events loss'] = input[2]
         return format_dict
     
     def choose_metric(evaluation_report, test_report):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [evaluation_report[1].item(), test_report[1].item()]
+        return [evaluation_report[1].item() + evaluation_report[-1], test_report[1].item()+ test_report[-1]]
     
     metric_number = 2 # metric number is the length of the output of choose_metric

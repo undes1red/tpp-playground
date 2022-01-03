@@ -22,7 +22,23 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True):
+class move_data_to_the_correct_device:
+    def __init__(self, device):
+        self.device = device
+    
+    '''
+    These following two functions try to mimic the official collate_fn().
+    '''
+    def __call__(self, data):
+        from torch.utils.data._utils.collate import default_collate
+        data_in_cpu = default_collate(data)
+
+        data_in_correct_location = []
+        for item in data_in_cpu:
+            data_in_correct_location.append(item.to(self.device))
+        return data_in_correct_location
+
+def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True, preload = False):
     file_names = os.listdir(opt.data_path)
     dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
 
@@ -35,18 +51,23 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
     train = dataset(data_raw['train'], device = opt.device, **dataloader_config_dict)
     evaluate = dataset(data_raw['evaluate'], device = opt.device, **dataloader_config_dict)
     test = dataset(data_raw['test'], device = opt.device, **dataloader_config_dict)
+    device_locator = move_data_to_the_correct_device(device = opt.device)
+
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()
     g.manual_seed(opt.seed + rank)
 
     if train:
         train_iterator = DataLoader(train, shuffle = True, batch_size=opt.batch_size, \
+            collate_fn = device_locator if preload else None, \
             num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
     if evaluate:
         evaluation_iterator = DataLoader(evaluate, batch_size=opt.batch_size, \
+            collate_fn = device_locator if preload else None, \
             num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
     if test:
         test_iterator = DataLoader(test, batch_size=opt.batch_size, \
+            collate_fn = device_locator if preload else None, \
             num_workers=opt.n_worker, worker_init_fn = seed_worker, generator = g, pin_memory = False)
 
     return train_iterator, evaluation_iterator, test_iterator

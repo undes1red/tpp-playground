@@ -152,7 +152,7 @@ class FullyNNModel(BasicModule):
         loss.backward()
     
         loss = loss.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[-1].sum()
         
         return loss, fact
     
@@ -169,7 +169,7 @@ class FullyNNModel(BasicModule):
         )
     
         loss = loss.item()
-        fact = minibatch[1].sum()
+        fact = minibatch[-1].sum()
     
         return loss, fact, mae
 

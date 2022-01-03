@@ -29,7 +29,7 @@ def get_subsequent_mask(seq):
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
     return subsequent_mask
 
-PAD = 0
+PAD = 10
 
 
 def compute_event(event, non_pad_mask):

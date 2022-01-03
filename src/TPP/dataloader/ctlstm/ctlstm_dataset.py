@@ -57,10 +57,10 @@ class CTLSTMDataset(utils.data.Dataset):
             token_num_tensor
             duration_tensor
             '''
-            event_tensor = torch.from_numpy(self.data.iloc[index].event).to(self.device)
-            dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq).to(self.device)
-            intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity).to(self.device)
-            duation_tensor = torch.from_numpy(self.data.iloc[index].duation).to(self.device)
+            event_tensor = torch.from_numpy(self.data.iloc[index].event)
+            dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
+            intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity)
+            duation_tensor = torch.from_numpy(self.data.iloc[index].duation)
 
             
             return [event_tensor, dtime_tensor, self.token_num_tensor, duation_tensor], \

@@ -81,7 +81,7 @@ if __name__ == '__main__':
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
     opt.n_worker = 0
-    train, evaluation, test = prepare_dataloaders(opt)
+    train, evaluation, test = prepare_dataloaders(opt, preload = True)
     iter_train = iter(train)
     iter_test = iter(test)
     iter_eva = iter(evaluation)
