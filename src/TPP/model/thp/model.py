@@ -178,7 +178,8 @@ class THP(BasicModule):
         '''
         time, event, fact = minibatch                                          # 2 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         tpp_loss, mark_loss = model(time, event)                               # [batch_size, seq_len, 1]
-        tpp_loss.backward()
+        loss = tpp_loss + mark_loss
+        loss.backward()
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
         fact = fact.sum()

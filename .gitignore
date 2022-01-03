@@ -115,6 +115,7 @@ raw_input/
 output/
 config/
 wandb/
+deprecated/
 
 # The test scripts
 scripts/
