@@ -69,6 +69,13 @@ def draw_intensity(model, data, desc, plot_count, opt):
 
     # torch.tensor to numpy.array
     model_intensity = model_intensity.squeeze().detach().cpu().numpy()
+    if np.isnan(model_intensity).any():
+        '''
+        Model intensity prediction has failed!
+        '''
+        logger.error('We detect NaN in the intensity predictions! Please try again after checking the training log and retraining your model.')
+        return 0
+
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     event = event[:, 1:].squeeze().cpu().numpy()
     if true_intensity is not None:
@@ -155,6 +162,13 @@ def draw_probability(model, data, desc, plot_count, opt):
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
+    if np.isnan(model_probability).any():
+        '''
+        Model intensity prediction has failed!
+        '''
+        logger.error('We detect NaN in the probability predictions! Please try again after checking the training log and retraining your model.')
+        return 0
+
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     event = event[:, 1:].squeeze().cpu().numpy()
     if true_probability is not None:

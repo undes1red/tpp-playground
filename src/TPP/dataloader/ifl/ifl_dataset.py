@@ -43,7 +43,7 @@ class IflDataset(utils.data.Dataset):
         # Data preprocessing
         self.data.event = self.data.event.apply(concate, item2 = np.array([self.event_num]))
         if shift:
-            self.data.time_seq = self.data.time_seq.apply(concate_shift, item1 = np.array([self.start_time]), item2 = np.array([self.start_time]))
+            self.data.time_seq = self.data.time_seq.apply(concate_shift, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
         else:
             self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
         self.data.time_seq = self.data.time_seq.apply(np.diff) + 1e-5
