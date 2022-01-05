@@ -130,7 +130,8 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        time, events, _ = input_data                                           # 2 * [batch_size, seq_len + 1]
+        time, events, _, _ = input_data                                        # 2 * [batch_size, seq_len + 1]
+        time_next, events_next = time[:, 1:], events[:, 1:]                    # 2 * [batch_size, seq_len]
 
         batch_size, seq_len = time.shape
         seq_len -= 1
@@ -138,9 +139,9 @@ class THP(BasicModule):
 
         # intensity part
         if events is not None:
-            type_mask = torch.zeros([*events.size(), self.num_types], device=history.device)
+            type_mask = torch.zeros([batch_size, seq_len, self.num_types], device=history.device)
             for i in range(self.num_types):
-                type_mask[:, :, i] = (events == i + 1).bool().to(history.device)
+                type_mask[:, :, i] = (events_next == i + 1).bool().to(history.device)
                                                                                # [batch_size, seq_len, num_types]
         else:
             '''
@@ -149,7 +150,7 @@ class THP(BasicModule):
             type_mask = torch.ones_like(history, device = history.device)      # [batch_size, seq_len, num_types]
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-        expanded_time = time.unsqueeze(-1) * time_multiplier                   # [batch_size, seq_len, resolution]
+        expanded_time = time_next.unsqueeze(-1) * time_multiplier              # [batch_size, seq_len, resolution]
         history = torch.sum(history * type_mask, dim=-1, keepdim=True)         # [batch_size, seq_len, 1]
         
         expanded_intensity = F.softplus(self.alpha * expanded_time + history, self.beta)

@@ -115,7 +115,7 @@ class TPPTrainer:
                 self.sched_optimizer.step_and_update_lr()
                 self.sched_optimizer.zero_grad()
     
-            self.report_sum = lst_add_lst(self.report_sum, step_result)
+            self.report_sum = lst_add_lst(self.report_sum, lst_divide(step_result, self.opt.n_report_steps))
 
             '''
             A short report about training.
@@ -157,7 +157,7 @@ class TPPTrainer:
 
     def train_report(self, current_step):
         logger.warning(f'Brief training status report at step {current_step}.')
-        report_sum = self.model_class.postprocess(lst_divide(self.report_sum, self.opt.n_report_steps))
+        report_sum = self.model_class.postprocess(self.report_sum)
         print_performances(logger = logger, procedure='Training', lr = self.sched_optimizer.get_lr(), \
                            **(self.model_class.log_print_format(report_sum)))
         if self.opt.wandb:

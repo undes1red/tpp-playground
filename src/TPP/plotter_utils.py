@@ -38,7 +38,7 @@ This function should return
 2. We will utilize intensity functions values and their integrals for probability distribution.
    We don't need to implement another model method to obtain them.
 '''
-intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp']
+intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp', 'rmtpp']
 
 '''
 Intensity function drawing utils
@@ -124,7 +124,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_available = ['dwg', 'fullynn']
+probability_available = ['dwg', 'fullynn', 'rmtpp']
 
 def expand_model_probability(opt):
     if opt.model_name not in probability_available:

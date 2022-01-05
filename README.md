@@ -12,7 +12,7 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 6. NeuralODE (Chen et al. Done)
 7. NeuralEventODE (Chen et al. Planning)
 8. NeuralJSDE (Jia et al. Planning)
-9. Transformer TPP (Zuo et al. Planning)
+9. Transformer TPP (Zuo et al. Done)
 10. NCE-tpp (Mei et al. Planning)
 11. STRODE (Huang et al. Planning)
 12. NSMTPP (Zhu et al. Planning)
