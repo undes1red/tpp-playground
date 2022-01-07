@@ -13,21 +13,29 @@ class IFL(BasicModule):
 
         self.model = LogNormMix(
             num_marks,
+            self.device,
             mean_log_inter_time,
             std_log_inter_time,
             context_size,
             mark_embedding_size,
             num_mix_components,
             rnn_type,
-        ).to(self.device)
+        )
     
     def forward(self, minibatch):
         '''
         The shape of minibatch
         [
-            event_tensor,
-            time_tensor,
-            mask_tensor
+            [
+                event_tensor,
+                time_tensor,
+                mask_tensor
+            ],
+            score,
+            [
+                mean,
+                var
+            ](if self.input_norm_data is True)
         ]
         '''
         return self.model.log_prob(minibatch)
@@ -71,13 +79,14 @@ class IFL(BasicModule):
     
     def function_prober(self, data, resolution):
         self.model.eval()
+        return self.model.log_prob_prober(data, resolution)                    # [batch_size, seq_len * resolution]
 
     def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
     
         model.train()
             
-        log_likelihood = model(minibatch[0])
+        log_likelihood = model(minibatch)
     
         loss = loss_f(log_likelihood)
         loss.backward()
@@ -91,7 +100,7 @@ class IFL(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        log_likelihood = model(minibatch[0])
+        log_likelihood = model(minibatch)
     
         loss = loss_f(log_likelihood)
     

@@ -31,6 +31,8 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--evaluation', action='store_true')
     parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'debug'], default = 'intensity', help='Temporal point process only.')
+    parser.add_argument('--custom_collator', action='store_true',\
+                help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
 
     parser.add_argument('--cuda', action='store_true', help='Use GPUs to accelerate model evaluation speed.')
     logger = getLogger(name = 'Plotter')
@@ -81,7 +83,7 @@ if __name__ == '__main__':
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
     opt.n_worker = 0
-    train, evaluation, test = prepare_dataloaders(opt, preload = True)
+    train, evaluation, test = prepare_dataloaders(opt)
     iter_train = iter(train)
     iter_test = iter(test)
     iter_eva = iter(evaluation)

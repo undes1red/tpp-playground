@@ -7,7 +7,7 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 1. Our Model (Done)
 2. FullyNN (Omi et al. Done)
 3. CTLSTM (Mei et al. Done)
-4. RMTPP (Du et al. Done) But using MNLL loss is problematic. We need deeper investigation.
+4. RMTPP (Du et al. Done with several training issues.)
 5. ifl-tpp (Shchur et al. Done)
 6. NeuralODE (Chen et al. Done)
 7. NeuralEventODE (Chen et al. Planning)

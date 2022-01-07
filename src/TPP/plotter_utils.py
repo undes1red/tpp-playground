@@ -61,8 +61,7 @@ def draw_intensity(model, data, desc, plot_count, opt):
     data: [time_diff, score, target_intensity]
     '''
 
-    _, model_intensity, timestamp = expand_model_intensity(model, data, opt)
-                                                                               # [batch_size, seq_len * resolution]
+    _, model_intensity, timestamp = expand_model_intensity(model, data, opt)   # [batch_size, seq_len * resolution]
     time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).squeeze().cpu()       # [batch_size, seq_len]
     true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
@@ -77,7 +76,7 @@ def draw_intensity(model, data, desc, plot_count, opt):
         return 0
 
     timestamp = timestamp.detach().cpu().numpy().cumsum()
-    event = event[:, 1:].squeeze().cpu().numpy()
+    event = event.squeeze().cpu().numpy()
     if true_intensity is not None:
         true_intensity = true_intensity.squeeze().detach().cpu().numpy()
     
@@ -131,7 +130,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_available = ['dwg', 'fullynn', 'rmtpp']
+probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl']
 
 def expand_model_probability(opt):
     if opt.model_name not in probability_available:
@@ -154,23 +153,24 @@ def draw_probability(model, data, desc, plot_count, opt):
         model_probability = model_intensity * torch.exp(-model_intensity_integral)
                                                                                # [batch_size, seq_len * resolution]
     else:
-        model_probability = model.function_prober(data, opt.resolution)        # [batch_size, seq_len * resolution]
+        model_probability, timestamp = \
+            model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
 
     time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().squeeze()       # [batch_size, seq_len]
-    true_probability = expand_true_probability(time, intensity, opt)  # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(time, intensity, opt)           # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
     if np.isnan(model_probability).any():
         '''
-        Model intensity prediction has failed!
+        Model failed the probability prediction!
         '''
         logger.error('We detect NaN in the probability predictions! Please try again after checking the training log and retraining your model.')
         return 0
 
     timestamp = timestamp.detach().cpu().numpy().cumsum()
-    event = event[:, 1:].squeeze().cpu().numpy()
+    event = event.squeeze().cpu().numpy()
     if true_probability is not None:
         true_probability = true_probability.squeeze().detach().cpu().numpy()
     
@@ -210,7 +210,7 @@ def draw_features(model, data, desc, plot_count, opt):
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().squeeze()      # [batch_size, seq_len]
     probed_data, timestamp = model.model_prober(data, opt.resolution)
     timestamp = timestamp.detach().cpu().numpy().cumsum()
-    event = event[:, 1:].squeeze().cpu().numpy()
+    event = event.squeeze().cpu().numpy()
 
     if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(plot_count))):
         os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(plot_count)))
@@ -605,7 +605,8 @@ true_intensity_dict = {
     'hawkes_2': hawkes_2,
     'poisson': poisson,
     'stationary_renewal': stationary_renew,
-    'self_correct': self_correct
+    'self_correct': self_correct,
+    'self_correct_new': self_correct
 }
 
 true_probability_dict = {
@@ -613,7 +614,8 @@ true_probability_dict = {
     'hawkes_2': [hawkes_2, hawkes_2_integral],
     'poisson': [poisson, poisson_integral],
     'stationary_renewal': [stationary_renew_probability],
-    'self_correct': [self_correct, self_correct_integral]
+    'self_correct': [self_correct, self_correct_integral],
+    'self_correct_new': [self_correct, self_correct_integral]
 }
 
 def extract_data(data, opt):
@@ -634,7 +636,7 @@ def extract_data(data, opt):
     return extract_data_from_rawdata[opt.dataloader_name](data)
 
 def syn_extract(raw_data):
-    return raw_data[0], raw_data[1], raw_data[-1]
+    return raw_data[0], raw_data[1][:, 1:], raw_data[-1]
 
 def ctlstm_extract(raw_data):
     return raw_data[0][1][:, :-1], raw_data[2]
@@ -643,7 +645,17 @@ def cnf_extract(raw_data):
     pass
 
 def ifl_extract(raw_data):
-    pass
+    '''
+    Time, event, intensity
+    '''
+    [event, time, mask], score, (mean, var), intensity = raw_data              # [batch_size, seq_len + 1]
+    batch_size = event.shape[0]
+
+    event = event[:, :-1]                                                      # [batch_size, seq_len]
+    time = torch.cat(
+        (torch.zeros(batch_size, 1, device = event.device), time[:, :-1]), dim = -1
+    )                                                                          # [batch_size, seq_len]
+    return time, event, intensity
 
 extract_data_from_rawdata = {
     'syn': syn_extract,

@@ -1,8 +1,9 @@
-import torch
+from numpy.lib.function_base import place
+import torch, os
 import torch.utils as utils
-import os
 import pandas as pd
 import numpy as np
+from ..utils import move_data_to_the_correct_device
 
 def concate(per_line, item1 = np.array([]), item2 = np.array([])):
     return np.concatenate([item1, per_line, item2])
@@ -17,10 +18,13 @@ class IflDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, event_num = 10, have_mask = False, start_time: int = None, end_time: int = None, input_norm_data = True, shift = False):
+    def __init__(self, data, device, event_num = 10, have_mask = False,\
+                 start_time: int = None, end_time: int = None, input_norm_data = True,\
+                 shift = False, plot = False):
         super(IflDataset, self).__init__()
         self.data = data
         self.device = device
+        self.plot = plot
         # All input data has the same sequence length.
         # Use shift if the event sequences don't start at timestamp 0.
         # If enabled, the time interval between the first event and the start will always be 1s.
@@ -39,6 +43,11 @@ class IflDataset(utils.data.Dataset):
             regenerated_data = np.log(regenerated_data.diff(axis = 1) + 1e-8).stack()
             self.mean = regenerated_data.mean()
             self.var = regenerated_data.var()
+        
+        # intensity check.
+        self.has_intensity = False
+        if 'intensity' in self.data.columns:
+            self.has_intensity = True
 
         # Data preprocessing
         self.data.event = self.data.event.apply(concate, item2 = np.array([self.event_num]))
@@ -59,6 +68,8 @@ class IflDataset(utils.data.Dataset):
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
         self.data['mask'] = self.data['mask'].apply(np.array, dtype = np.int8)
+        if self.has_intensity:
+            self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
 
     def __getitem__(self, index):
         # score is the global fact. So we need to modify the first part of the minibatch
@@ -81,12 +92,48 @@ class IflDataset(utils.data.Dataset):
             event_tensor = torch.from_numpy(self.data.iloc[index].event)
             time_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
             mask_tensor = torch.from_numpy(self.data.iloc[index]['mask'])
+            score= torch.from_numpy(self.data.iloc[index].score)
 
-            return [event_tensor, time_tensor, mask_tensor, self.mean, self.var] if self.input_norm_data else [event_tensor, time_tensor, mask_tensor], \
-                   torch.from_numpy(self.data.iloc[index].score)
+            if self.plot:
+                return [event_tensor, time_tensor, mask_tensor], \
+                       score, torch.from_numpy(self.data.iloc[index].intensity)
+            else:
+                return [event_tensor, time_tensor, mask_tensor], score
 
     def __len__(self):
         return self.data.shape[0]
+
+    def __call__(self, data):
+        '''
+        The custom collate_fn() for IFL datasets.
+        '''
+        # stacked_data contains events, timestamps, mask, and intensity(if the original dataset has).
+        stacked_data = []
+        score = []
+
+        if self.plot:
+            intensity = []
+
+        for item in data:
+            stacked_data.append(item[0])
+            score.append(item[1])
+            if self.plot:
+                intensity.append(item[2])
+            
+        from torch.utils.data._utils.collate import default_collate
+        stacked_data = default_collate(stacked_data)
+        score = default_collate(score)
+
+        if self.plot:
+            move = move_data_to_the_correct_device(device = self.device)
+            stacked_data = move.move_to_device(stacked_data)
+            score = score.to(self.device)
+            intensity = default_collate(intensity)
+            intensity = intensity.to(self.device)
+            return stacked_data, score, (self.mean, self.var) if self.input_norm_data else None, intensity
+        else:
+            return stacked_data, score, (self.mean, self.var) if self.input_norm_data else None
+
 
 def read_data(path, file_names):
     data_raw = {}

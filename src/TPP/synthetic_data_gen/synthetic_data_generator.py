@@ -220,7 +220,7 @@ def transform_autoregression(data_input, max_seq):
 dataset_dict = {
     'hawkes_1': generate_hawkes1,
     'hawkes_2': generate_hawkes2,
-    'self_correcting': generate_self_correcting,
+    'self_correct': generate_self_correcting,
     'stationary_renewal': generate_stationary_renewal_intensity,
     'poisson': generate_poisson
 }
@@ -244,21 +244,36 @@ def data_gen(name, dataset, data_size, seq_len, autoregression = False):
         final = transform_autoregression(final, seq_len)
     final.to_json(name + ('_auto' if autoregression else '') + '.json')
 
+def event_gen_ex(size, time):    
+    return np.random.randint(10, size = size)
+
 def event_gen(size, time):
-    time_average = np.mean(time)
-    time_variance = np.var(time)
+    time_diff = np.diff(np.concatenate([np.array([0]), time]))
+    time_diff_mean = time_diff.mean()
+    time_diff_std = time_diff.std()
 
     '''
-    the length of intervals smaller than time_average - time_variance: type 1
-    [time_average - time_variance, time_average + time_variance]: type 2
-    the length of intervals larger than time_average + time_variance: type 3
+    the length of intervals smaller than time_average - time_standard_variance: type 0
+    [time_average - time_standard_variance, time_average - 0.5 * time_standard_variance]: type 1
+    [time_average - 0.5 time_standard_variance, time_average]: type 2
+    [time_average, time_average + 0.5 * time_standard_variance]: type 3
+    [time_average + 0.5 * time_standard_variance, time_average + time_standard_variance]: type 4
+    the length of intervals larger than time_average + time_variance: type 5
     '''
-    return np.random.randint(10, size = size)
+    events = np.zeros(size)
+    events[time_diff < time_diff_mean - time_diff_std] = 0
+    events[((time_diff_mean - time_diff_std) <= time_diff) & (time_diff < (time_diff_mean - 0.5 * time_diff_std))] = 1
+    events[((time_diff_mean - 0.5 * time_diff_std) <= time_diff) & (time_diff < time_diff_mean)] = 2
+    events[(time_diff_mean < time_diff) & (time_diff <= (time_diff_mean + 0.5 * time_diff_std))] = 3
+    events[((time_diff_mean + 0.5 * time_diff_std) <= time_diff) & (time_diff < (time_diff_mean + time_diff_std))] = 4
+    events[time_diff_mean + time_diff_std <= time_diff] = 5
+
+    return events
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--dataset_name', type=str, choices=['hawkes_1', 'hawkes_2', 'poisson', 'self_correcting', 'stationary_renewal'],
+    parser.add_argument('--dataset_name', type=str, choices=['hawkes_1', 'hawkes_2', 'poisson', 'self_correct', 'stationary_renewal'],
                         help="How to generate synthetic temporal point process data.")
     parser.add_argument('--data_type', type=str, choices=['autoregression', 'sequence'],
                         help='Autoregression: Each line of data comprise three parts: history: relative time sequence of history events,\

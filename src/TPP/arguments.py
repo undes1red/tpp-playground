@@ -10,7 +10,9 @@ class TPPArguments(BasicArguments):
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
         self.parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
-        
+        self.parser.add_argument('--custom_collator', action='store_true',\
+                help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
+
         # Model save and log management
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
         

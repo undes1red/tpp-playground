@@ -88,6 +88,7 @@ class LogNormMix(RecurrentTPP):
     def __init__(
         self,
         num_marks: int,
+        device: str,
         mean_log_inter_time: float = 0.0,
         std_log_inter_time: float = 1.0,
         context_size: int = 32,
@@ -102,9 +103,11 @@ class LogNormMix(RecurrentTPP):
             context_size=context_size,
             mark_embedding_size=mark_embedding_size,
             rnn_type=rnn_type,
+            device = device
         )
+        self.device = device
         self.num_mix_components = num_mix_components
-        self.linear = nn.Linear(self.context_size, 3 * self.num_mix_components)
+        self.linear = nn.Linear(self.context_size, 3 * self.num_mix_components, device = self.device)
 
     def get_inter_time_dist(self, context: torch.Tensor) -> torch.distributions.Distribution:
         """
