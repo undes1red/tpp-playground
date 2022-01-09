@@ -6,9 +6,10 @@ from torch import nn
 
 
 class NonNegLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, eps=0.):
-        super(NonNegLinear, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, device, bias=True, eps=0.):
+        super(NonNegLinear, self).__init__(in_features, out_features, bias, device = device)
         self.eps = eps
+        self.device = device
         self.positivify_weights()
 
     def positivify_weights(self):
@@ -24,8 +25,9 @@ class NonNegLinear(nn.Linear):
 
 
 class SigmoidLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True):
-        super(SigmoidLinear, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, device, bias=True):
+        super(SigmoidLinear, self).__init__(in_features, out_features, bias, device = device)
+        self.device = device
         self.positivify_weights()
 
     def positivify_weights(self):
@@ -39,9 +41,10 @@ class SigmoidLinear(nn.Linear):
 
 
 class SoftPlusLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True,
+    def __init__(self, in_features, out_features, device, bias=True,
                  beta=1., threshold=20):
-        super(SoftPlusLinear, self).__init__(in_features, out_features, bias)
+        super(SoftPlusLinear, self).__init__(in_features, out_features, bias, device = device)
+        self.device = device
         self.beta = beta
         self.threshold = threshold
         self.positivify_weights()
@@ -61,10 +64,11 @@ class ClampLinear(nn.Linear):
     Alleviate the negative gradient issue.
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
-    def __init__(self, in_features, out_features, clamp_min = None, bias=True, clamp_max = None):
-        super(ClampLinear, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, device, clamp_min = None, bias=True, clamp_max = None):
+        super(ClampLinear, self).__init__(in_features, out_features, bias, device = device)
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
+        self.device = device
 
         if self.clamp_min or self.clamp_max:
             self.clamp_weights()
@@ -82,9 +86,10 @@ class NonNegNormLinear(nn.Linear):
     Alleviate the negative gradient issue.
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
-    def __init__(self, in_features, out_features, norm_min, bias = None):
-        super(NonNegNormLinear, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, norm_min, device, bias = None):
+        super(NonNegNormLinear, self).__init__(in_features, out_features, bias, device = device)
         self.norm_min = norm_min
+        self.device = device
 
         if self.norm_min:
             self.clamp_weights()

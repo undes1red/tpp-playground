@@ -9,6 +9,8 @@ class RMTPP(BasicModule):
         super(RMTPP, self).__init__()
         self.device = device
         self.increase = increase
+        self.num_events = num_events
+
         self.submodel = RMTPPModule(input_size, hidden_size, num_layers, dropout, num_events, output_size, increase = increase, device = device)
 
     def forward(self, event, time):
@@ -43,8 +45,13 @@ class RMTPP(BasicModule):
         # mark loss
         # Event shape: [batch, seq_length]
         # mark:        [batch, seq_length, num_mark]
-        event_loss = torch.nn.functional.cross_entropy(input = mark.transpose(1, 2), target = event_next.to(self.device).long(), reduction = 'none')
-        event_loss_value = (event_loss).clamp(min = -15, max = 15).sum()
+        if self.num_events > 1:
+            event_loss = torch.nn.functional.cross_entropy(input = mark.transpose(1, 2), \
+                                                           target = event_next.to(self.device).long(), \
+                                                           reduction = 'none')
+            event_loss_value = (event_loss).clamp(min = -15, max = 15).sum()
+        else:
+            event_loss_value = torch.tensor(0., device = self.device)
 
         return time_loss_value, expectation_loss, event_loss_value
 

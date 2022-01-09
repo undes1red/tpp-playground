@@ -232,6 +232,7 @@ def draw_features(model, data, desc, plot_count, opt):
         fig.set_size_inches(length,height)
 
         plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
+        logger.info(f'Debug plot {key} finished drawing.')
         plt.close(fig = fig)
     
 
