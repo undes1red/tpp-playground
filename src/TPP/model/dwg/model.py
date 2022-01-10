@@ -58,18 +58,7 @@ class TemporalModel(BasicModule):
         return time_loss, mae, event_loss
 
     def evaluate(self, event_history, time_history, timestamp):
-        # timestamp.requires_grad = True
-
-        integral, _ = self.model(event_history, time_history, timestamp)       # [batch_size, seq_len]                                                                               # int
-        
-        # intensity = torch.autograd.grad(
-        #     outputs=integral,
-        #     inputs=timestamp,
-        #     grad_outputs=torch.ones_like(integral),
-        #     create_graph=True,
-        # )[0].squeeze(-1)                                                     # [batch_size, seq_len]
-        # check_tensor(intensity)
-        # timestamp.requires_grad = False
+        integral, _ = self.model(event_history, time_history, timestamp)       # [batch_size, seq_len]
 
         return integral
     
@@ -242,13 +231,13 @@ class TemporalModel(BasicModule):
 
     format_dict_length = 4
     
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'event_loss': ':6.5f'}
+    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'event loss': ':6.5f'}
 
     def logfile_print_format(input):
         format_dict = {}
         format_dict['absolute loss'] = input[0]
         format_dict['relative loss'] = input[1]
-        format_dict['event_loss'] = input[2]
+        format_dict['event loss'] = input[2]
         return format_dict
     
     def choose_metric(evaluation_report, test_report):

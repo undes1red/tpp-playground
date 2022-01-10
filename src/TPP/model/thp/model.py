@@ -88,7 +88,7 @@ class THP(BasicModule):
 
 
         '''
-        Obtain values from intensity functions. But why they flitered other intensity values?
+        Obtain values from intensity functions. But why they flitered out other intensity values?
         '''
         type_lambda = torch.sum(F.softplus(history + self.alpha * time.unsqueeze(dim = -1), self.beta) * type_mask, dim=2)
                                                                                # [batch_size, seq_len]
