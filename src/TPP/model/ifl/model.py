@@ -4,7 +4,7 @@ from ..utils import BasicModule
 import torch
 
 class IFL(BasicModule):
-    def __init__(self, num_marks: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
+    def __init__(self, num_events: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
                        context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU",
                        mae_threshold = 2):
         super(IFL, self).__init__()
@@ -12,7 +12,7 @@ class IFL(BasicModule):
         self.mae_threshold = mae_threshold
 
         self.model = LogNormMix(
-            num_marks,
+            num_events + 1,
             self.device,
             mean_log_inter_time,
             std_log_inter_time,

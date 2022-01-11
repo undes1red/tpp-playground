@@ -45,7 +45,7 @@ class TPPTrainer:
         Load model
         '''
         self.model_class = get_model(opt.model_name, rank = rank)
-        model = self.model_class(device = opt.device,
+        model = self.model_class(device = opt.device, num_events = opt.num_events,
             **model_param
         )
     

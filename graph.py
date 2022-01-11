@@ -48,7 +48,6 @@ if __name__ == '__main__':
     model_param = read_json(os.path.join(root, 'config', opt.model_name, opt.model_config))
     param_names = list(model_param.keys())
     opt.__dict__.update(model_param)
-    logger.info(print_args(opt))
 
     # Find the checkpoint file.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', *param_names)
@@ -64,18 +63,10 @@ if __name__ == '__main__':
     if not os.path.exists(opt.store_dir):
         os.makedirs(opt.store_dir)
 
-    # Create model object.
-    model_class = get_model(name = opt.model_name)
-    model = model_class(device = opt.device, **model_param)
-    model.eval()
-
-    # Load model checkpoint.
+    # Load the model training setting.
     model_raw = torch.load(os.path.join(checkpoint_folder, 'checkpoint.chkpt'), map_location=torch.device(opt.device))
     model_state_dict = model_raw['model']
     model_setting = model_raw['settings']
-    model.load_state_dict(model_state_dict)
-    opt.n_worker = model_setting.n_worker
-    logger.info('Model restore completed.')
 
     # we don't need large batch for figure evaluation, so we minimize the batch size to 1.
     opt.batch_size = 1
@@ -87,6 +78,18 @@ if __name__ == '__main__':
     iter_train = iter(train)
     iter_test = iter(test)
     iter_eva = iter(evaluation)
+
+    # Create model object.
+    model_class = get_model(name = opt.model_name)
+    model = model_class(device = opt.device, num_events = opt.num_events, **model_param)
+    model.eval()
+
+    # Load the model checkpoint.
+    model.load_state_dict(model_state_dict)
+    opt.n_worker = model_setting.n_worker
+    logger.info('Model restore completed.')
+    logger.info(print_args(opt))
+
 
     # We will get three records from the training set, test set, and evaluation set, respectively.
     for figure_index in range(opt.figure_count):

@@ -16,8 +16,8 @@ class TemporalModel(BasicModule):
                  no_time_weight,
                  no_scale,
                  device,
+                 num_events,
                  mae_threshold = 2,
-                 num_events = 1,
                  weight_gen_min = None,
                  time_weight_min = None):
         super(TemporalModel, self).__init__()

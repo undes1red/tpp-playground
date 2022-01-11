@@ -34,17 +34,17 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
     data_raw = read_data(opt.data_path, file_names)
     try:
         with open(os.path.join(opt.data_path, 'num_events.txt'), 'r') as f:
-            num_events = int(f.read())
+            opt.num_events = int(f.read())
     except:
         '''
         Assume that no event information is available.
         '''
-        num_events = 1
+        opt.num_events = 1
 
     #========= Preparing dataloaders =========#
-    train = dataset(data_raw['train'], device = opt.device, num_events = num_events, **dataloader_config_dict)
-    evaluate = dataset(data_raw['evaluate'], num_events = num_events, device = opt.device, **dataloader_config_dict)
-    test = dataset(data_raw['test'], num_events = num_events, device = opt.device, **dataloader_config_dict)
+    train = dataset(data_raw['train'], device = opt.device, num_events = opt.num_events, **dataloader_config_dict)
+    evaluate = dataset(data_raw['evaluate'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
+    test = dataset(data_raw['test'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
 
     if opt.custom_collator:
         try:

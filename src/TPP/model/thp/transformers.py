@@ -16,6 +16,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.device = device
         self.d_input = d_input
+        self.num_types = num_types
 
         # position vector, used for temporal encoding
         self.position_vec = torch.tensor(
@@ -23,7 +24,7 @@ class Encoder(nn.Module):
             device=self.device)
 
         # event type embedding
-        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx=PAD, device = self.device)
+        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx = num_types, device = self.device)
 
         self.layer_stack = nn.ModuleList([
             TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
@@ -53,7 +54,7 @@ class Encoder(nn.Module):
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
         self_attn_mask_subseq = get_subsequent_mask(event_time)
-        self_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_time, seq_q=event_time)
+        self_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_time, seq_q=event_time, pad = self.num_types)
         self_attn_mask_keypad = self_attn_mask_keypad.type_as(self_attn_mask_subseq)
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
@@ -120,7 +121,6 @@ class TransformerTPP(nn.Module):
             n_layers, n_head, d_qk, d_v, dropout):
         super(TransformerTPP, self).__init__()
         self.device = device
-
         self.num_types = num_types if num_types > 0 else 1
 
         self.encoder = Encoder(
@@ -158,7 +158,7 @@ class TransformerTPP(nn.Module):
         2. event_type: 
         """
 
-        non_pad_mask = get_non_pad_mask(event_time)                            # [batch_size, seq_len, 1]
+        non_pad_mask = get_non_pad_mask(event_time, self.num_types)            # [batch_size, seq_len, 1]
 
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]

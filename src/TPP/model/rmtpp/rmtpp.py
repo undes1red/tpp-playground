@@ -17,7 +17,8 @@ class RMTPPModule(nn.Module):
         
         # Mark related
         if self.num_events > 1:
-            self.event_embedding = nn.Embedding(num_embeddings = num_events + 1, embedding_dim = input_size, device = self.device)
+            self.event_embedding = nn.Embedding(num_embeddings = num_events + 1, embedding_dim = input_size,\
+                                                padding_idx = num_events, device = self.device)
             self.event_decider = nn.Softmax()
         self.non_neg_activation = nn.Softplus()
         self.increase_or_decrease = 1 if increase else -1

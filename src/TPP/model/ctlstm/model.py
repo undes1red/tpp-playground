@@ -4,11 +4,11 @@ from .ctlstm import CTLSTM
 import torch
 
 class CTLSTMwrapper(BasicModule):
-    def __init__(self, hidden_dim, device, mc_sample_num = 1., event_num = 1, beta = 1):
+    def __init__(self, hidden_dim, device, num_events, mc_sample_num = 1., beta = 1):
         super(CTLSTMwrapper, self).__init__()
         self.device = device
-        self.event_num = event_num
-        self.model = CTLSTM(hidden_dim = hidden_dim, event_num = event_num, beta = beta, device = device, mc_sample_num = mc_sample_num)
+        self.event_num = num_events
+        self.model = CTLSTM(hidden_dim = hidden_dim, event_num = num_events, beta = beta, device = device, mc_sample_num = mc_sample_num)
     
     def forward(self, minibatch, eval_tag, intensity_instead):
         '''

@@ -2,23 +2,21 @@ import math, torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-def get_non_pad_mask(seq):
+def get_non_pad_mask(seq, pad):
     """ Get the non-padding positions. """
 
     assert seq.dim() == 2
-    return seq.ne(PAD).type(torch.float).unsqueeze(-1)                         # [(seq.dim()), 1]
+    return seq.ne(pad).type(torch.float).unsqueeze(-1)                         # [(seq.dim()), 1]
 
 
-def get_attn_key_pad_mask(seq_k, seq_q):
+def get_attn_key_pad_mask(seq_k, seq_q, pad):
     """ For masking out the padding part of key sequence. """
 
     # expand to fit the shape of key query attention matrix
     len_q = seq_q.size(1)
-    padding_mask = seq_k.eq(PAD)
+    padding_mask = seq_k.eq(pad)
     padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1)  # b x lq x lk
     return padding_mask
-
 
 def get_subsequent_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
@@ -28,8 +26,6 @@ def get_subsequent_mask(seq):
         torch.ones((len_s, len_s), device=seq.device, dtype=torch.uint8), diagonal=1)
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
     return subsequent_mask
-
-PAD = 10
 
 
 def compute_event(event, non_pad_mask):

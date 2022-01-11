@@ -6,11 +6,11 @@ from ..utils import BasicModule
 from .utils import *
 
 class THP(BasicModule):
-    def __init__(self, num_types, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
+    def __init__(self, num_events, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 1):
         super(THP, self).__init__()
         self.device = device
-        self.num_types = num_types if num_types > 0 else 1
+        self.num_events = num_events if num_events > 0 else 1
 
         # parameter for the weight of time difference
         self.alpha = nn.Parameter(torch.tensor(-5, dtype = torch.float32, device = self.device, requires_grad = True))
@@ -18,7 +18,7 @@ class THP(BasicModule):
         # parameter for the softplus function
         self.beta = beta
 
-        self.model = TransformerTPP(num_types, device = self.device, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden,\
+        self.model = TransformerTPP(num_events, device = self.device, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden,\
                                     n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout)
     
     '''
@@ -73,7 +73,7 @@ class THP(BasicModule):
         '''
         Currently, we assume no event data is available.
         '''
-        non_pad_mask = get_non_pad_mask(time).squeeze(2)                       # [batch_size, seq_len]
+        non_pad_mask = get_non_pad_mask(time, self.num_events).squeeze(2)                       # [batch_size, seq_len]
     
         if events is not None:
             type_mask = torch.zeros([*events.size(), self.num_types], device=history.device)
