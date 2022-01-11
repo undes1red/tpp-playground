@@ -1,4 +1,4 @@
-import torch, os, importlib
+import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
 
@@ -25,18 +25,26 @@ def find_dataset(name, rank):
 
 
 def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True):
-    file_names = os.listdir(opt.data_path)
+    file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + '/*.json') + glob.glob(opt.data_path + '/*.csv')]
+    
     dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
-
     logger.info(f"Additional dataloader settings from config files: {dataloader_config_dict}")
 
     dataset, read_data = find_dataset(opt.dataloader_name, rank)
     data_raw = read_data(opt.data_path, file_names)
+    try:
+        with open(os.path.join(opt.data_path, 'num_events.txt'), 'r') as f:
+            num_events = int(f.read())
+    except:
+        '''
+        Assume that no event information is available.
+        '''
+        num_events = 1
 
     #========= Preparing dataloaders =========#
-    train = dataset(data_raw['train'], device = opt.device, **dataloader_config_dict)
-    evaluate = dataset(data_raw['evaluate'], device = opt.device, **dataloader_config_dict)
-    test = dataset(data_raw['test'], device = opt.device, **dataloader_config_dict)
+    train = dataset(data_raw['train'], device = opt.device, num_events = num_events, **dataloader_config_dict)
+    evaluate = dataset(data_raw['evaluate'], num_events = num_events, device = opt.device, **dataloader_config_dict)
+    test = dataset(data_raw['test'], num_events = num_events, device = opt.device, **dataloader_config_dict)
 
     if opt.custom_collator:
         try:

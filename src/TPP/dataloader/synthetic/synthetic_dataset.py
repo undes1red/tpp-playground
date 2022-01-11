@@ -13,12 +13,12 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, plot = False, number_of_events = 10):
+    def __init__(self, data, device, num_events, plot = False):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
         self.plot = plot
-        self.number_of_events = number_of_events
+        self.number_of_events = num_events
 
         # Data preprocessing
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)

@@ -18,7 +18,7 @@ class IflDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, event_num = 10, have_mask = False,\
+    def __init__(self, data, device, num_events, have_mask = False,\
                  start_time: int = None, end_time: int = None, input_norm_data = True,\
                  shift = False, plot = False):
         super(IflDataset, self).__init__()
@@ -32,7 +32,7 @@ class IflDataset(utils.data.Dataset):
         self.start_time = start_time if start_time else 0
         self.end_time = end_time if end_time else 350
         self.input_norm_data = input_norm_data
-        self.event_num = event_num
+        self.event_num = num_events
         self.have_mask = have_mask
 
         # Data normalization

@@ -17,17 +17,18 @@ class CTLSTMDataset(utils.data.Dataset):
     You can set event_number = 1 to mask all events by forcing them to have the same label.
     '''
 
-    def __init__(self, data, device, event_number = 10):
+    def __init__(self, data, device, num_events):
         super(CTLSTMDataset, self).__init__()
         self.data = data
         self.device = device
         # All input data has the same sequence length. This sequence length does not contain special start and end events.
         self.sequence_length = len(self.data.iloc[0].time_seq)
         self.token_num_tensor = torch.tensor([self.sequence_length], device = self.device)
-        self.event_number = event_number
+        self.event_number = num_events
 
         # Data preprocessing
         # Add dummy start and end events.
+        # [self.event_number(start dummy events), ...(events), self.event_number + 1(end dummy events)]
         if self.event_number == 1:
             self.data.event = self.data.event.apply(np.zeros_like)
             self.data.event = self.data.event.apply(concate, item1 = np.array([self.event_number]), item2 = np.array([self.event_number + 1]))
@@ -60,7 +61,7 @@ class CTLSTMDataset(utils.data.Dataset):
             event_tensor = torch.from_numpy(self.data.iloc[index].event)
             dtime_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
             intensity_tensor = torch.from_numpy(self.data.iloc[index].intensity)
-            duation_tensor = torch.from_numpy(self.data.iloc[index].duation)
+            duation_tensor = torch.tensor(self.data.iloc[index].duation)
 
             
             return [event_tensor, dtime_tensor, self.token_num_tensor, duation_tensor], \

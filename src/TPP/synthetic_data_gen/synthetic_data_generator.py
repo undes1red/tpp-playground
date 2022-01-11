@@ -233,11 +233,11 @@ def data_gen(name, dataset, data_size, seq_len, autoregression = False):
         gen_seq_len = seq_len
     for i in range(data_size):
         time, score, intensity = dataset_dict[dataset](gen_seq_len)
-        data['index'].append(i)
+        # data['index'].append(i)
         data['time_seq'].append(time.tolist())
         data['score'].append(score.tolist())
         data['intensity'].append(intensity.tolist())
-        data['event'].append(event_gen(size = gen_seq_len, time = time))
+        data['event'].append(event_gen_ex(size = gen_seq_len, time = time))
     
     final = pd.DataFrame.from_dict(data)
     if autoregression:
