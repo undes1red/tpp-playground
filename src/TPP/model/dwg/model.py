@@ -28,11 +28,12 @@ class TemporalModel(BasicModule):
                                 time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
                                 no_time_weight = no_time_weight, no_scale = no_scale, num_events = num_events, device = device)
 
-    def forward(self, time, events, evaluate = False):
+    def forward(self, time, events, mask, evaluate = False):
         time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
-                                                                               # [batch_size, seq_len, 1]
+                                                                               # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(events, unsqueeze = False)
-                                                                               # [batch_size, seq_len]
+                                                                               # 2 * [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
         time_next.requires_grad = True
 
         integral, events_probability = self.model(events_history, time_history, time_next)
@@ -40,7 +41,8 @@ class TemporalModel(BasicModule):
 
         mae = 0
         if evaluate:
-            mae = self.mean_absolute_error(time_history = time_history, events_history = events_history, time_next = time_next)
+            mae = self.mean_absolute_error(time_history = time_history, events_history = events_history,\
+                                           time_next = time_next, mask = mask_next)
         
         intensity = torch.autograd.grad(
             outputs=integral,
@@ -51,11 +53,15 @@ class TemporalModel(BasicModule):
         check_tensor(intensity)
         time_next.requires_grad = False
 
-        time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral)
+        time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, mask = mask_next)
         event_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
-                                                       events_next.reshape(-1).long(), reduction = 'sum')
+                                                       events_next.reshape(-1).long(), reduction = 'none')
+                                                                               # [batch_size * seq_len]
+        event_loss *= mask_next.reshape(-1)
+        event_loss = event_loss.sum()
+        the_number_of_events = mask_next.sum()
 
-        return time_loss, mae, event_loss
+        return time_loss, mae, event_loss, the_number_of_events
 
     def evaluate(self, event_history, time_history, timestamp):
         integral, _ = self.model(event_history, time_history, timestamp)       # [batch_size, seq_len]
@@ -70,7 +76,7 @@ class TemporalModel(BasicModule):
 
         return input_history, input_next
     
-    def mean_absolute_error(self, events_history, time_history, time_next):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -91,8 +97,8 @@ class TemporalModel(BasicModule):
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
         r = 6500.0*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
-        tau_pred = median_prediction(events_history, time_history, l, r)
-        gap = tau_pred - time_next
+        tau_pred = median_prediction(events_history, time_history, l, r)       # [batch_size, seq_len, 1]
+        gap = (tau_pred - time_next).squeeze(-1) * mask                        # [batch_size, seq_len]
         return torch.mean(torch.abs(gap)).item()
 
     # All methods not required by BasicModule are intensity plotter exclusive.
@@ -105,7 +111,7 @@ class TemporalModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, _ = input_data
+        input_time, input_events, _, _, _ = input_data
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
@@ -132,7 +138,7 @@ class TemporalModel(BasicModule):
         device: conduct all computations on cpu, gpu, or other devices
         '''
         self.model.eval()
-        input_time, input_events, _, _ = input_data
+        input_time, input_events, _, _, _ = input_data
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
@@ -145,15 +151,16 @@ class TemporalModel(BasicModule):
 
         return probed_results, timestamp
     
-    def time_loss_f(self, intensity, intensity_integral):
+    def time_loss_f(self, intensity, intensity_integral, mask):
         '''
         The definition of loss.
         '''    
-        log_intensity = torch.log(intensity)
-        log_p = log_intensity - intensity_integral
+        log_intensity = torch.log(intensity)                                   # [batch_size, seq_len]
+        log_p = log_intensity - intensity_integral                             # [batch_size, seq_len]
         
         loss = -log_p
-        loss = torch.clamp(loss, max=10)
+        loss = torch.clamp(loss, max=10)                                       # [batch_size, seq_len]
+        loss *= mask                                                           # [batch_size, seq_len]
         loss = torch.sum(loss)
         return loss
     
@@ -161,19 +168,24 @@ class TemporalModel(BasicModule):
     Static methods
     '''
     def train_step(model, minibatch, device):
-        ''' Epoch operation in training phase'''
-        model.train()
+        '''
+        Epoch operation in training phase
 
-        time_loss, mae, events_loss = model(
-            time = minibatch[0], events = minibatch[1]
+        minibatch: [time_seq, event_seq, score, mask]
+        '''
+        model.train()
+        time_seq, event_seq, score, mask = minibatch
+
+        time_loss, mae, events_loss, the_number_of_events = model(
+            time = time_seq, events = event_seq, mask = mask
         )                                                                      # 2 * [batch_size, seq_len], int, [batch_size, seq_len]
 
         loss = time_loss + events_loss
         loss.backward()
     
-        time_loss = time_loss.item()
-        events_loss = events_loss.item()
-        fact = minibatch[-1].sum()
+        time_loss = time_loss.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum() / the_number_of_events
     
         return time_loss, fact, events_loss
     
@@ -181,14 +193,16 @@ class TemporalModel(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        time_loss, mae, events_loss = model(
-            time = minibatch[0], events = minibatch[1], evaluate = True
+        time_seq, event_seq, score, mask = minibatch
+
+        time_loss, mae, events_loss, the_number_of_events = model(
+            time = time_seq, events = event_seq, mask = mask, evaluate = True
         )                                                                      # [batch_size, seq_len, 1]
     
     
-        time_loss = time_loss.item()
-        events_loss = events_loss.item()
-        fact = minibatch[-1].sum()
+        time_loss = time_loss.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum() / the_number_of_events
 
         return time_loss, fact, events_loss, mae
 

@@ -1,11 +1,18 @@
-import torch
 import torch.utils as utils
 import os
 import pandas as pd
 import numpy as np
+from ..utils import move_data_to_the_correct_device
+
 
 def insert(per_line, number):
     return np.concatenate([np.array([number]), per_line])
+
+def diff(per_line, shift):
+    '''
+    Avoid potential 0 output.
+    '''
+    return np.diff(per_line) + (1e-6 if shift else 0)
 
 class SynDataset(utils.data.Dataset):
     '''
@@ -13,7 +20,7 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, num_events, plot = False):
+    def __init__(self, data, device, num_events, plot = False, shift = False):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
@@ -22,7 +29,7 @@ class SynDataset(utils.data.Dataset):
 
         # Data preprocessing
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
-        self.data.time_seq = self.data.time_seq.apply(np.diff)
+        self.data.time_seq = self.data.time_seq.apply(diff, shift = shift)
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
         self.data.event = self.data.event.apply(insert, number = self.number_of_events)
 
@@ -42,17 +49,48 @@ class SynDataset(utils.data.Dataset):
             ]
         else:
             if self.plot:
-                return torch.from_numpy(self.data.iloc[index].time_seq), \
-                       torch.from_numpy(self.data.iloc[index].event), \
-                       torch.from_numpy(self.data.iloc[index].score),\
-                       torch.from_numpy(self.data.iloc[index].intensity)
+                return self.data.iloc[index].time_seq, \
+                       self.data.iloc[index].event, \
+                       self.data.iloc[index].score,\
+                       self.data.iloc[index].intensity
             else:
-                return torch.from_numpy(self.data.iloc[index].time_seq), \
-                       torch.from_numpy(self.data.iloc[index].event), \
-                       torch.from_numpy(self.data.iloc[index].score)
+                return self.data.iloc[index].time_seq, \
+                       self.data.iloc[index].event, \
+                       self.data.iloc[index].score
 
     def __len__(self):
         return self.data.shape[0]
+    
+    def __call__(self, data):
+        '''
+        The structure of data:
+        [
+            (time_seq, event, score, intensity if self.plot else it doesn't exist at all.)
+        ]
+        '''
+        max_length_of_this_batch = max([item[0].size for item in data])
+        mask = []
+        padded_data = []
+        for item in data:
+            pad_length = max_length_of_this_batch - item[0].size
+            mask = np.array([1] * item[0].size + [0] * pad_length)
+            padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'mean')
+            padded_event = np.pad(item[1], (0, pad_length), mode = 'minimum')
+            padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
+            padded_item = [padded_time_seq, padded_event, padded_score, mask]
+            if self.plot:
+                padded_intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
+                padded_item.append(padded_intensity)
+            
+            padded_data.append(tuple(padded_item))
+        
+        from torch.utils.data._utils.collate import default_collate
+        padded_data = default_collate(padded_data)
+        if self.plot:
+            move = move_data_to_the_correct_device(device = self.device)
+            padded_data = move.move_to_device(padded_data)
+        
+        return padded_data
 
 
 def read_data(path, file_names):

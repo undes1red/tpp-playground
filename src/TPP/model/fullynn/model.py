@@ -25,9 +25,12 @@ class FullyNNModel(BasicModule):
                              dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
                              nonlinear = nonlinear, device = device)
 
-    def forward(self, input_time, input_events, evaluate = False):
+    def forward(self, input_time, input_events, mask, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
+                                                                               # 2 * [batch_size, seq_len, 1]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
 
         time_next.requires_grad = True
 
@@ -35,7 +38,8 @@ class FullyNNModel(BasicModule):
                           self.model(events_history, time_history, time_next)  # [batch_size, seq_len] & [batch_size, seq_len, num_events]
         mae = 0
         if evaluate:
-            mae = self.mean_absolute_error(events_history = events_history, time_history = time_history, time_next = time_next)
+            mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
+                                           time_next = time_next, mask = mask_next)
 
         intensity = torch.autograd.grad(
             outputs=integral,
@@ -48,11 +52,15 @@ class FullyNNModel(BasicModule):
         time_next.requires_grad = False
 
         time_loss = self.time_loss_f(intensity = intensity, \
-                                     intensity_integral = integral)
-        events_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
-                                                        events_next.reshape(-1).long(), reduction = 'sum')
+                                     intensity_integral = integral, mask = mask_next)
+        event_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
+                                                        events_next.reshape(-1).long(), reduction = 'none')
 
-        return time_loss, events_loss, mae
+        event_loss *= mask_next.reshape(-1)
+        event_loss = event_loss.sum()
+        the_number_of_events = mask_next.sum()
+
+        return time_loss, event_loss, mae, the_number_of_events
 
     def evaluate(self, events_history, time_history, taus):
         integral, _ = self.model(events_history, time_history, taus)           # [batch_size, seq_len]                                                                               # int
@@ -66,7 +74,7 @@ class FullyNNModel(BasicModule):
             input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
-    def mean_absolute_error(self, events_history, time_history, time_next):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -87,7 +95,7 @@ class FullyNNModel(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)             # [batch_size, seq_len, 1]
         r = 6500.0*torch.ones_like(time_history, dtype = torch.float32)             # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r)
-        gap = tau_pred - time_next
+        gap = (tau_pred - time_next).squeeze(-1) * mask
         return torch.mean(torch.abs(gap)).item()
 
     # All methods not required by BasicModule are intensity plotter exclusive.
@@ -122,7 +130,6 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time = input_data[0]
         input_time, input_events = input_data[0], input_data[1]
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
@@ -134,20 +141,21 @@ class FullyNNModel(BasicModule):
 
         return probed_results, timestamp
     
-    def time_loss_f(self, intensity, intensity_integral):
+    def time_loss_f(self, intensity, intensity_integral, mask):
         '''
         The definition of loss.
     
         Args:
             intensity:          [batch_size, seq_len]
             intensity_integral: [batch_size, seq_len]
+            mask:               [batch_size, seq_len]
         '''
     
         log_intensity = torch.log(intensity)
         log_p = log_intensity - intensity_integral
     
         loss = -log_p
-        loss = torch.clamp(loss, max=10)
+        loss = torch.clamp(loss, max=10) * mask
         loss = torch.sum(loss)
         return loss
 
@@ -161,19 +169,21 @@ class FullyNNModel(BasicModule):
 
         Args:
             minibatch: [batch_size, seq_len]
+                       contains [time_seq, event_seq, score, mask]
         '''
     
         model.train()
-        time_loss, events_loss, mae = model(         
-                input_time = minibatch[0], input_events = minibatch[1]
+        time_seq, event_seq, score, mask = minibatch
+        time_loss, events_loss, mae, the_number_of_events = model(         
+                input_time = time_seq, input_events = event_seq, mask = mask
         )
 
         loss = time_loss + events_loss
         loss.backward()
     
-        time_loss = time_loss.item()
-        events_loss = events_loss.item()
-        fact = minibatch[-1].sum()
+        time_loss = time_loss.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum() / the_number_of_events
         
         return time_loss, fact, events_loss
     
@@ -181,13 +191,14 @@ class FullyNNModel(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        time_loss, events_loss, mae = model(
-                input_time = minibatch[0], input_events = minibatch[1], evaluate = True
+        time_seq, event_seq, score, mask = minibatch
+        time_loss, events_loss, mae, the_number_of_events = model(
+                input_time = time_seq, input_events = event_seq, mask = mask, evaluate = True
         )
     
-        time_loss = time_loss.item()
-        events_loss = events_loss.item()
-        fact = minibatch[-1].sum()
+        time_loss = time_loss.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum() / the_number_of_events
         
         return time_loss, fact, events_loss, mae
 

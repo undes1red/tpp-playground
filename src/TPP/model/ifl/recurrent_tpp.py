@@ -3,9 +3,6 @@ import torch.nn as nn
 
 from torch.distributions import Categorical
 
-from .utils import diff
-
-
 class RecurrentTPP(nn.Module):
     """
     RNN-based TPP model for marked and unmarked event sequences.
@@ -40,7 +37,7 @@ class RecurrentTPP(nn.Module):
         self.mark_embedding_size = mark_embedding_size
         if self.num_marks > 1:
             self.num_features = 1 + self.mark_embedding_size
-            self.mark_embedding = nn.Embedding(self.num_marks, self.mark_embedding_size, device = self.device)
+            self.mark_embedding = nn.Embedding(self.num_marks + 1, self.mark_embedding_size, device = self.device)
             self.mark_linear = nn.Linear(self.context_size, self.num_marks, device = self.device)
         else:
             self.num_features = 1
@@ -198,7 +195,7 @@ class RecurrentTPP(nn.Module):
         inter_time_dist = self.get_inter_time_dist(context)
         inter_times = time_interval.clamp(1e-10)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
-        log_p = inter_time_dist.log_prob(inter_times)                          # (batch_size, seq_len)
+        log_p = inter_time_dist.log_prob(inter_times)                          # [batch_size, seq_len]
 
         '''
         Survival probability of the last interval (from t_N to t_end).
@@ -206,7 +203,7 @@ class RecurrentTPP(nn.Module):
         for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         but the difference shouldn't be significant if you are working with long sequences.
         '''
-        last_event_idx = mask.sum(-1, keepdim=True).long()                     # (batch_size, 1)
+        last_event_idx = mask.sum(-1, keepdim=True).long()                     # [batch_size, 1]
         log_surv_all = inter_time_dist.log_survival_function(inter_times)
                                                                                # [batch_size, seq_len]
         log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
@@ -216,8 +213,9 @@ class RecurrentTPP(nn.Module):
             mark_logits = torch.log_softmax(self.mark_linear(context), dim=-1) # [batch_size, seq_len, num_marks]
             mark_dist = Categorical(logits=mark_logits)
             log_p += mark_dist.log_prob(event)                                 # [batch_size, seq_len]
-        log_p *= mask                                                          # (batch_size, seq_len)
-        return log_p.sum(-1) + log_surv_last  # (batch_size,)
+        log_p *= mask                                                          # [batch_size, seq_len]
+        the_number_of_events = mask.sum()
+        return log_p.sum(-1) + log_surv_last, the_number_of_events
 
     def log_prob_prober(self, batch, resolution) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences.

@@ -18,9 +18,8 @@ class IflDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, num_events, have_mask = False,\
-                 start_time: int = None, end_time: int = None, input_norm_data = True,\
-                 plot = False):
+    def __init__(self, data, device, num_events, start_time: int = None, \
+                 end_time: int = None, input_norm_data = True, plot = False):
         super(IflDataset, self).__init__()
         self.data = data
         self.device = device
@@ -33,7 +32,6 @@ class IflDataset(utils.data.Dataset):
         self.end_time = end_time if end_time else 350
         self.input_norm_data = input_norm_data
         self.event_num = num_events
-        self.have_mask = have_mask
 
         # Data normalization
         if input_norm_data:
@@ -61,15 +59,10 @@ class IflDataset(utils.data.Dataset):
         Update: self.data['mask'] is only available when the sequence_length is fixed or the original datasets have mask
         already. Otherwise, mask tensors should be generated after __getitem__() finishes, which means in collate_fn().
         '''
-        if self.have_mask:
-            self.data['mask'] = self.data['mask'].apply(concate, item2 = np.zeros(1))
-        else:
-            self.data['mask'] = [np.concatenate((np.ones(self.sequence_length), np.zeros(1)))] * self.data.time_seq.size
         
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
-        self.data['mask'] = self.data['mask'].apply(np.array, dtype = np.int8)
         if self.has_intensity:
             self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
 
@@ -91,16 +84,14 @@ class IflDataset(utils.data.Dataset):
             Seems that t_start and t_end are fixed and stay unchanged unless the dataset get changed.
             finally we should tell the model how many event types the dataset has.(Maybe this can be a model hyperparameter)
             '''
-            event_tensor = torch.from_numpy(self.data.iloc[index].event)
-            time_tensor = torch.from_numpy(self.data.iloc[index].time_seq)
-            mask_tensor = torch.from_numpy(self.data.iloc[index]['mask'])
-            score= torch.from_numpy(self.data.iloc[index].score)
+            event_tensor = self.data.iloc[index].event
+            time_tensor = self.data.iloc[index].time_seq
+            score = self.data.iloc[index].score
 
             if self.plot:
-                return [event_tensor, time_tensor, mask_tensor], \
-                       score, torch.from_numpy(self.data.iloc[index].intensity)
+                return event_tensor, time_tensor, score, self.data.iloc[index].intensity
             else:
-                return [event_tensor, time_tensor, mask_tensor], score
+                return event_tensor, time_tensor, score
 
     def __len__(self):
         return self.data.shape[0]
@@ -108,33 +99,40 @@ class IflDataset(utils.data.Dataset):
     def __call__(self, data):
         '''
         The custom collate_fn() for IFL datasets.
+        data: [event_tensor, time_tensor, score, self.data.iloc[index].intensity if self.plot]
         '''
-        # stacked_data contains events, timestamps, mask, and intensity(if the original dataset has).
-        stacked_data = []
-        score = []
+        max_length_of_this_batch = max([item[0].size for item in data])
+        mask = []
+        padded_data, padded_score = [], []
 
         if self.plot:
             intensity = []
 
         for item in data:
-            stacked_data.append(item[0])
-            score.append(item[1])
+            pad_length = max_length_of_this_batch - item[0].size
+            mask = np.array([1] * item[0].size + [0] * pad_length)
+            padded_time_seq = np.pad(item[1], (0, pad_length), mode = 'mean')
+            padded_event = np.pad(item[0], (0, pad_length), mode = 'minimum')
+            padded_score.append(np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0))
+            padded_item = [padded_event, padded_time_seq, mask]
             if self.plot:
-                intensity.append(item[2])
+                intensity.append(np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0))
+            
+            padded_data.append(tuple(padded_item))
             
         from torch.utils.data._utils.collate import default_collate
-        stacked_data = default_collate(stacked_data)
-        score = default_collate(score)
+        padded_data = default_collate(padded_data)
+        padded_score = default_collate(padded_score)
 
         if self.plot:
             move = move_data_to_the_correct_device(device = self.device)
-            stacked_data = move.move_to_device(stacked_data)
-            score = score.to(self.device)
+            padded_data = move.move_to_device(padded_data)
+            score = padded_score.to(self.device)
             intensity = default_collate(intensity)
             intensity = intensity.to(self.device)
-            return stacked_data, score, (self.mean, self.var) if self.input_norm_data else None, intensity
+            return padded_data, padded_score, (self.mean, self.var) if self.input_norm_data else None, intensity
         else:
-            return stacked_data, score, (self.mean, self.var) if self.input_norm_data else None
+            return padded_data, padded_score, (self.mean, self.var) if self.input_norm_data else None
 
 
 def read_data(path, file_names):

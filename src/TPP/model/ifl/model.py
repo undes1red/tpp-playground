@@ -86,13 +86,13 @@ class IFL(BasicModule):
     
         model.train()
             
-        log_likelihood = model(minibatch)
+        log_likelihood, the_number_of_events = model(minibatch)
     
         loss = loss_f(log_likelihood)
         loss.backward()
     
-        loss = loss.item()
-        fact = minibatch[1].sum()
+        loss = loss.item() / the_number_of_events
+        fact = minibatch[1].sum() / the_number_of_events
     
         return loss, fact
     
@@ -100,12 +100,12 @@ class IFL(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        log_likelihood = model(minibatch)
+        log_likelihood, the_number_of_events = model(minibatch)
     
         loss = loss_f(log_likelihood)
     
-        loss = loss.item()
-        fact = minibatch[1].sum()
+        loss = loss.item() / the_number_of_events
+        fact = minibatch[1].sum() / the_number_of_events
     
         return loss, fact
 

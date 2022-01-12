@@ -44,8 +44,12 @@ intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp', 'rmtpp']
 Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
-    return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution, device = opt.device)
+    try:
+        return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution, device = opt.device)
                                                                                # [batch_size, seq_len * resolution]
+    except:
+        return None
+
 def expand_model_intensity(model, data, opt):
     if opt.model_name in intensity_available:
         return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution]
@@ -109,7 +113,11 @@ def draw_intensity(model, data, desc, plot_count, opt):
 Probability distribution drawing utils
 '''
 def expand_true_probability(time, intensity, opt):
-    functions = true_probability_dict[opt.dataset_name]
+    try:
+        functions = true_probability_dict[opt.dataset_name]
+    except:
+        return None
+        
     if len(functions) == 2:
         '''
         Two functions means you should combine the intensity function and correspounding integral function to

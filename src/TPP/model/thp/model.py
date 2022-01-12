@@ -24,29 +24,36 @@ class THP(BasicModule):
     '''
     Functions for model propagation and evaluation
     '''
-    def forward(self, time, events):
+    def forward(self, time, events, mask):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
         Args:
         1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
+        3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
 
         time_history, events_history = time[:, :-1], events[:, :-1]            # [batch_size, seq_len] * 2
         time_next, events_next = time[:, 1:], events[:, 1:]                    # [batch_size, seq_len] * 2
+        mask_next = mask[:, 1:]
 
         history, (events_pred, time_pred) = \
             self.model(time_history, events_history)                           # 2 * [batch_size, seq_len, num_types]
 
         # temporal point process loss
         log_likeli_loss = self.log_likelihood(
-             history = history, time = time_next, events = events_next
+             history = history, time = time_next, events = events_next, mask = mask_next
         )
         # event loss
-        events_loss = F.cross_entropy(input = events_pred.reshape(-1, 10), target = events_next.reshape(-1).to(torch.long), reduction='sum')
+        events_loss = F.cross_entropy(input = events_pred.reshape(-1, self.num_events),\
+                                      target = events_next.reshape(-1).to(torch.long), reduction='none')
+        events_loss *= mask_next.reshape(-1)
+        events_loss = events_loss.sum()
 
-        return log_likeli_loss, events_loss
+        the_number_of_events = mask_next.sum()
+
+        return log_likeli_loss, events_loss, the_number_of_events
     
     def evaluate(self, time, events):
         '''
@@ -67,17 +74,17 @@ class THP(BasicModule):
     '''
     Loss functions
     '''
-    def log_likelihood(self, history, time, events):
+    def log_likelihood(self, history, time, events, mask):
         """ Log-likelihood of sequence. """
     
         '''
         Currently, we assume no event data is available.
         '''
-        non_pad_mask = get_non_pad_mask(time, self.num_events).squeeze(2)                       # [batch_size, seq_len]
+        non_pad_mask = get_non_pad_mask(time, self.num_events).squeeze(2)      # [batch_size, seq_len]
     
         if events is not None:
-            type_mask = torch.zeros([*events.size(), self.num_types], device=history.device)
-            for i in range(self.num_types):
+            type_mask = torch.zeros([*events.size(), self.num_events], device=history.device)
+            for i in range(self.num_events):
                 type_mask[:, :, i] = (events == i + 1).bool().to(history.device)
                                                                                # [batch_size, seq_len, num_types]
         else:
@@ -94,12 +101,12 @@ class THP(BasicModule):
                                                                                # [batch_size, seq_len]
     
         # event log-likelihood
-        event_ll = compute_event(type_lambda, non_pad_mask)                    # [batch_size, seq_len]
+        event_ll = compute_event(type_lambda, non_pad_mask) * mask             # [batch_size, seq_len]
         event_ll = torch.sum(event_ll, dim=-1)                                 # [batch_size]
     
         # non-event log-likelihood, either numerical integration or MC integration
         # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
-        non_event_ll = self.compute_integral_unbiased(history, time, non_pad_mask, type_mask)
+        non_event_ll = self.compute_integral_unbiased(history, time, non_pad_mask, type_mask) * mask
                                                                                # [batch_size, seq_len]
         non_event_ll = torch.sum(non_event_ll, dim=-1)                         # [batch_size]
     
@@ -130,7 +137,7 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        time, events, _, _ = input_data                                        # 2 * [batch_size, seq_len + 1]
+        time, events, _, _, _ = input_data                                     # 3 * [batch_size, seq_len + 1]
         time_next, events_next = time[:, 1:], events[:, 1:]                    # 2 * [batch_size, seq_len]
 
         batch_size, seq_len = time.shape
@@ -139,8 +146,8 @@ class THP(BasicModule):
 
         # intensity part
         if events is not None:
-            type_mask = torch.zeros([batch_size, seq_len, self.num_types], device=history.device)
-            for i in range(self.num_types):
+            type_mask = torch.zeros([batch_size, seq_len, self.num_events], device=history.device)
+            for i in range(self.num_events):
                 type_mask[:, :, i] = (events_next == i + 1).bool().to(history.device)
                                                                                # [batch_size, seq_len, num_types]
         else:
@@ -177,28 +184,28 @@ class THP(BasicModule):
         Maybe need another function to extract data from minibatches.
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
-        time, event, fact = minibatch                                          # 2 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss = model(time, event)                               # [batch_size, seq_len, 1]
+        time, event, fact, mask = minibatch                                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        tpp_loss, mark_loss, the_number_of_events = model(time, event, mask)
         loss = tpp_loss + mark_loss
         loss.backward()
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
         fact = fact.sum()
     
-        return tpp_loss, mark_loss, fact
+        return tpp_loss / the_number_of_events , mark_loss / the_number_of_events, fact / the_number_of_events
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
 
-        time, event, fact = minibatch                                          # 2 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss = model(time, event)                               # [batch_size, seq_len, 1]
+        time, event, fact, mask = minibatch                                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        tpp_loss, mark_loss, the_number_of_events = model(time, event, mask)
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
         fact = fact.sum()
 
-        return tpp_loss, mark_loss, fact
+        return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, fact / the_number_of_events
 
     def postprocess(input):
         return [input[0], input[0] - input[2], input[1]]

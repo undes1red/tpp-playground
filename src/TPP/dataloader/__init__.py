@@ -26,6 +26,7 @@ def find_dataset(name, rank):
 
 def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True):
     file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + '/*.json') + glob.glob(opt.data_path + '/*.csv')]
+    logger.info(f'There are {len(file_names)} appropriate files in {opt.data_path}.')
     
     dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
     logger.info(f"Additional dataloader settings from config files: {dataloader_config_dict}")
@@ -46,16 +47,14 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
     evaluate = dataset(data_raw['evaluate'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
     test = dataset(data_raw['test'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
 
-    if opt.custom_collator:
-        try:
-            data_collator = getattr(train, '__call__')
-        except:
-            '''
-            This data collator is for data evaluation.
-            '''
-            data_collator = move_data_to_the_correct_device(device = opt.device)
-    else:
-        data_collator = None
+    try:
+        data_collator = getattr(train, '__call__')
+    except:
+        '''
+        This data collator is for data evaluation.
+        '''
+        data_collator = move_data_to_the_correct_device(device = opt.device)
+
 
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()
