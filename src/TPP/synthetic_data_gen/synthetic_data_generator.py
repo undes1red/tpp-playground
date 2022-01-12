@@ -5,7 +5,7 @@
 
 import numpy as np
 import pandas as pd
-import argparse
+import argparse, os
 
 from scipy.stats import lognorm
 from scipy.special import erf
@@ -226,7 +226,7 @@ dataset_dict = {
 }
 
 def data_gen(name, dataset, data_size, seq_len, autoregression = False):
-    data = {'index': [], 'time_seq': [], 'score': [], 'event': [], 'intensity': []}
+    data = {'time_seq': [], 'score': [], 'event': [], 'intensity': []}
     if autoregression:
         gen_seq_len = seq_len * 2
     else:
@@ -237,15 +237,15 @@ def data_gen(name, dataset, data_size, seq_len, autoregression = False):
         data['time_seq'].append(time.tolist())
         data['score'].append(score.tolist())
         data['intensity'].append(intensity.tolist())
-        data['event'].append(event_gen_ex(size = gen_seq_len, time = time))
+        data['event'].append(event_gen(size = gen_seq_len, time = time))
     
     final = pd.DataFrame.from_dict(data)
     if autoregression:
         final = transform_autoregression(final, seq_len)
-    final.to_json(name + ('_auto' if autoregression else '') + '.json')
+    final.to_json(os.path.join('.', opt.dataset_name, name + ('_auto' if autoregression else '') + '.json'))
 
 def event_gen_ex(size, time):    
-    return np.random.randint(10, size = size)
+    return np.random.randint(5, size = size)
 
 def event_gen(size, time):
     time_diff = np.diff(np.concatenate([np.array([0]), time]))
@@ -289,6 +289,12 @@ if __name__ == '__main__':
     parser.add_argument('--random_seed', type=int, help='Global random seed.')
 
     opt = parser.parse_args()
+
+    if not os.path.exists(os.path.join('.', opt.dataset_name)):
+        os.mkdir(os.path.join('.', opt.dataset_name))
+    
+    with open(f'./{opt.dataset_name}/num_events.txt', 'w') as f:
+        f.write(str(6))
 
     np.random.seed(opt.random_seed)
 
