@@ -20,7 +20,7 @@ class IflDataset(utils.data.Dataset):
 
     def __init__(self, data, device, num_events, have_mask = False,\
                  start_time: int = None, end_time: int = None, input_norm_data = True,\
-                 shift = False, plot = False):
+                 plot = False):
         super(IflDataset, self).__init__()
         self.data = data
         self.device = device
@@ -51,15 +51,15 @@ class IflDataset(utils.data.Dataset):
 
         # Data preprocessing
         self.data.event = self.data.event.apply(concate, item2 = np.array([self.event_num]))
-        if shift:
-            self.data.time_seq = self.data.time_seq.apply(concate_shift, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
-        else:
-            self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
+        self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
         self.data.time_seq = self.data.time_seq.apply(np.diff) + 1e-5
 
         '''
         pd.DataFrame already has a method called 'mask', so self.data.mask will fail and
         one should use self.data['mask'] instead.
+
+        Update: self.data['mask'] is only available when the sequence_length is fixed or the original datasets have mask
+        already. Otherwise, mask tensors should be generated after __getitem__() finishes, which means in collate_fn().
         '''
         if self.have_mask:
             self.data['mask'] = self.data['mask'].apply(concate, item2 = np.zeros(1))
