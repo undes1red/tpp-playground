@@ -37,7 +37,7 @@ class RecurrentTPP(nn.Module):
         self.mark_embedding_size = mark_embedding_size
         if self.num_marks > 1:
             self.num_features = 1 + self.mark_embedding_size
-            self.mark_embedding = nn.Embedding(self.num_marks + 1, self.mark_embedding_size, device = self.device)
+            self.mark_embedding = nn.Embedding(self.num_marks, self.mark_embedding_size, device = self.device)
             self.mark_linear = nn.Linear(self.context_size, self.num_marks, device = self.device)
         else:
             self.num_features = 1

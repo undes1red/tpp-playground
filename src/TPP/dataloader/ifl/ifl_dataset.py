@@ -110,7 +110,10 @@ class IflDataset(utils.data.Dataset):
 
         for item in data:
             pad_length = max_length_of_this_batch - item[0].size
-            mask = np.array([1] * item[0].size + [0] * pad_length)
+            '''
+            The final dummy event should be excluded.
+            '''
+            mask = np.array([1] * (item[0].size - 1) + [0] * (pad_length + 1))
             padded_time_seq = np.pad(item[1], (0, pad_length), mode = 'mean')
             padded_event = np.pad(item[0], (0, pad_length), mode = 'minimum')
             padded_score.append(np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0))
