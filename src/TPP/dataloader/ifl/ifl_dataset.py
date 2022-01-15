@@ -40,7 +40,7 @@ class IflDataset(utils.data.Dataset):
             regenerated_data.insert(regenerated_data.columns.size, 'end', self.end_time)
             regenerated_data = np.log(regenerated_data.diff(axis = 1) + 1e-8).stack()
             self.mean = regenerated_data.mean()
-            self.var = regenerated_data.var()
+            self.var = regenerated_data.std()
         
         # intensity check.
         self.has_intensity = False

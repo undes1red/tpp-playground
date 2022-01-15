@@ -45,7 +45,7 @@ Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
     try:
-        return true_intensity_dict[opt.dataset_name](time, intensity, opt.resolution, device = opt.device)
+        return true_intensity_dict[opt.dataset_name.strip('v123456789').strip('_')](time, intensity, opt.resolution, device = opt.device)
                                                                                # [batch_size, seq_len * resolution]
     except:
         return None
@@ -114,7 +114,7 @@ Probability distribution drawing utils
 '''
 def expand_true_probability(time, intensity, opt):
     try:
-        functions = true_probability_dict[opt.dataset_name]
+        functions = true_probability_dict[opt.dataset_name.strip('v123456789').strip('_')]
     except:
         return None
         
@@ -615,7 +615,6 @@ true_intensity_dict = {
     'poisson': poisson,
     'stationary_renewal': stationary_renew,
     'self_correct': self_correct,
-    'self_correct_new': self_correct
 }
 
 true_probability_dict = {
@@ -624,7 +623,6 @@ true_probability_dict = {
     'poisson': [poisson, poisson_integral],
     'stationary_renewal': [stationary_renew_probability],
     'self_correct': [self_correct, self_correct_integral],
-    'self_correct_new': [self_correct, self_correct_integral]
 }
 
 def extract_data(data, opt):
@@ -645,7 +643,8 @@ def extract_data(data, opt):
     return extract_data_from_rawdata[opt.dataloader_name](data)
 
 def syn_extract(raw_data):
-    return raw_data[0], raw_data[1][:, 1:], raw_data[-1]
+    [time_seq, event_seq, score, mask, intensity], (mean, var) = raw_data
+    return time_seq, event_seq[:, 1:], intensity
 
 def ctlstm_extract(raw_data):
     return raw_data[0][1][:, :-1], raw_data[2]

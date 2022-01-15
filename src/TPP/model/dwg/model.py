@@ -28,7 +28,7 @@ class TemporalModel(BasicModule):
                                 time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
                                 no_time_weight = no_time_weight, no_scale = no_scale, num_events = num_events, device = device)
 
-    def forward(self, time, events, mask, evaluate = False):
+    def forward(self, time, events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(events, unsqueeze = False)
@@ -36,13 +36,13 @@ class TemporalModel(BasicModule):
         _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
         time_next.requires_grad = True
 
-        integral, events_probability = self.model(events_history, time_history, time_next)
+        integral, events_probability = self.model(events_history, time_history, time_next, mean, var,)
                                                                                # [batch_size, seq_len] & [batch_size, seq_len, 10]
 
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(time_history = time_history, events_history = events_history,\
-                                           time_next = time_next, mask = mask_next)
+                                           time_next = time_next, mask = mask_next, mean = mean, var = var)
         
         intensity = torch.autograd.grad(
             outputs=integral,
@@ -63,8 +63,9 @@ class TemporalModel(BasicModule):
 
         return time_loss, mae, event_loss, the_number_of_events
 
-    def evaluate(self, event_history, time_history, timestamp):
-        integral, _ = self.model(event_history, time_history, timestamp)       # [batch_size, seq_len]
+    def evaluate(self, event_history, time_history, timestamp, mean, var):
+        integral, _ = self.model(event_history, time_history, timestamp, mean, var)
+                                                                               # [batch_size, seq_len]
 
         return integral
     
@@ -76,20 +77,20 @@ class TemporalModel(BasicModule):
 
         return input_history, input_next
     
-    def mean_absolute_error(self, events_history, time_history, time_next, mask):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        def bisect_target(event_history, time_history, taus):
-            return self.evaluate(event_history, time_history, taus).unsqueeze(-1) - \
+        def bisect_target(event_history, time_history, taus, mean, var):
+            return self.evaluate(event_history, time_history, taus, mean, var).unsqueeze(-1) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
                                                                                # [batch_size, seq_len, 1]
         
-        def median_prediction(events_history, time_history, l, r):
+        def median_prediction(events_history, time_history, l, r, mean, var):
             for _ in range(30):
                 c = (l + r)/2
-                v = bisect_target(events_history, time_history, c)
+                v = bisect_target(events_history, time_history, c, mean, var)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
 
@@ -97,7 +98,8 @@ class TemporalModel(BasicModule):
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
         r = 6500.0*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
-        tau_pred = median_prediction(events_history, time_history, l, r)       # [batch_size, seq_len, 1]
+        tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
+                                                                               # [batch_size, seq_len, 1]
         gap = (tau_pred - time_next).squeeze(-1) * mask                        # [batch_size, seq_len]
         return torch.mean(torch.abs(gap)).item()
 
@@ -111,7 +113,7 @@ class TemporalModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, _, _ = input_data
+        [input_time, input_events, _, _, _] , (mean, var) = input_data
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
@@ -119,7 +121,7 @@ class TemporalModel(BasicModule):
 
         integral, intensity, timestamp = self.model.intensity(time_history = time_history,\
                                                               time_next = time_next, event_history = event_history,\
-                                                              resolution = resolution)
+                                                              resolution = resolution, mean = mean, var = var)
                                                                                # 3 * [batch_size, seq_len * resolution, 1]
         check_tensor(intensity)
         assert intensity.shape == integral.shape
@@ -138,7 +140,7 @@ class TemporalModel(BasicModule):
         device: conduct all computations on cpu, gpu, or other devices
         '''
         self.model.eval()
-        input_time, input_events, _, _, _ = input_data
+        [input_time, input_events, _, _, _], (mean, var) = input_data
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
@@ -146,7 +148,7 @@ class TemporalModel(BasicModule):
 
         probed_results, timestamp = self.model.model_probe_function(time_history = time_history,\
                                                                     time_next = time_next, event_history = event_history,\
-                                                                    resolution = resolution)
+                                                                    resolution = resolution, mean = mean, var = var)
                                                                                # 3 * [batch_size, seq_len * resolution, 1]
 
         return probed_results, timestamp
@@ -155,12 +157,11 @@ class TemporalModel(BasicModule):
         '''
         The definition of loss.
         '''    
-        log_intensity = torch.log(intensity)                                   # [batch_size, seq_len]
+        log_intensity = torch.log(intensity + 1e-6)                            # [batch_size, seq_len]
         log_p = log_intensity - intensity_integral                             # [batch_size, seq_len]
         
         loss = -log_p
-        loss = torch.clamp(loss, max=10)                                       # [batch_size, seq_len]
-        loss *= mask                                                           # [batch_size, seq_len]
+        loss = torch.clamp(loss, max=15) * mask                                # [batch_size, seq_len]
         loss = torch.sum(loss)
         return loss
     
@@ -174,10 +175,10 @@ class TemporalModel(BasicModule):
         minibatch: [time_seq, event_seq, score, mask]
         '''
         model.train()
-        time_seq, event_seq, score, mask = minibatch
+        [time_seq, event_seq, score, mask], (mean, var) = minibatch
 
         time_loss, mae, events_loss, the_number_of_events = model(
-            time = time_seq, events = event_seq, mask = mask
+            time = time_seq, events = event_seq, mask = mask, mean = mean, var = var
         )                                                                      # 2 * [batch_size, seq_len], int, [batch_size, seq_len]
 
         loss = time_loss + events_loss
@@ -193,10 +194,10 @@ class TemporalModel(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        time_seq, event_seq, score, mask = minibatch
+        [time_seq, event_seq, score, mask], (mean, var) = minibatch
 
         time_loss, mae, events_loss, the_number_of_events = model(
-            time = time_seq, events = event_seq, mask = mask, evaluate = True
+            time = time_seq, events = event_seq, mask = mask, evaluate = True, mean = mean, var = var
         )                                                                      # [batch_size, seq_len, 1]
     
     

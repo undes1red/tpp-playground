@@ -1,5 +1,5 @@
 import torch.utils as utils
-import os
+import os, math
 import pandas as pd
 import numpy as np
 from ..utils import move_data_to_the_correct_device
@@ -20,18 +20,30 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, num_events, plot = False, shift = False):
+    def __init__(self, data, device, num_events, plot = False, shift = False, input_norm_data = False):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
         self.plot = plot
         self.number_of_events = num_events
+        self.mean = 0
+        self.var = 1
 
         # Data preprocessing
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
         self.data.time_seq = self.data.time_seq.apply(diff, shift = shift)
+        # if input_norm_data:
+        #     self.data.time_seq = self.data.time_seq.apply(math.log)
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
         self.data.event = self.data.event.apply(insert, number = self.number_of_events)
+
+        # Data normalization
+        # We need it because several datasets' inputs are just so huge that several model can never handle it.
+        if input_norm_data:
+            regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())
+            regenerated_data = (regenerated_data + 1e-8).stack()
+            self.mean = regenerated_data.mean()
+            self.var = regenerated_data.std()
 
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
@@ -90,7 +102,7 @@ class SynDataset(utils.data.Dataset):
             move = move_data_to_the_correct_device(device = self.device)
             padded_data = move.move_to_device(padded_data)
         
-        return padded_data
+        return padded_data, (self.mean, self.var)
 
 
 def read_data(path, file_names):

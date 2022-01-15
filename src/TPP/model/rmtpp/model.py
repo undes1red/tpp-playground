@@ -13,15 +13,18 @@ class RMTPP(BasicModule):
 
         self.submodel = RMTPPModule(input_size, hidden_size, num_layers, dropout, num_events, output_size, increase = increase, device = device)
 
-    def forward(self, event, time):
+    def forward(self, event, time, mean, var, mask):
         event_history, _ = self.divide_history_and_next(event, unsqueeze = False)
                                                                                # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
 
-        intensity, integral, mark, expectation, constant = self.submodel(event_history, time_history, time_next)
+        intensity, integral, mark, expectation, constant = self.submodel(event_history, time_history, time_next, mean, var)
 
-        return intensity, integral, mark, expectation, constant
+        time_loss, event_loss, event_loss_value, the_number_of_events =\
+                    self.loss_f(intensity, integral, mark, expectation, time, event, mask)
+
+        return time_loss, event_loss, event_loss_value, the_number_of_events, constant
 
     def divide_history_and_next(self, input, unsqueeze):
         history, next = input.clone()[:, :-1], input.clone()[:, 1:]
@@ -41,8 +44,8 @@ class RMTPP(BasicModule):
         event_next = event_next.to(self.device)
         time_next = time_next.to(self.device)
 
-        time_loss = -torch.log(intensity) + integral                           # [batch_size, seq_len, 1]
-        time_loss_value = time_loss.clamp(min = -15, max = 15).squeeze(-1) * mask_next
+        time_loss = -torch.log(intensity + 1e-6) + integral                    # [batch_size, seq_len, 1]
+        time_loss_value = time_loss.clamp(max = 5).squeeze(-1) * mask_next
         time_loss_value = time_loss_value.sum()
         # expectation loss
         expectation = torch.gather(expectation, -1, event_next.long().unsqueeze(-1))
@@ -67,12 +70,12 @@ class RMTPP(BasicModule):
         return time_loss_value, expectation_loss, event_loss_value, mask_next.sum()
 
     def function_prober(self, data, resolution):
-        time, event, _, _, _ = data                                               # 2 * [batch_size, seq_len + 1]
+        time, event, _, _, _, (mean, var) = data                               # 2 * [batch_size, seq_len + 1]
         event_history, _ = self.divide_history_and_next(event, unsqueeze = False)
                                                                                # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
-        intensity, integral, timestamp = self.submodel.intensity_integral(event_history, time_history, time_next, resolution)
+        intensity, integral, timestamp = self.submodel.intensity_integral(event_history, time_history, time_next, resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len * resolution]
         
         return integral, intensity, timestamp
@@ -81,12 +84,10 @@ class RMTPP(BasicModule):
     def train_step(model, minibatch, device):
         model.train()
         
-        time, event, score, mask = minibatch                                   # 4 * [batch_size, seq_len + 1]
-        intensity, integral, mark, expectation, constant = model(event, time)
-        time_loss, expectation_loss, event_loss, the_number_of_events\
-                                       = model.module.loss_f(intensity, integral,\
-                                                             mark, expectation,\
-                                                             time, event, mask)
+        [time, event, score, mask], (mean, var) = minibatch                    # 4 * [batch_size, seq_len + 1]
+        time_loss, expectation_loss, event_loss, the_number_of_events, constant\
+            = model(event, time, mean, var, mask)
+
         loss = time_loss + event_loss
         loss.backward()
 
@@ -101,12 +102,9 @@ class RMTPP(BasicModule):
     def evaluation_step(model, minibatch, device):
         model.eval()
 
-        time, event, score, mask = minibatch                                   # 4 * [batch_size, seq_len + 1]
-        intensity, integral, mark, expectation, constant = model(event, time)
-        time_loss, expectation_loss, event_loss, the_number_of_events\
-                                       = model.module.loss_f(intensity, integral,\
-                                                             mark, expectation,\
-                                                             time, event, mask)
+        [time, event, score, mask], (mean, var) = minibatch                    # 4 * [batch_size, seq_len + 1]
+        time_loss, expectation_loss, event_loss, the_number_of_events, constant\
+            = model(event, time, mean, var, mask)
 
         fact = score.sum().item() / the_number_of_events
         time_loss_item = time_loss.item() / the_number_of_events

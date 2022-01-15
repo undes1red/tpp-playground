@@ -102,15 +102,14 @@ class THP(BasicModule):
     
         # event log-likelihood
         event_ll = compute_event(type_lambda, non_pad_mask) * mask             # [batch_size, seq_len]
-        event_ll = torch.sum(event_ll, dim=-1)                                 # [batch_size]
     
         # non-event log-likelihood, either numerical integration or MC integration
         # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
         non_event_ll = self.compute_integral_unbiased(history, time, non_pad_mask, type_mask) * mask
                                                                                # [batch_size, seq_len]
-        non_event_ll = torch.sum(non_event_ll, dim=-1)                         # [batch_size]
+        ll = (event_ll - non_event_ll).clamp(min = -5)                        # [batch_size, seq_len]
     
-        event_loss = -torch.sum(event_ll - non_event_ll)
+        event_loss = -torch.sum(ll)
         return event_loss
     
     def compute_integral_unbiased(self, history, time, non_pad_mask, type_mask):
@@ -137,7 +136,7 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        time, events, _, _, _ = input_data                                     # 3 * [batch_size, seq_len + 1]
+        time, events, _, _, _ = input_data[0]                                  # 3 * [batch_size, seq_len + 1]
         time_next, events_next = time[:, 1:], events[:, 1:]                    # 2 * [batch_size, seq_len]
 
         batch_size, seq_len = time.shape
@@ -184,7 +183,7 @@ class THP(BasicModule):
         Maybe need another function to extract data from minibatches.
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
-        time, event, fact, mask = minibatch                                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        time, event, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         tpp_loss, mark_loss, the_number_of_events = model(time, event, mask)
         loss = tpp_loss + mark_loss
         loss.backward()
@@ -199,7 +198,7 @@ class THP(BasicModule):
     
         model.eval()
 
-        time, event, fact, mask = minibatch                                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        time, event, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         tpp_loss, mark_loss, the_number_of_events = model(time, event, mask)
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()

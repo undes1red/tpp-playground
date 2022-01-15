@@ -58,13 +58,17 @@ class FullyNN(nn.Module):
         self.event_decider = nn.Softmax(dim = -1)
 
 
-    def forward(self, events_history, time_history, time_next):
+    def forward(self, events_history, time_history, time_next, mean, var):
         '''
         Args:
             events_history: [batch_size, seq_len]
             time_history:   [batch_size, seq_len, 1]
             time_next:      [batch_size, seq_len, 1]
         '''
+        # Input data normalization
+        time_history = (time_history - mean) / var
+        time_next = (time_next - mean) / var
+
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history = torch.cat(
             (events_embeddings, time_history), dim = -1
@@ -88,7 +92,7 @@ class FullyNN(nn.Module):
 
         return integral, events
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution):
+    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -96,6 +100,12 @@ class FullyNN(nn.Module):
         time_next:    [batch_size, seq_len, 1]
         resolution:   int
         '''
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
+        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_history = (time_history - mean) / var
+        time_next = (time_next - mean) / var
+
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history = torch.cat(
             (events_embeddings, time_history), dim = -1
@@ -107,8 +117,7 @@ class FullyNN(nn.Module):
 
         hidden_expand = hidden.unsqueeze(2).repeat(1, 1, resolution, 1, 1)\
                               .reshape(batch_size, -1, num_events, d_intensity)# [batch_size, seq_len * resolution, num_events, d_intensity]
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-                                                                               # [resolution]
+
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]
@@ -130,15 +139,18 @@ class FullyNN(nn.Module):
             create_graph=True,
         )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution]
         time_expand.requires_grad = False
-        timestamp = time_expand.reshape(batch_size, seq_len, resolution)       # [batch_size, seq_len, resolution]
+
+        '''
+        Restore the original timestamp
+        '''
         timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         return expand_integral, expand_intensity, timestamp
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -146,6 +158,12 @@ class FullyNN(nn.Module):
         time_next:    [batch_size, seq_len, 1]
         resolution:   int
         '''
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
+        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_history = (time_history - mean) / var
+        time_next = (time_next - mean) / var
+
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history = torch.cat(
             (events_embeddings, time_history), dim = -1
@@ -157,8 +175,7 @@ class FullyNN(nn.Module):
 
         hidden_expand = hidden.unsqueeze(2).repeat(1, 1, resolution, 1, 1)\
                               .reshape(batch_size, -1, num_events, d_intensity)# [batch_size, seq_len * resolution, num_events, d_intensity]
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-                                                                               # [resolution]
+
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         emb_time_expand = self.hidden_x(time_expand)                           # [batch_size, seq_len * resolution, d_intensity]
@@ -175,10 +192,8 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len * resolution, num_events]
         expand_integral = expand_integral_foreach_event.sum(dim = -1)          # [batch_size, seq_len * resolution]
 
-        timestamp = time_expand.reshape(batch_size, seq_len, resolution)
-                                                                               # [batch_size, seq_len, resolution]
         timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 

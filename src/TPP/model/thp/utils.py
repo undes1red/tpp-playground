@@ -31,8 +31,8 @@ def get_subsequent_mask(seq):
 def compute_event(event, non_pad_mask):
     """ Log-likelihood of events. """
 
-    # add 1e-9 in case some events have 0 likelihood
-    event += math.pow(10, -9)
+    # add 1e-6 in case some events have 0 likelihood
+    event += math.pow(10, -6)
     event.masked_fill_(~non_pad_mask.bool(), 1.0)
 
     result = torch.log(event)

@@ -58,7 +58,7 @@ class DynamicMLP(nn.Module):
             self.activate_time_factor = nn.Parameter(torch.tensor([0.], device = self.device))
             self.activate_factor = nn.Parameter(torch.zeros(mlp_layers, device = self.device))
 
-    def forward(self, event_history, time_history, time_next):
+    def forward(self, event_history, time_history, time_next, mean, var):
         '''
         So the timeline should be divided into several parts.
         First, a fixed number of previous time points are choosed and feeded into LSTM, then the histiory embedding is used to generate
@@ -70,6 +70,9 @@ class DynamicMLP(nn.Module):
             time_history:  [batch_size, seq_len, 1]
             time_next:     [batch_size, seq_len, 1]
         '''
+        time_history = time_history / var
+        time_next = time_next / var
+
         # generate time
         time_outside = self.time_outside(time_next)                            # [batch_size, seq_len, d_history]
 
@@ -114,7 +117,7 @@ class DynamicMLP(nn.Module):
     def show_activate_factor(self):
         return F.softplus(self.activate_factor)
 
-    def intensity(self, event_history, time_history, time_next, resolution):
+    def intensity(self, event_history, time_history, time_next, resolution, mean, var):
         '''
         Model intensity prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -123,6 +126,12 @@ class DynamicMLP(nn.Module):
         time_next:    [batch_size, seq_len, 1]
         resolution:   int
         '''
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+                                                                               # [resolution]
+        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_history = time_history / var
+        time_next = time_next / var
+
         event_history_embedding = self.events(event_history)                   # [batch_size, seq_len, d_history]
         history = torch.cat([
             event_history_embedding, time_history
@@ -132,8 +141,7 @@ class DynamicMLP(nn.Module):
 
         history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
                                                                                # [batch_size, seq_len * resolution, d_history]
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-                                                                               # [resolution]
+
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
@@ -168,16 +176,14 @@ class DynamicMLP(nn.Module):
         )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = False
 
-        timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
-                                                                               # [batch_size, seq_len, resolution]
         timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         return integral, intensity, timestamp
 
-    def model_probe_function(self, event_history, time_history, time_next, resolution):
+    def model_probe_function(self, event_history, time_history, time_next, resolution, mean, var):
         '''
         Model intensity prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -186,6 +192,11 @@ class DynamicMLP(nn.Module):
         time_next:    [batch_size, seq_len, 1]
         resolution:   int
         '''
+        time_multiplier = torch.linspace(0, 1, resolution, device=self.device) # [resolution]
+        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_history = time_history / var
+        time_next = time_next / var
+
         # Part 1: forward propagation.
         event_history_embedding = self.events(event_history)                   # [batch_size, seq_len, d_history]
         history = torch.cat([
@@ -196,7 +207,6 @@ class DynamicMLP(nn.Module):
 
         history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
                                                                                # [batch_size, seq_len * resolution, d_history]
-        time_multiplier = torch.linspace(0, 1, resolution, device=self.device) # [resolution]
         time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
         time_expand.requires_grad = True
         time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
@@ -231,10 +241,8 @@ class DynamicMLP(nn.Module):
             create_graph = True
         )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution]
 
-        timestamp = time_expand.squeeze().reshape(batch_size, seq_len, resolution)
-                                                                               # [batch_size, seq_len, resolution]
         timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), timestamp.diff(dim = -1)),
+            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
