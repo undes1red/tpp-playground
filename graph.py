@@ -46,11 +46,12 @@ if __name__ == '__main__':
     opt.device = 'cuda' if opt.cuda and torch.cuda.is_available() else 'cpu'
     opt.data_path = os.path.join(root, 'data', 'inputs', opt.dataset_name)
     model_param = read_json(os.path.join(root, 'config', opt.model_name, opt.model_config))
+    opt.model_config = os.path.basename(os.path.join(root, 'config', opt.model_name, opt.model_config))
     param_names = list(model_param.keys())
     opt.__dict__.update(model_param)
 
     # Find the checkpoint file.
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', *param_names)
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
     folder_suffix = 'output_' + model_hyperparameters
     checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
     logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')

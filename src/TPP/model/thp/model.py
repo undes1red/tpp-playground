@@ -107,7 +107,7 @@ class THP(BasicModule):
         # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
         non_event_ll = self.compute_integral_unbiased(history, time, non_pad_mask, type_mask) * mask
                                                                                # [batch_size, seq_len]
-        ll = (event_ll - non_event_ll).clamp(min = -5)                        # [batch_size, seq_len]
+        ll = (event_ll - non_event_ll).clamp(min = -15)                        # [batch_size, seq_len]
     
         event_loss = -torch.sum(ll)
         return event_loss

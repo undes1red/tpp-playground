@@ -1,4 +1,4 @@
-from .submodel import FullyNN
+from .submodel import FullyNN, InvertedBottleneck
 from ..utils import BasicModule
 import torch
 
@@ -24,37 +24,44 @@ class FullyNNModel(BasicModule):
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
                              dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
                              nonlinear = nonlinear, device = device)
+        self.inv_neck = InvertedBottleneck(self.num_events, self.num_events * 4, device = device)
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len, 1]
-        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
+                                                                               # 2 * [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
-        time_next.requires_grad = True
-
-        integral, events_probability = \
-                          self.model(events_history, time_history, time_next, mean = mean, var = var)
-                                                                               # [batch_size, seq_len] & [batch_size, seq_len, num_events]
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                            time_next = time_next, mask = mask_next, mean = mean, var = var)
 
-        intensity = torch.autograd.grad(
-            outputs=integral,
-            inputs=time_next,
-            grad_outputs=torch.ones_like(integral),
-            create_graph=True,
-        )[0].squeeze(-1)                                                       # [batch_size, seq_len]
-        check_tensor(intensity)
+        # preparing for multi-event training
+        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
+        time_next.requires_grad = True
+
+        integral = self.model(events_history, time_history, time_next, mean = mean, var = var)
+                                                                               # [batch_size, seq_len]
+        # Intensity values and their sum.
+        intensity_for_each_event = torch.autograd.grad(
+            outputs = integral,
+            inputs = time_next,
+            grad_outputs = torch.ones_like(integral),
+            create_graph = True,
+        )[0]                                                                   # [batch_size, seq_len, num_events]
+        check_tensor(intensity_for_each_event)
+        choose_events = self.inv_neck(intensity_for_each_event)                # [batch_size, seq_len, num_events]
+        event_probability = torch.nn.functional.softmax(choose_events, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
+        intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
         assert intensity.shape == integral.shape
         time_next.requires_grad = False
 
         time_loss = self.time_loss_f(intensity = intensity, \
                                      intensity_integral = integral, mask = mask_next)
-        event_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
+        event_loss = torch.nn.functional.cross_entropy(event_probability.reshape(-1, self.num_events), \
                                                         events_next.reshape(-1).long(), reduction = 'none')
 
         event_loss *= mask_next.reshape(-1)
@@ -64,7 +71,8 @@ class FullyNNModel(BasicModule):
         return time_loss, event_loss, mae, the_number_of_events
 
     def evaluate(self, events_history, time_history, taus, mean, var):
-        integral, _ = self.model(events_history, time_history, taus, mean, var)# [batch_size, seq_len]                                                                               # int
+        integral = self.model(events_history, time_history, \
+            taus.repeat(1, 1, self.num_events), mean, var)                     # [batch_size, seq_len]                                                                               # int
 
         return integral
 
@@ -85,7 +93,7 @@ class FullyNNModel(BasicModule):
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
-            for _ in range(30):
+            for _ in range(50):
                 c = (l + r)/2
                 v = bisect_target(events_history, time_history, c, mean, var)
                 l = torch.where(v < 0, c, l)
@@ -94,7 +102,7 @@ class FullyNNModel(BasicModule):
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
-        r = 6500.0*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
         gap = (tau_pred - time_next).squeeze(-1) * mask
         return torch.mean(torch.abs(gap)).item()

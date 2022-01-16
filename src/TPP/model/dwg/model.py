@@ -34,23 +34,26 @@ class TemporalModel(BasicModule):
         events_history, events_next = self.divide_history_and_next(events, unsqueeze = False)
                                                                                # 2 * [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
-        time_next.requires_grad = True
-
-        integral, events_probability = self.model(events_history, time_history, time_next, mean, var,)
-                                                                               # [batch_size, seq_len] & [batch_size, seq_len, 10]
 
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(time_history = time_history, events_history = events_history,\
                                            time_next = time_next, mask = mask_next, mean = mean, var = var)
         
-        intensity = torch.autograd.grad(
+        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
+        time_next.requires_grad = True
+        integral = self.model(events_history, time_history, time_next, mean, var,)
+                                                                               # [batch_size, seq_len, num_events]
+        intensity_per_event = torch.autograd.grad(
             outputs=integral,
             inputs=time_next,
             grad_outputs=torch.ones_like(integral),
             create_graph=True,
-        )[0].squeeze(-1)                                                       # [batch_size, seq_len]
-        check_tensor(intensity)
+        )[0]                                                                   # [batch_size, seq_len, num_events]
+        check_tensor(intensity_per_event)
+        intensity = intensity_per_event.sum(dim = -1)                          # [batch_size, seq_len]
+        events_probability = torch.nn.functional.softmax(intensity_per_event, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
         time_next.requires_grad = False
 
         time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, mask = mask_next)
@@ -64,7 +67,7 @@ class TemporalModel(BasicModule):
         return time_loss, mae, event_loss, the_number_of_events
 
     def evaluate(self, event_history, time_history, timestamp, mean, var):
-        integral, _ = self.model(event_history, time_history, timestamp, mean, var)
+        integral = self.model(event_history, time_history, timestamp.repeat(1, 1, self.num_events), mean, var)
                                                                                # [batch_size, seq_len]
 
         return integral
@@ -88,7 +91,7 @@ class TemporalModel(BasicModule):
                                                                                # [batch_size, seq_len, 1]
         
         def median_prediction(events_history, time_history, l, r, mean, var):
-            for _ in range(30):
+            for _ in range(50):
                 c = (l + r)/2
                 v = bisect_target(events_history, time_history, c, mean, var)
                 l = torch.where(v < 0, c, l)
@@ -97,7 +100,7 @@ class TemporalModel(BasicModule):
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
-        r = 6500.0*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
                                                                                # [batch_size, seq_len, 1]
         gap = (tau_pred - time_next).squeeze(-1) * mask                        # [batch_size, seq_len]

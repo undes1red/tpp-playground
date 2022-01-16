@@ -53,8 +53,10 @@ class TPPArguments(BasicArguments):
         opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
         opt.log = os.path.join(root_path, 'log', opt.dataset_name)
         opt.save_model = os.path.join(root_path, 'data', 'outputs', opt.dataset_name)
-        opt.model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json)
+        opt.abs_model_json = os.path.join(root_path, 'config', opt.model_name, opt.model_json) if opt.model_json else None
+        opt.model_json = os.path.basename(opt.abs_model_json) if opt.model_json else None
         opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
         opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+        opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
 
         return opt

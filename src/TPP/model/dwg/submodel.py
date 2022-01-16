@@ -33,11 +33,11 @@ class DynamicMLP(nn.Module):
         # self.weight_gen = NonNegLinear(1, d_intensity,bias=True)
         # Should we use the output of LSTM as the weight of the dynamic linear layer?
         # self.time_weight = nn.Linear(1, d_history, bias=True)
-        self.time_weight = ClampLinear(1, d_history, clamp_min = time_weight_min, bias = True, device = self.device)
+        self.time_weight = ClampLinear(self.num_events, d_history, clamp_min = time_weight_min, bias = True, device = self.device, embedding_like = True)
         # self.time_weight = NonNegLinear(1, d_history,bias=True)
 
         # Non-negative time encoder part 2.
-        self.time_outside = NonNegLinear(1, d_history, bias = False, device = self.device)
+        self.time_outside = NonNegLinear(self.num_events, d_history, bias = False, device = self.device, embedding_like = True)
 
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = False, device = self.device) for _ in range(mlp_layers)
@@ -68,19 +68,19 @@ class DynamicMLP(nn.Module):
         Args:
             event_history: [batch_size, seq_len, 1]
             time_history:  [batch_size, seq_len, 1]
-            time_next:     [batch_size, seq_len, 1]
+            time_next:     [batch_size, seq_len, num_events]
         '''
         time_history = time_history / var
         time_next = time_next / var
 
         # generate time
-        time_outside = self.time_outside(time_next)                            # [batch_size, seq_len, d_history]
+        time_outside = self.time_outside(time_next)                            # [batch_size, seq_len, num_events, d_history]
 
         # Let the weight change with the input time.
         # We discover that the intensity may be affected and start increasing when the relative time is too big.
         # Try to add a concave activation here, like log
         time_weight = self.time_weight(self.activate_time(
-            F.softplus(self.activate_time_factor) * time_next))                # [batch_size, seq_len, d_history]
+            F.softplus(self.activate_time_factor) * time_next))                # [batch_size, seq_len, num_events, d_history]
         
         event_history_embedding = self.events(event_history)                   # [batch_size, seq_len, d_history]
         history = torch.cat([
@@ -89,16 +89,15 @@ class DynamicMLP(nn.Module):
         
         # weight generation
         output, (_, _) = self.history(history)                                 # [batch_size, seq_len, d_history]
-        hidden = output + time_weight \
-                    if not self.no_time_weight else torch.zeros_like(output)   # [batch_size, seq_len, d_history]
-        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len, d_history, 1]  
-        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len, d_history, d_intensity]
-        time_weight = self.activate(time_weight)                               # [batch_size, seq_len, d_history, d_intensity]
+        hidden = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1) + time_weight \
+                    if not self.no_time_weight else torch.zeros_like(output)   # [batch_size, seq_len, num_events, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len, num_events, d_history, 1]  
+        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len, num_events, d_history, d_intensity]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len, num_events, d_history, d_intensity]
 
         # Mingle history and relative time embedding.
-        time_outside = time_outside.unsqueeze(-2).repeat(1, 1, self.num_events, 1)
-                                                                               # [batch_size, seq_len, num_events, d_history]
-        output = torch.matmul(time_outside, time_weight)                       # [batch_size, seq_len, num_events, d_intensity]
+        output = torch.matmul(time_outside.unsqueeze(-2), time_weight).squeeze(-2)
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
 
         for layer_idx, layer in enumerate(self.mlp):
             output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity]
@@ -106,10 +105,9 @@ class DynamicMLP(nn.Module):
             output = F.softplus(self.activate_factor[layer_idx]) * output
         
         output = self.accu(output).squeeze(-1)                                 # [batch_size, seq_len, num_events]
-        events_probability = self.event_decider(output)                        # [batch_size, seq_len, num_events]
         integral = output.sum(dim = -1)                                        # [batch_size, seq_len]
 
-        return integral, events_probability
+        return integral
     
     def show_time_scale_factor(self):
         return F.softplus(self.activate_time_factor)
@@ -129,6 +127,7 @@ class DynamicMLP(nn.Module):
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_history = time_history / var
         time_next = time_next / var
 
@@ -139,42 +138,44 @@ class DynamicMLP(nn.Module):
         history_output, (_, _) = self.history(history)                         # [batch_size, seq_len, d_history]
         batch_size, seq_len, d_history = history_output.shape
 
-        history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
-                                                                               # [batch_size, seq_len * resolution, d_history]
+        history_expand = history_output.unsqueeze(-2).repeat(1, 1, resolution, 1)
+                                                                               # [batch_size, seq_len, resolution, d_history]
 
-        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
+                                                                               # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
-        time_outside = time_outside.unsqueeze(-2).repeat(1, 1, self.num_events, 1)
-                                                                               # [batch_size, seq_len * resolution, num_events, d_history]
+        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len, resolution, num_events, d_history]
 
         time_weight = self.time_weight(self.activate_time(
-            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len * resolution, d_history]
-        hidden = history_expand + time_weight \
-                    if not self.no_time_weight else torch.zeros_like(history_output)
-                                                                               # [batch_size, seq_len * resolution, d_history]
-        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len * resolution, d_history, 1]  
-        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len * resolution, d_history, d_intensity]
-        time_weight = self.activate(time_weight)                               # [batch_size, seq_len * resolution, d_history, d_intensity]
+            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len, resolution, num_events, d_history]
+        hidden = history_expand.unsqueeze(-2).repeat(1, 1, 1, self.num_events, 1) + time_weight \
+                    if not self.no_time_weight else 0
+                                                                               # [batch_size, seq_len, resolution, num_events, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len, resolution, num_events, d_history, 1]  
+        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len, resolution, num_events, d_history, d_intensity]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len, resolution, num_events, d_history, d_intensity]
 
         # Mingle history and relative time embedding.
-        output = torch.matmul(time_outside, time_weight)                       # [batch_size, seq_len * resolution, num_events, d_intensity]
+        output = torch.matmul(time_outside.unsqueeze(-2), time_weight).squeeze(-2)
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         for layer_idx, layer in enumerate(self.mlp):
-            output = layer(output)                                             # [batch_size, seq_len * resolution, num_events, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             # Imitate a weaker ReLU activation
             output = F.softplus(self.activate_factor[layer_idx]) * output
 
-        output = self.accu(output).squeeze(-1)                                 # [batch_size, seq_len * resolution, num_events]
-        integral = output.sum(-1)                                              # [batch_size, seq_len * resolution]
+        output = self.accu(output).squeeze(-1)                                 # [batch_size, seq_len, resolution, num_events]
+        integral = output.sum(-1).reshape(batch_size, -1)                      # [batch_size, seq_len * resolution]
 
         intensity = torch.autograd.grad(
             outputs = integral,
             inputs = time_expand,
             grad_outputs = torch.ones_like(integral),
             create_graph = True
-        )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution, 1]
+        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = False
+
+        intensity = intensity.sum(dim = -1).reshape(batch_size, -1)            # [batch_size, seq_len * resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
@@ -194,6 +195,7 @@ class DynamicMLP(nn.Module):
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device=self.device) # [resolution]
         original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
+        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_history = time_history / var
         time_next = time_next / var
 
@@ -205,41 +207,41 @@ class DynamicMLP(nn.Module):
         history_output, (_, _) = self.history(history)                         # [batch_size, seq_len, d_history]
         batch_size, seq_len, d_history = history_output.shape
 
-        history_expand = history_output.repeat(1, 1, resolution).reshape(batch_size, -1, d_history)
-                                                                               # [batch_size, seq_len * resolution, d_history]
-        time_expand = (time_multiplier * time_next).reshape(batch_size, -1, 1) # [batch_size, seq_len * resolution, 1]
+        history_expand = history_output.unsqueeze(-2).repeat(1, 1, resolution, 1)
+                                                                               # [batch_size, seq_len, resolution, d_history]
+        time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
+                                                                               # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len * resolution, d_history]
-        time_outside = time_outside.unsqueeze(-2).repeat(1, 1, self.num_events, 1)
-                                                                               # [batch_size, seq_len * resolution, num_events, d_history]
+        time_outside = self.time_outside(time_expand)                          # [batch_size, seq_len, resolution, num_events, d_history]
+
         time_weight = self.time_weight(self.activate_time(
-            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len * resolution, d_history]
-        hidden = history_expand + time_weight \
-                    if not self.no_time_weight else torch.zeros_like(history_output)
-                                                                               # [batch_size, seq_len * resolution, d_history]
-        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len * resolution, d_history, 1]  
-        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len * resolution, d_history, d_intensity]
-        time_weight = self.activate(time_weight)                               # [batch_size, seq_len * resolution, d_history, d_intensity]
+            F.softplus(self.activate_time_factor) * time_expand))              # [batch_size, seq_len, resolution, num_events, d_history]
+        hidden = history_expand.unsqueeze(-2).repeat(1, 1, 1, self.num_events, 1) + time_weight \
+                    if not self.no_time_weight else 0                          # [batch_size, seq_len, resolution, num_events, d_history]
+        hidden = hidden.unsqueeze(-1)                                          # [batch_size, seq_len, resolution, num_events, d_history, 1]  
+        time_weight = self.weight_gen(hidden)                                  # [batch_size, seq_len, resolution, num_events, d_history, d_intensity]
+        time_weight = self.activate(time_weight)                               # [batch_size, seq_len, resolution, num_events, d_history, d_intensity]
 
         # Mingle history and relative time embedding.
-        output = torch.matmul(time_outside, time_weight)                       # [batch_size, seq_len * resolution, num_events, d_intensity]
-        output_after_dwg_layer = output                                        # [batch_size, seq_len * resolution, num_events, d_intensity]
+        output = torch.matmul(time_outside.unsqueeze(-2), time_weight).squeeze(-2)
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
+        output_after_dwg_layer = output                                        # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         mlp_output = []
         for layer_idx, layer in enumerate(self.mlp):
-            output = layer(output)                                             # [batch_size, seq_len * resolution, num_events, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             # Imitate a weaker ReLU activation
             output = F.softplus(self.activate_factor[layer_idx]) * output
-            mlp_output.append(output)                                          # [batch_size, seq_len * resolution, num_events, d_intensity] * layer
+            mlp_output.append(output)                                          # [batch_size, seq_len, resolution, num_events, d_intensity] * layer
 
-        integral = self.accu(output).squeeze(-1).sum(-1)                       # [batch_size, seq_len * resolution]
+        integral = self.accu(output).squeeze(-1).sum(-1)                       # [batch_size, seq_len, resolution]
 
         intensity = torch.autograd.grad(
             outputs = integral,
             inputs = time_expand,
             grad_outputs = torch.ones_like(integral),
             create_graph = True
-        )[0].squeeze(-1)                                                       # [batch_size, seq_len * resolution]
+        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
@@ -255,24 +257,24 @@ class DynamicMLP(nn.Module):
                 inputs = time_expand,
                 grad_outputs = torch.ones_like(item),
                 create_graph = True
-            )[0]                                                               # [batch_size, seq_len * resolution, 1]
+            )[0].mean(dim = -1).reshape(batch_size, -1)                        # [batch_size, seq_len * resolution]
         
         dwg_gradient = torch.autograd.grad(
             outputs = output_after_dwg_layer,
             inputs = time_expand,
             grad_outputs = torch.ones_like(output_after_dwg_layer),
             create_graph = True
-        )[0]                                                                   # [batch_size, seq_len * resolution, 1]
+        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = False
         result = {
-            'final_output': integral,
-            'accumulated_gradient': intensity,
+            'final_output': integral.reshape(batch_size, -1),
+            'accumulated_gradient': intensity.mean(dim = -1).reshape(batch_size, -1),
             **mlp_gradient,
-            'dwg_gradient': dwg_gradient,
-            **{"output_mlp_" + str(idx): torch.mean(item, dim = -1).mean(dim = -1) for idx, item in enumerate(mlp_output)},\
-            **{"output_mlp_max_" + str(idx): torch.max(item, dim = -1)[0].mean(dim = -1) for idx, item in enumerate(mlp_output)},\
-            **{"output_mlp_min_" + str(idx): torch.min(item, dim = -1)[0].mean(dim = -1) for idx, item in enumerate(mlp_output)},\
+            'dwg_gradient': dwg_gradient.mean(dim = -1).reshape(batch_size, -1),
+            **{"output_mlp_" + str(idx): torch.mean(item, dim = -1).mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(mlp_output)},\
+            **{"output_mlp_max_" + str(idx): torch.max(item, dim = -1)[0].mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(mlp_output)},\
+            **{"output_mlp_min_" + str(idx): torch.min(item, dim = -1)[0].mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(mlp_output)},\
         }
 
         return result, timestamp

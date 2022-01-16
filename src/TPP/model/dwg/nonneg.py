@@ -6,11 +6,12 @@ from torch import nn
 
 
 class NonNegLinear(nn.Linear):
-    def __init__(self, in_features, out_features, device, bias=True, eps=0.):
+    def __init__(self, in_features, out_features, device, bias=True, eps=0., embedding_like = False):
         super(NonNegLinear, self).__init__(in_features, out_features, bias, device = device)
         self.eps = eps
         self.device = device
         self.positivify_weights()
+        self.embedding_like = embedding_like
 
     def positivify_weights(self):
         mask = (self.weight < 0).float() * - 1
@@ -21,7 +22,10 @@ class NonNegLinear(nn.Linear):
         weight = self.weight > 0
         weight = self.weight * weight.float()
         self.weight.data = torch.clamp(weight, min=self.eps)
-        return F.linear(inputs, self.weight, self.bias)
+        if self.embedding_like:
+            return inputs.unsqueeze(-1) * self.weight.T                        # [..., original_tensor_last_dimention, out_features]
+        else:
+            return F.linear(inputs, self.weight, self.bias)                    # [..., out_features]
 
 
 class SigmoidLinear(nn.Linear):
@@ -64,10 +68,11 @@ class ClampLinear(nn.Linear):
     Alleviate the negative gradient issue.
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
-    def __init__(self, in_features, out_features, device, clamp_min = None, bias=True, clamp_max = None):
+    def __init__(self, in_features, out_features, device, clamp_min = None, bias=True, clamp_max = None, embedding_like = False):
         super(ClampLinear, self).__init__(in_features, out_features, bias, device = device)
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
+        self.embedding_like = embedding_like
         self.device = device
 
         if self.clamp_min or self.clamp_max:
@@ -79,7 +84,11 @@ class ClampLinear(nn.Linear):
     def forward(self, inputs):
         if self.clamp_min or self.clamp_max:
             self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min, max = self.clamp_max)
-        return F.linear(inputs, self.weight, self.bias)
+        
+        if self.embedding_like:
+            return inputs.unsqueeze(-1) * self.weight.T                        # [..., original_tensor_last_dimention, out_features]
+        else:
+            return F.linear(inputs, self.weight, self.bias)                    # [..., out_feature]
 
 class NonNegNormLinear(nn.Linear):
     '''
