@@ -6,6 +6,11 @@ import torch
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
+'''
+Q1: why without bottleneck, the intensity function for each type of event fails to learn?
+A: The reason might still be the activation, because we detect that although the norms of gradients are similar, the variances
+are significantly different, which is over 100 times larger when a bottleneck layer is applied.
+'''
 
 class FullyNNModel(BasicModule):
     def __init__(self, d_history,
@@ -16,15 +21,18 @@ class FullyNNModel(BasicModule):
                  mlp_layers,
                  nonlinear,
                  device,
-                 mae_threshold = 2):
+                 mae_threshold = 2,
+                 reverse_bottleneck = True):
         super(FullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
+        self.reverse_bottleneck = reverse_bottleneck
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
                              dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
                              nonlinear = nonlinear, device = device)
-        self.inv_neck = InvertedBottleneck(self.num_events, self.num_events * 4, device = device)
+        if reverse_bottleneck:
+            self.inv_neck = InvertedBottleneck(self.num_events, self.num_events * 4, device = device)
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
@@ -52,10 +60,11 @@ class FullyNNModel(BasicModule):
             create_graph = True,
         )[0]                                                                   # [batch_size, seq_len, num_events]
         check_tensor(intensity_for_each_event)
-        choose_events = self.inv_neck(intensity_for_each_event)                # [batch_size, seq_len, num_events]
-        event_probability = torch.nn.functional.softmax(choose_events, dim = -1)
-                                                                               # [batch_size, seq_len, num_events]
         intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
+        if self.reverse_bottleneck:
+            intensity_for_each_event = self.inv_neck(intensity_for_each_event) # [batch_size, seq_len, num_events]
+        event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
         assert intensity.shape == integral.shape
         time_next.requires_grad = False
 
@@ -196,12 +205,16 @@ class FullyNNModel(BasicModule):
 
         loss = time_loss + events_loss
         loss.backward()
+
+        # gradient probe
+        # debug only
+        hidden_x_gradient = model.module.model.get_gradient()
     
         time_loss = time_loss.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum() / the_number_of_events
         
-        return time_loss, fact, events_loss
+        return [time_loss, fact, events_loss] + hidden_x_gradient
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
@@ -217,15 +230,15 @@ class FullyNNModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum() / the_number_of_events
         
-        return time_loss, fact, events_loss, mae
+        return [time_loss, fact, events_loss, mae]
 
-    def postprocess(input):
+    def postprocess(input, procedure):
         def train_postprocess(input):
             '''
             Training process
             [absolute loss, relative loss, events loss]
             '''
-            return [input[0], input[0] - input[1], input[2]]
+            return [input[0], input[0] - input[1], input[2], input[3], input[4], input[5]]
         
         def test_postprocess(input):
             '''
@@ -234,15 +247,20 @@ class FullyNNModel(BasicModule):
             '''
             return [input[0], input[0] - input[1], input[2], input[3]]
         
-        return (train_postprocess(input) if len(input) == 3 else test_postprocess(input))
+        return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
             format_dict['events_loss'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f'}
+            format_dict['cos_similarity_1'] = input[3]
+            format_dict['cos_similarity_2'] = input[4]
+            format_dict['cos_similarity_3'] = input[5]
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
+                                         'events_loss': ':6.5f', 'cos_similarity_1': ':6.5f', \
+                                         'cos_similarity_2': ':6.5f', 'cos_similarity_3': ':6.5f'}
             return format_dict
 
         def test_log_print_format(input):
@@ -254,9 +272,9 @@ class FullyNNModel(BasicModule):
             format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f', 'mae': ':2.8f'}
             return format_dict
         
-        return (train_log_print_format(input) if len(input) == 3 else test_log_print_format(input))
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-    format_dict_length = 4
+    format_dict_length = 6
     
     logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f'}
 

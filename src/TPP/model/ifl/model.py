@@ -109,10 +109,10 @@ class IFL(BasicModule):
     
         return loss, fact
 
-    def postprocess(input):
+    def postprocess(input, procedure):
         return [input[0], input[0] - input[1]]
 
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         format_dict = {}
         format_dict['absolute_loss'] = input[0]
         format_dict['relative_loss'] = input[1]

@@ -206,11 +206,11 @@ class THP(BasicModule):
 
         return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, fact / the_number_of_events
 
-    def postprocess(input):
+    def postprocess(input, procedure):
         return [input[0], input[0] - input[2], input[1]]
 
 
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         format_dict = {}
         format_dict['absolute_loss'] = input[0]
         format_dict['relative_loss'] = input[1]

@@ -157,13 +157,14 @@ class TPPTrainer:
 
     def train_report(self, current_step):
         logger.warning(f'Brief training status report at step {current_step}.')
-        report_sum = self.model_class.postprocess(self.report_sum)
+        report_sum = self.model_class.postprocess(self.report_sum, procedure = 'Training')
         print_performances(logger = logger, procedure='Training', lr = self.sched_optimizer.get_lr(), \
-                           **(self.model_class.log_print_format(report_sum)))
+                           **(self.model_class.log_print_format(report_sum, procedure = 'Training')))
         if self.opt.wandb:
             import wandb
             wandb.log(
-                add_prefix_to_keys(self.model_class.log_print_format(report_sum), temp = 'train_'), commit = False, step = current_step)
+                add_prefix_to_keys(self.model_class.log_print_format(report_sum, \
+                    procedure = 'Training'), temp = 'train_'), commit = False, step = current_step)
             wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
         if self.rank == 0 and self.file_logger:
             report = self.model_class.logfile_print_format(report_sum)
@@ -176,22 +177,24 @@ class TPPTrainer:
 
         eva_report = self.model_class.postprocess(
             evaluation(self.evaluation_data, self.model, self.model_class, device = self.opt.device, \
-                       output_length = self.format_dict_length, desc = '  - (Evaluation)   ')
+                       output_length = self.format_dict_length, desc = '  - (Evaluation)   '), procedure = 'Evaluation'
         )
         test_report = self.model_class.postprocess(
             evaluation(self.test_data, self.model, self.model_class, device = self.opt.device, \
-                       output_length = self.format_dict_length, desc = '  - (Test)   ')
+                       output_length = self.format_dict_length, desc = '  - (Test)   '), procedure = 'Test'
         )
 
         if self.rank == 0:
             print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), \
-                               **(self.model_class.log_print_format(eva_report)))
+                               **(self.model_class.log_print_format(eva_report, procedure = 'Evaluation')))
             print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), \
-                               **(self.model_class.log_print_format(test_report)))
+                               **(self.model_class.log_print_format(test_report, procedure = 'Test')))
             if self.opt.wandb:
                 import wandb
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report), temp = 'evaluation_'), commit = False, step = current_step)
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report), temp = 'test_'), step = current_step)
+                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
+                    procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
+                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
+                    procedure = 'Test'), temp = 'test_'), step = current_step)
         
             self.save(current_step, eva_report, test_report)
 

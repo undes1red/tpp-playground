@@ -157,7 +157,7 @@ class CNFWrapper(BasicModule):
     
         return time_loss, space_loss, fact if model.module.cond else time_loss, fact
         
-    def postprocess(input):
+    def postprocess(input, procedure):
         '''
         [time absolute loss, spatio loss, time relative loss]
         '''
@@ -168,7 +168,7 @@ class CNFWrapper(BasicModule):
             # No spatial information
             return [input[0], input[0] - input[1]]
 
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         format_dict = {}
         if len(input) == 3:
             format_dict['absolute_loss'] = input[0]

@@ -210,7 +210,7 @@ class TemporalModel(BasicModule):
 
         return time_loss, fact, events_loss, mae
 
-    def postprocess(input):
+    def postprocess(input, procedure):
         def train_postprocess(input):
             '''
             Training process
@@ -225,9 +225,9 @@ class TemporalModel(BasicModule):
             '''
             return [input[0], input[0] - input[1], input[2], input[3]]
         
-        return (train_postprocess(input) if len(input) == 3 else test_postprocess(input))
+        return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
 
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
@@ -245,7 +245,7 @@ class TemporalModel(BasicModule):
             format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'event_loss': ':6.5f', 'mae': ':2.8f'}
             return format_dict
         
-        return (train_log_print_format(input) if len(input) == 3 else test_log_print_format(input))
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
     format_dict_length = 4
     

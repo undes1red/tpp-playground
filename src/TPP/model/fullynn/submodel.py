@@ -94,6 +94,11 @@ class FullyNN(nn.Module):
         integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
 
         return integral
+    
+    def get_gradient(self):
+        return [nn.functional.cosine_similarity(self.hidden_x[0], self.hidden_x[1], dim = -1),\
+                nn.functional.cosine_similarity(self.hidden_x[1], self.hidden_x[2], dim = -1),\
+                nn.functional.cosine_similarity(self.hidden_x[2], self.hidden_x[0], dim = -1)]
 
     def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var):
         '''

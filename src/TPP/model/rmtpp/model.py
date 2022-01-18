@@ -114,10 +114,10 @@ class RMTPP(BasicModule):
 
         return time_loss_item, fact, expectation_loss, event_loss, constant_norm
 
-    def postprocess(input):
+    def postprocess(input, procedure):
         return [input[0], input[0] - input[1], input[2], input[3], input[4]]
 
-    def log_print_format(input):
+    def log_print_format(input, procedure):
         format_dict = {}
         format_dict['absolute_loss'] = input[0]
         format_dict['relative_loss'] = input[1]
