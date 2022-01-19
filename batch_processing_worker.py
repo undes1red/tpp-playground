@@ -32,7 +32,7 @@ training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "5000", \
     "--model_name", "ifl", \
-    "--model_json", "ifl_intensity.json", \
+    "--model_config", "ifl_intensity.json", \
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \

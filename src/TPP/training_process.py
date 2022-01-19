@@ -36,7 +36,7 @@ class TPPTrainer:
         else:
             raise logger.exception("Wrong input data path.")
     
-        model_param = read_json(opt.abs_model_json) if opt.abs_model_json else {}
+        model_param = read_json(opt.abs_model_config) if opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
         if rank == 0:
             logger.info(f'The input model hyperparameters are {model_param}')
@@ -71,7 +71,7 @@ class TPPTrainer:
         '''
         Directory preparation
         '''
-        self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_json')
+        self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         if not os.path.exists(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix)) and self.rank == 0:
             os.mkdir(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix))
 
@@ -84,7 +84,7 @@ class TPPTrainer:
             if self.opt.wandb:
                 import wandb
                 wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \
-                           name = '-'.join([self.opt.model_name, str(self.opt.model_json), \
+                           name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
                                             self.opt.dataset_name, str(self.opt.dataloader_config)]), \
                            dir = os.path.join(self.opt.log, self.log_folder), \
                            resume = 'never'
