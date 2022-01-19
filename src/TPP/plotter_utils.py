@@ -45,7 +45,7 @@ Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
     try:
-        return true_intensity_dict[opt.dataset_name.strip('v123456789').strip('_')](time, intensity, opt.resolution, device = opt.device)
+        return true_intensity_dict[opt.dataset_name.strip('v123456789').strip('_').strip('new').strip('_')](time, intensity, opt.resolution, device = opt.device)
                                                                                # [batch_size, seq_len * resolution]
     except:
         return None
@@ -114,7 +114,7 @@ Probability distribution drawing utils
 '''
 def expand_true_probability(time, intensity, opt):
     try:
-        functions = true_probability_dict[opt.dataset_name.strip('v123456789').strip('_')]
+        functions = true_probability_dict[opt.dataset_name.strip('v123456789').strip('_').strip('new').strip('_')]
     except:
         return None
         

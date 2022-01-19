@@ -30,6 +30,7 @@ class FullyNN(nn.Module):
     Hope it can work properly.
 
     Currently, normalization is disabled.
+    Update: 2022-01-19: Now you can use data normalization via synthetic dataloader.
 
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''

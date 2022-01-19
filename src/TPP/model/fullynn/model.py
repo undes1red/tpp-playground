@@ -203,7 +203,7 @@ class FullyNNModel(BasicModule):
                 var = var
         )
 
-        loss = time_loss + events_loss
+        loss = time_loss + events_loss * 5
         loss.backward()
 
         # gradient probe
