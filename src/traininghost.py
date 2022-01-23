@@ -41,6 +41,9 @@ class TrainingHost:
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
             logger.info(f'It seems that your model loves {opt.seed} this time.')
+        else:
+            logger.info(f'You require that we should use number {opt.seed} as the random seed this time.')
+
         random.seed(opt.seed)
         torch.manual_seed(opt.seed)
         np.random.seed(opt.seed)
