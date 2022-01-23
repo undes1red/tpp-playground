@@ -97,7 +97,8 @@ class THP(BasicModule):
         '''
         Obtain values from intensity functions. But why they flitered out other intensity values?
         '''
-        type_lambda = torch.sum(F.softplus(history + self.alpha * time.unsqueeze(dim = -1), self.beta) * type_mask, dim=2)
+        aggregate_history = time.cumsum(dim = -1).unsqueeze(-1)                # [batch_size, seq_len, 1]
+        type_lambda = torch.sum(F.softplus(history + self.alpha * time.unsqueeze(dim = -1) / aggregate_history, self.beta) * type_mask, dim=2)
                                                                                # [batch_size, seq_len]
     
         # event log-likelihood
@@ -118,6 +119,7 @@ class THP(BasicModule):
         num_samples = 100
     
         diff_time = time * non_pad_mask
+        aggregate_time = diff_time.cumsum(dim = -1).unsqueeze(dim = -1)
         temp_time = diff_time.unsqueeze(2) * \
                     torch.rand([*diff_time.size(), num_samples], device=history.device)
                                                                                # [batch_size, seq_len, num_samples]
@@ -125,7 +127,8 @@ class THP(BasicModule):
     
         temp_hid = torch.sum(history * type_mask, dim=2, keepdim=True)         # [batch_size, seq_len, 1]
     
-        all_lambda = F.softplus(temp_hid + self.alpha * temp_time, self.beta)  # [batch_size, seq_len, num_samples]
+        all_lambda = F.softplus(temp_hid + self.alpha * temp_time / aggregate_time, self.beta)
+                                                                               # [batch_size, seq_len, num_samples]
         all_lambda = torch.mean(all_lambda, dim=2)                             # [batch_size, seq_len]
     
         unbiased_integral = all_lambda * diff_time                             # [batch_size, seq_len]
@@ -138,6 +141,7 @@ class THP(BasicModule):
         '''
         time, events, _, _, _ = input_data[0]                                  # 3 * [batch_size, seq_len + 1]
         time_next, events_next = time[:, 1:], events[:, 1:]                    # 2 * [batch_size, seq_len]
+        aggregate_time_next = time_next.cumsum(dim = -1).unsqueeze(-1)         # [batch_size, seq_len, 1]
 
         batch_size, seq_len = time.shape
         seq_len -= 1
@@ -159,7 +163,7 @@ class THP(BasicModule):
         expanded_time = time_next.unsqueeze(-1) * time_multiplier              # [batch_size, seq_len, resolution]
         history = torch.sum(history * type_mask, dim=-1, keepdim=True)         # [batch_size, seq_len, 1]
         
-        expanded_intensity = F.softplus(self.alpha * expanded_time + history, self.beta)
+        expanded_intensity = F.softplus(self.alpha * expanded_time / aggregate_time_next + history, self.beta)
                                                                                # [batch_size, seq_len, resolution]
         expanded_intensity = expanded_intensity.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
 

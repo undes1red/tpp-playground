@@ -22,7 +22,8 @@ class FullyNNModel(BasicModule):
                  nonlinear,
                  device,
                  mae_threshold = 2,
-                 reverse_bottleneck = True):
+                 reverse_bottleneck = True,
+                 no_bottleneck = False, no_norm = False, no_activate = False):
         super(FullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
@@ -32,7 +33,10 @@ class FullyNNModel(BasicModule):
                              dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
                              nonlinear = nonlinear, device = device)
         if reverse_bottleneck:
-            self.inv_neck = InvertedBottleneck(self.num_events, self.num_events * 4, device = device)
+            self.inv_neck_1 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
+                                                 no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
+            self.inv_neck_2 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
+                                                 no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
@@ -62,7 +66,11 @@ class FullyNNModel(BasicModule):
         check_tensor(intensity_for_each_event)
         intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
         if self.reverse_bottleneck:
-            intensity_for_each_event = self.inv_neck(intensity_for_each_event) # [batch_size, seq_len, num_events]
+            intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
+                                                                               # [batch_size, seq_len, num_events]
+            intensity_for_each_event = self.inv_neck_2(intensity_for_each_event)
+                                                                               # [batch_size, seq_len, num_events]
+          
         event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
         assert intensity.shape == integral.shape
@@ -287,8 +295,8 @@ class FullyNNModel(BasicModule):
     
     def choose_metric(evaluation_report, test_report):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset]
+        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report[1].item(), test_report[1].item()]
+        return [evaluation_report[1].item(), test_report[1].item(), test_report[2].item()]
     
-    metric_number = 2 # metric number is the length of the output of choose_metric
+    metric_number = 3 # metric number is the length of the output of choose_metric

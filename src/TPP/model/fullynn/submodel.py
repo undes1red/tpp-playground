@@ -253,8 +253,12 @@ class FullyNN(nn.Module):
 
 
 class InvertedBottleneck(nn.Module):
-    def __init__(self, d_input, d_hidden, device):
+    def __init__(self, d_input, d_hidden, device, no_bottleneck, no_norm, no_activate):
         super(InvertedBottleneck, self).__init__()
+
+        self.no_bottleneck = no_bottleneck
+        self.no_norm = no_norm
+        self.no_activate = no_activate
 
         self.expand = nn.Linear(d_input, d_hidden, device = device)
         self.bottleneck = nn.Linear(d_hidden, d_input, device = device)
@@ -265,9 +269,12 @@ class InvertedBottleneck(nn.Module):
     def forward(self, x):
         residual = x
 
-        x = self.norm(x)                                                       # [..., d_input]
-        x = self.expand(x)                                                     # [..., d_hidden]
-        x = self.bottleneck(x)                                                 # [..., d_input]
-        x = self.activate(x)                                                   # [..., d_input]
+        if not self.no_norm:
+            x = self.norm(x)                                                   # [..., d_input]
+        if not self.no_bottleneck:
+            x = self.expand(x)                                                 # [..., d_hidden]
+            x = self.bottleneck(x)                                             # [..., d_input]
+        if not self.no_activate:
+            x = self.activate(x)                                               # [..., d_input]
 
         return residual + x

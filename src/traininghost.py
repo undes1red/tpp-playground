@@ -1,4 +1,4 @@
-import datetime, os, sys, torch, importlib
+import datetime, os, sys, torch, importlib, random
 import numpy as np
 
 import torch.distributed as dist
@@ -36,7 +36,7 @@ class TrainingHost:
         Reproducibility
         '''
         if opt.no_seed:
-            import random, time
+            import time
             logger.warning(f'No explicit random seed is available. Now, the model will choose a number as the random seed by itself.')
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
