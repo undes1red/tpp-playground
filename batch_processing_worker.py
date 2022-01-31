@@ -151,7 +151,6 @@ def list_generator(hyperparameter_list):
 
 task_count = 1
 for hp_list in list_generator(hyperparameters_dict[opt.script_type]):
-    print(hp_list)
     process = subprocess.Popen([
             'python3'
     ] + hp_list)
