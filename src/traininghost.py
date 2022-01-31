@@ -44,14 +44,15 @@ class TrainingHost:
         else:
             logger.info(f'You require that we should use number {opt.seed} as the random seed this time.')
 
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
+
         random.seed(opt.seed)
         torch.manual_seed(opt.seed)
         np.random.seed(opt.seed)
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
 
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
         try:
             mp.set_start_method("forkserver")
             mp.spawn(self.main, args = (opt.ngpus, opt), nprocs=opt.ngpus, join=True)

@@ -22,18 +22,20 @@ else:
 
 training_hyperparameter_list = [
     "train.py", \
-    "--no_seed", \
-    "--dataloader_name", "ifl", \
-    "--dataset_name", ["hawkes_1", "hawkes_2", "poisson", "stationary_renewal", "self_correct"], \
-    "--n_training_steps", "100000", \
-    "--dataloader_config", "ifl_dl.json", \
+    "--seed", "32", \
+    "--dataloader_name", "syn", \
+    "--dataset_name", "retweet", \
+    "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "5000", \
-    "--model_name", "ifl", \
-    "--model_config", "ifl_intensity.json", \
-    "--lr", "0.001", \
+    "--model_name", "fullynn", \
+    "--dataloader_config", "retweet/shift.json", \
+    "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_norm.json", \
+                       "normal/fullynn_no_expand.json", "normal/fullynn_no_act_expand.json", "normal/fullynn_no_norm_act.json", \
+                       "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_all.json", "normal/fullynn_no_inv.json"], \
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -45,20 +47,22 @@ training_hyperparameter_list = [
 
 plot_hyperparameter_list = [
     "graph.py", \
-    "--seed", "42", \
+    "--seed", "32", \
     "--model_name", "fullynn", \
-    "--model_config", "fullynn.json", \
-    "--lr", "0.001", \
+    "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_norm.json", \
+                       "normal/fullynn_no_expand.json", "normal/fullynn_no_act_expand.json", "normal/fullynn_no_norm_act.json", \
+                       "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_all.json", "normal/fullynn_no_inv.json"], \
+    "--lr", "0.002", \
     "--batch_size", "128", \
-    "--n_training_steps", "100000", \
-    "--dataset_name", ["hawkes_1", "hawkes_2", "poisson", "self_correct"], \
+    "--n_training_steps", "50000", \
+    "--dataset_name", ["hawkes_1_new_v1", "hawkes_1_v2", "poisson_v2", "self_correct_v2", "retweet"], \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
     "--plot_type", ["intensity", "probability"], \
-    "--dataloader_config", "plot.json", \
+    "--dataloader_config", "normal/plot.json", \
     "--resolution", "100"
 ]
 
@@ -130,19 +134,24 @@ def list_generator(hyperparameter_list):
             choosed_value_to_list = list(itertools.chain.from_iterable(choosed_value.items()))
             final_list = fixed_arguments_part + choosed_value_to_list
             yield remove_all(final_list)
-    
+
             current_index_of_each_list[-1] += 1
             add_mark = False
             for idx, (current_index, max_unreachable_index) in enumerate(zip(current_index_of_each_list[::-1], count_of_each_multiple_hp[::-1])):
                 if add_mark:
                     current_index_of_each_list[multi_hp_count - idx - 1] += 1
-                    add_mark = False
+                    if current_index_of_each_list[multi_hp_count - idx - 1]  >= max_unreachable_index:
+                        current_index_of_each_list[multi_hp_count - idx - 1] = 0
+                        add_mark = True
+                    else:
+                        add_mark = False
                 if current_index >= max_unreachable_index:
                     current_index_of_each_list[multi_hp_count - idx - 1] = 0
                     add_mark = True
 
 task_count = 1
 for hp_list in list_generator(hyperparameters_dict[opt.script_type]):
+    print(hp_list)
     process = subprocess.Popen([
             'python3'
     ] + hp_list)

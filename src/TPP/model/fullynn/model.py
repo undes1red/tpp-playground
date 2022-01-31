@@ -37,6 +37,8 @@ class FullyNNModel(BasicModule):
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
             self.inv_neck_2 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
+        else:
+            self.scalar  = torch.nn.Parameter(torch.tensor(1., device = self.device))
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
@@ -69,6 +71,12 @@ class FullyNNModel(BasicModule):
             intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
                                                                                # [batch_size, seq_len, num_events]
             intensity_for_each_event = self.inv_neck_2(intensity_for_each_event)
+                                                                               # [batch_size, seq_len, num_events]
+        else:
+            '''
+            Check if only a scalar can replace the invert bottleneck layers without hurting the performance.
+            '''
+            intensity_for_each_event = intensity_for_each_event * torch.nn.functional.softplus(self.scalar)
                                                                                # [batch_size, seq_len, num_events]
           
         event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)

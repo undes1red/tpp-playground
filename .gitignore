@@ -128,3 +128,6 @@ events*
 
 # Figures
 *.png
+
+# nohup output file
+nohup.out
