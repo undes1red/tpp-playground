@@ -20,6 +20,8 @@ class TransformerLayer(nn.Module):
         Outputs:
         '''
         output, attn = self.attn(x, x, x, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+        output *= non_pad_mask                                                 # [batch_size, seq_len, d_input]
+
         output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
         output *= non_pad_mask
 

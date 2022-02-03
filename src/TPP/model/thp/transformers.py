@@ -54,8 +54,10 @@ class Encoder(nn.Module):
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
         self_attn_mask_subseq = get_subsequent_mask(event_time)
-        self_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_time, seq_q=event_time, pad = self.num_types)
-        self_attn_mask_keypad = self_attn_mask_keypad.type_as(self_attn_mask_subseq)
+        self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
+                                                                               # [batch_size, seq_len, 1]
+        self_attn_mask_keypad = self_attn_mask_keypad.repeat(1, 1, self_attn_mask_keypad.shape[1])
+                                                                               # [batch_size, seq_len, seq_len]
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
         time_emb = self.temporal_enc(event_time, non_pad_mask)                 # [batch_size, seq_len, d_input]
@@ -150,16 +152,16 @@ class TransformerTPP(nn.Module):
         else:
             self.type_predictor = None
 
-    def forward(self, event_time, event_type):
+    def forward(self, event_time, event_type, non_pad_mask):
         """
         Return intensity functions' values for all events and time and events, if possible, predictions.
         Args:
         1. event_time: the length of all time intervals between two adjacent events. shape: [batch_size, seq_len]
-        2. event_type: 
+        2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
+        3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
         """
 
-        non_pad_mask = get_non_pad_mask(event_time, self.num_types)            # [batch_size, seq_len, 1]
-
+        non_pad_mask = non_pad_mask.unsqueeze(-1)
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
         intensity_output = self.linear(enc_output)                             # [batch_size, seq_len, num_types]

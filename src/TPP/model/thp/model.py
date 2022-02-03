@@ -7,10 +7,11 @@ from .utils import *
 
 class THP(BasicModule):
     def __init__(self, num_events, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 1):
+                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 1, unbiased_integral = True):
         super(THP, self).__init__()
         self.device = device
         self.num_events = num_events if num_events > 0 else 1
+        self.unbiased_integral = unbiased_integral
 
         # parameter for the weight of time difference
         self.alpha = nn.Parameter(torch.tensor(-5, dtype = torch.float32, device = self.device, requires_grad = True))
@@ -34,12 +35,12 @@ class THP(BasicModule):
         3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
 
-        time_history, events_history = time[:, :-1], events[:, :-1]            # [batch_size, seq_len] * 2
-        time_next, events_next = time[:, 1:], events[:, 1:]                    # [batch_size, seq_len] * 2
-        mask_next = mask[:, 1:]
+        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         history, (events_pred, time_pred) = \
-            self.model(time_history, events_history)                           # 2 * [batch_size, seq_len, num_types]
+            self.model(time_history, events_history, mask_history)             # 2 * [batch_size, seq_len, num_types]
 
         # temporal point process loss
         log_likeli_loss = self.log_likelihood(
@@ -55,37 +56,42 @@ class THP(BasicModule):
 
         return log_likeli_loss, events_loss, the_number_of_events
     
-    def evaluate(self, time, events):
+    def evaluate(self, time, events, mask):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
         Args:
         1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
+        3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         '''
 
-        time_history, events_history = time[:, :-1], events[:, :-1]            # [batch_size, seq_len] * 2
+        time_history, _ = self.divide_history_and_next(time)                   # [batch_size, seq_len]
+        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len]
+        mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
 
         history, (events_pred, time_pred) = \
-            self.model(time_history, events_history)                           # [batch_size, seq_len, num_types]
+            self.model(time_history, events_history, mask_history)             # [batch_size, seq_len, num_types]
 
         return history, (events_pred, time_pred)
+
+    def divide_history_and_next(self, input, unsqueeze = False):
+        input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
+        if unsqueeze:
+            input_history = input_history.unsqueeze(-1)                        # [batch_size, seq_len, 1]
+            input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
+        return input_history, input_next
 
     '''
     Loss functions
     '''
     def log_likelihood(self, history, time, events, mask):
         """ Log-likelihood of sequence. """
-    
-        '''
-        Currently, we assume no event data is available.
-        '''
-        non_pad_mask = get_non_pad_mask(time, self.num_events).squeeze(2)      # [batch_size, seq_len]
-    
+            
         if events is not None:
-            type_mask = torch.zeros([*events.size(), self.num_events], device=history.device)
+            type_mask = torch.zeros([*events.size(), self.num_events], device = history.device)
             for i in range(self.num_events):
-                type_mask[:, :, i] = (events == i + 1).bool().to(history.device)
+                type_mask[:, :, i] = (events == i).bool().to(history.device)
                                                                                # [batch_size, seq_len, num_types]
         else:
             '''
@@ -102,16 +108,29 @@ class THP(BasicModule):
                                                                                # [batch_size, seq_len]
     
         # event log-likelihood
-        event_ll = compute_event(type_lambda, non_pad_mask) * mask             # [batch_size, seq_len]
+        event_ll = compute_event(type_lambda, mask)                            # [batch_size, seq_len]
     
         # non-event log-likelihood, either numerical integration or MC integration
-        # non_event_ll = compute_integral_biased(type_lambda, time, non_pad_mask)
-        non_event_ll = self.compute_integral_unbiased(history, time, non_pad_mask, type_mask) * mask
+        if self.unbiased_integral:
+            non_event_ll = self.compute_integral_unbiased(history, time, mask, type_mask)
+                                                                               # [batch_size, seq_len]
+        else:
+            non_event_ll = self.compute_integral_biased(type_lambda, time, mask)
                                                                                # [batch_size, seq_len]
         ll = (event_ll - non_event_ll).clamp(min = -15)                        # [batch_size, seq_len]
     
         event_loss = -torch.sum(ll)
         return event_loss
+    
+    def compute_integral_biased(self, all_lambda, time, non_pad_mask):
+        """ Log-likelihood of non-events, using linear interpolation. """
+    
+        diff_time = (time[:, 1:] - time[:, :-1]) * non_pad_mask[:, 1:]
+        diff_lambda = (all_lambda[:, 1:] + all_lambda[:, :-1]) * non_pad_mask[:, 1:]
+    
+        biased_integral = diff_lambda * diff_time
+        result = 0.5 * biased_integral
+        return result
     
     def compute_integral_unbiased(self, history, time, non_pad_mask, type_mask):
         """ Log-likelihood of non-events, using Monte Carlo integration. """
@@ -123,7 +142,6 @@ class THP(BasicModule):
         temp_time = diff_time.unsqueeze(2) * \
                     torch.rand([*diff_time.size(), num_samples], device=history.device)
                                                                                # [batch_size, seq_len, num_samples]
-        # temp_time /= (time[:, :-1] + 1).unsqueeze(2)
     
         temp_hid = torch.sum(history * type_mask, dim=2, keepdim=True)         # [batch_size, seq_len, 1]
     
@@ -139,19 +157,21 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        time, events, _, _, _ = input_data[0]                                  # 3 * [batch_size, seq_len + 1]
-        time_next, events_next = time[:, 1:], events[:, 1:]                    # 2 * [batch_size, seq_len]
+        time, events, _, mask, _ = input_data[0]                               # 3 * [batch_size, seq_len + 1]
+        _, time_next = self.divide_history_and_next(time)                      # [batch_size, seq_len]
+        _, events_next = self.divide_history_and_next(events)                  # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
         aggregate_time_next = time_next.cumsum(dim = -1).unsqueeze(-1)         # [batch_size, seq_len, 1]
 
         batch_size, seq_len = time.shape
         seq_len -= 1
-        history, (event_pred, time_pred) = self.evaluate(time, events)         # [batch_size, seq_len, num_types]
+        history, (event_pred, time_pred) = self.evaluate(time, events, mask)   # [batch_size, seq_len, num_types]
 
         # intensity part
         if events is not None:
             type_mask = torch.zeros([batch_size, seq_len, self.num_events], device=history.device)
             for i in range(self.num_events):
-                type_mask[:, :, i] = (events_next == i + 1).bool().to(history.device)
+                type_mask[:, :, i] = (events_next == i).bool().to(history.device)
                                                                                # [batch_size, seq_len, num_types]
         else:
             '''
@@ -161,9 +181,11 @@ class THP(BasicModule):
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time = time_next.unsqueeze(-1) * time_multiplier              # [batch_size, seq_len, resolution]
-        history = torch.sum(history * type_mask, dim=-1, keepdim=True)         # [batch_size, seq_len, 1]
+        scaled_expanded_time = (expanded_time / aggregate_time_next).unsqueeze(-1)
+                                                                               # [batch_size, seq_len, resolution, 1]
+        history = history.unsqueeze(-2)                                        # [batch_size, seq_len, 1, num_types]
         
-        expanded_intensity = F.softplus(self.alpha * expanded_time / aggregate_time_next + history, self.beta)
+        expanded_intensity = torch.sum(F.softplus(self.alpha * scaled_expanded_time + history, self.beta), dim =-1)
                                                                                # [batch_size, seq_len, resolution]
         expanded_intensity = expanded_intensity.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
 

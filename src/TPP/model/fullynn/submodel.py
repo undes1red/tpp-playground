@@ -45,6 +45,7 @@ class FullyNN(nn.Module):
                            batch_first = True, dropout = dropout, device = device)
 
         # self.hidden_x = NonNegLinear(self.num_events, d_intensity, bias = False, device = device)
+        #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
         self.hidden_time = NonNegLinear(d_intensity, d_intensity, device = self.device)
         nn.init.xavier_uniform_(self.hidden_x)
@@ -214,12 +215,17 @@ class FullyNN(nn.Module):
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         # Gradient 1: Integral -> time
-        accumulated_gradient = torch.autograd.grad(
+        event_gradient = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
             create_graph=True,
-        )[0].sum(dim = -1).reshape(batch_size, -1)                             # [batch_size, seq_len * resolution]
+        )[0].reshape(batch_size, -1, self.num_events)                          # [batch_size, seq_len * resolution, num_events]
+        accumulated_gradient = event_gradient.sum(dim = -1)                    # [batch_size, seq_len * resolution]
+        event_gradient = event_gradient.chunk(self.num_events, dim = -1)       # [batch_size, seq_len * resolution] * num_events
+        event_intensity = {}
+        for idx, item in enumerate(event_gradient):
+            event_intensity[f'event_{idx}'] = item                             # [batch_size, seq_len * resolution]
 
         # Gradient 2: All layer output -> time
         output_storage_gradient = {}
@@ -231,12 +237,13 @@ class FullyNN(nn.Module):
             create_graph=True,
             )[0].sum(dim = -1).reshape(batch_size, -1)                         # [batch_size, seq_len * resolution]
             output_storage_gradient[f'mlp_{idx}_grad'] = subgradient           # [batch_size, seq_len, resolution, num_events] * (self.mlp.size + 1)
-        
+                
         time_expand.requires_grad = False
 
         result = {
             **{'accumulated_gradient': accumulated_gradient},\
             **output_storage_gradient,\
+            **event_intensity,\
             **{"output_mlp_norm_" + str(idx): torch.norm(item, dim = -1).mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(output_storage)},\
             **{"output_mlp_mean_" + str(idx): torch.mean(item, dim = -1).mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(output_storage)},\
             **{"output_mlp_max_" + str(idx): torch.max(item, dim = -1)[0].mean(dim = -1).reshape(batch_size, -1) for idx, item in enumerate(output_storage)},\
