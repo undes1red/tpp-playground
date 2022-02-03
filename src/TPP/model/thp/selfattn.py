@@ -26,17 +26,14 @@ class SelfAttn(nn.Module):
         1. output: the result of self attention. shape: [batch_size, seq_len, n_head, d_v]
         '''
 
-        q, v = torch.einsum('ijkl -> ikjl', q), torch.einsum('ijkl -> ikjl', v)# [batch_size, n_head, seq_len, d_qk] & [batch_size, n_head, seq_len, d_qk]
-        k = torch.einsum('ijkl -> iklj', k)                                    # [batch_size, n_head, d_qk, seq_len]
-        q /= self.temperature
+        q /= self.temperature                                                  # [batch_size, seq_len, n_head, d_qk]
 
-        attn = torch.einsum('ijkl, ijlm -> ijkm', q, k)                        # [batch_size, n_head, seq_len, seq_len]
+        attn = torch.einsum('ijkl, imkl -> ikjm', q, k)                        # [batch_size, n_head, seq_len, seq_len]
 
         if mask is not None:
             attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
 
         attn = self.dropout(F.softmax(attn, dim = -1))                         # [batch_size, n_head, seq_len, seq_len]
-        output = torch.einsum('ijkl, ijlm -> ijkm', attn, v)                   # [batch_size, n_head, seq_len, d_v]
-        output = torch.einsum('ijkl -> ikjl', output)                          # [batch_size, seq_len, n_head, d_v]
+        output = torch.einsum('ijkl, iljn -> ikjn', attn, v)                   # [batch_size, seq_len, n_head, d_v]
 
         return output, attn
