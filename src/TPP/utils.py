@@ -57,6 +57,14 @@ def evaluation(data, model, model_class, device, output_length, desc):
 
     return sum_
 
+# extract dataset name from the input string
+# eg: 'dataset_name_new_v2'
+def restore_dataset_name(name):
+    name = name.strip('v123456789_')
+    if name.endswith('_new'):
+        name = name[:-4]
+    return name
+
 class Metric():
     '''
     A Metric handler.

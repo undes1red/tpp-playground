@@ -45,8 +45,8 @@ if __name__ == '__main__':
     # Read in model hyperparameters
     opt.device = 'cuda' if opt.cuda and torch.cuda.is_available() else 'cpu'
     opt.data_path = os.path.join(root, 'data', 'inputs', opt.dataset_name)
-    model_param = read_json(os.path.join(root, 'config', opt.model_name, opt.model_config))
-    opt.model_config = os.path.basename(os.path.join(root, 'config', opt.model_name, opt.model_config))
+    model_param = read_json(os.path.join(root, 'config', opt.model_name, opt.model_config)) if opt.model_config else {}
+    opt.model_config = os.path.basename(os.path.join(root, 'config', opt.model_name, opt.model_config)) if opt.model_config else None
     param_names = list(model_param.keys())
     opt.__dict__.update(model_param)
 

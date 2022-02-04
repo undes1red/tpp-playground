@@ -76,7 +76,7 @@ class FullyNNModel(BasicModule):
             '''
             Check if only a scalar can replace the invert bottleneck layers without hurting the performance.
             '''
-            intensity_for_each_event = intensity_for_each_event * torch.nn.functional.softplus(self.scalar)
+            intensity_for_each_event = intensity_for_each_event # * torch.nn.functional.softplus(self.scalar)
                                                                                # [batch_size, seq_len, num_events]
           
         event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
@@ -219,7 +219,18 @@ class FullyNNModel(BasicModule):
                 var = var
         )
 
-        loss = time_loss + events_loss * 5
+        gamma = 2
+        def new_loss(gamma, *kwargs):
+            total_loss = 0
+            for loss in kwargs:
+                total_loss += torch.pow(loss, gamma)
+            
+            total_loss /= len(kwargs)
+            total_loss = torch.pow(total_loss, 1 / gamma)
+            
+            return total_loss
+
+        loss = new_loss(gamma, time_loss, events_loss)
         loss.backward()
 
         # gradient probe

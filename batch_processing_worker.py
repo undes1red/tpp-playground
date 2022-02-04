@@ -24,14 +24,14 @@ training_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
     "--dataloader_name", "syn", \
-    "--dataset_name", "retweet", \
+    "--dataset_name", "conttime", \
     "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "5000", \
     "--model_name", "fullynn", \
-    "--dataloader_config", "retweet/shift.json", \
+    "--dataloader_config", "conttime/shift.json", \
     "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_norm.json", \
                        "normal/fullynn_no_expand.json", "normal/fullynn_no_act_expand.json", "normal/fullynn_no_norm_act.json", \
                        "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_all.json", "normal/fullynn_no_inv.json"], \
@@ -55,15 +55,17 @@ plot_hyperparameter_list = [
     "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "50000", \
-    "--dataset_name", ["hawkes_1_new_v1", "hawkes_1_v2", "poisson_v2", "self_correct_v2", "retweet"], \
+    "--dataset_name", "poisson_v2", \
     "--dataloader_name", "syn", \
-    "--figure_count", "10", \
+    "--figure_count", "1", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability"], \
+    # "--used_dataloader_config", "shift.json", \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "normal/plot.json", \
-    "--resolution", "100"
+    "--resolution", "100", \
+    "" if do_not_use_gpu else "--cuda", \
 ]
 
 hyperparameters_dict = {
