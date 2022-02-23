@@ -40,7 +40,7 @@ class CTLSTM(nn.Module):
         self.mark = nn.Embedding(self.event_num + 3, self.hidden_dim, device = self.device)
         self.intensity = nn.Linear(self.hidden_dim, 1, bias = False, device = self.device)
     
-    def forward(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, eval_tag=False, intensity_instead = False): 
+    def forward(self, event_tensor, dtime_tensor, token_num_tensor, duration_tensor, mask, eval_tag=False, intensity_instead = False): 
         """
 		input
 			model [object of GNHP] : p_theta or simply p 

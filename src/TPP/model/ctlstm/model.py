@@ -21,10 +21,10 @@ class CTLSTMwrapper(BasicModule):
         ]
         '''
 
-        event_tensor, dtime_tensor, token_num_tensor, duration_tensor = minibatch
+        event_tensor, dtime_tensor, token_num_tensor, duration_tensor, mask = minibatch
 
         return self.model(event_tensor = event_tensor, dtime_tensor = dtime_tensor, 
-                          token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, 
+                          token_num_tensor = token_num_tensor, duration_tensor = duration_tensor, mask = mask,
                           eval_tag = eval_tag, intensity_instead = intensity_instead)
 
     def train_step(model, minibatch, device):
