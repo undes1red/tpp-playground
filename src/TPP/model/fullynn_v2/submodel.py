@@ -61,6 +61,7 @@ class FullyNN(nn.Module):
 
         self.activate = TA[nonlinear]()
         self.non_neg = nn.Softplus()
+        self.non_neg_norm = nn.Tanh()
 
 
     def forward(self, events_history, time_history, time_next, mean, var):
@@ -91,8 +92,10 @@ class FullyNN(nn.Module):
         for layer in self.mlp:
             output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, num_events, d_intensity]
-
-        integral_for_each_event = self.non_neg(self.agg(output)).squeeze(-1)   # [batch_size, seq_len, num_events]
+        
+        output = self.non_neg(self.agg(output)).squeeze(-1)                    # [batch_size, seq_len, num_events]
+        output = self.non_neg_norm(output)                                     # [batch_size, seq_len, num_events]
+        integral_for_each_event = -torch.log(1 - output + 1e-6)                # [batch_size, seq_len, num_events]
         integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
 
         return integral
@@ -134,8 +137,9 @@ class FullyNN(nn.Module):
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        expand_integral_for_each_event = self.non_neg(self.agg(output)).squeeze(-1)
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        output = self.non_neg(self.agg(output)).squeeze(-1)                    # [batch_size, seq_len, resolution, num_events]
+        output = self.non_neg_norm(output)                                     # [batch_size, seq_len, resolution, num_events]
+        expand_integral_for_each_event = -torch.log(1 - output + 1e-6)         # [batch_size, seq_len, resolution, num_events]
         expand_integral = expand_integral_for_each_event.sum(dim = -1)         # [batch_size, seq_len, resolution]
         
         expand_intensity = torch.autograd.grad(
@@ -198,11 +202,13 @@ class FullyNN(nn.Module):
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity]
             output_storage.append(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] * (self.mlp.size + 1)
-        
-        accumulative_layer_output = self.agg(output).squeeze(-1)               # [batch_size, seq_len, resolution, num_events]
-        expand_integral_foreach_event = self.non_neg(accumulative_layer_output)
+
+        accumulative_layer_output = self.non_neg(self.agg(output)).squeeze(-1) # [batch_size, seq_len, resolution, num_events]
+        expand_integral_for_each_event = self.non_neg_norm(accumulative_layer_output)
                                                                                # [batch_size, seq_len, resolution, num_events]
-        expand_integral = expand_integral_foreach_event.sum(dim = -1)          # [batch_size, seq_len, resolution]
+        expand_integral_for_each_event = -torch.log(1 - expand_integral_for_each_event + 1e-6)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        expand_integral = expand_integral_for_each_event.sum(dim = -1)         # [batch_size, seq_len, resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),

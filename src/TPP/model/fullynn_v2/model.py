@@ -68,7 +68,6 @@ class FullyNNModel(BasicModule):
         check_tensor(intensity_for_each_event)
         intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
 
-        # DEBUG: get the mean and variation of output here.
         if self.reverse_bottleneck:
             intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
                                                                                # [batch_size, seq_len, num_events]
@@ -80,10 +79,8 @@ class FullyNNModel(BasicModule):
             '''
             intensity_for_each_event = intensity_for_each_event
                                                                                # [batch_size, seq_len, num_events]
-
-        event_probability = torch.nn.functoinal.softmax(intensity_for_each_event, dim = -1)
-                                                                               # [batch_size, seq_len, num_events]
-        # event_probability = intensity_for_each_event / intensity_for_each_event.sum(dim = -1, keepdim = True)
+          
+        event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
         
         # Debug: intensity mean and variation probe.

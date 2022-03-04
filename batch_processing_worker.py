@@ -24,14 +24,14 @@ training_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
     "--dataloader_name", "syn", \
-    "--dataset_name", "conttime", \
+    "--dataset_name", "retweet", \
     "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "5000", \
     "--model_name", "fullynn", \
-    "--dataloader_config", "conttime/shift.json", \
+    "--dataloader_config", "retweet/shift.json", \
     "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_norm.json", \
                        "normal/fullynn_no_expand.json", "normal/fullynn_no_act_expand.json", "normal/fullynn_no_norm_act.json", \
                        "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_all.json", "normal/fullynn_no_inv.json"], \
