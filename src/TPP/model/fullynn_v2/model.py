@@ -17,12 +17,13 @@ class FullyNNModel(BasicModule):
                  num_events,
                  d_intensity,
                  dropout,
-                 rnn_layers,
+                 self_attn_layer,
                  mlp_layers,
                  nonlinear,
                  device,
                  mae_threshold = 2,
                  reverse_bottleneck = True,
+                 n_head = 2,
                  no_bottleneck = False, no_norm = False, no_activate = False):
         super(FullyNNModel, self).__init__()
         self.device = device
@@ -30,8 +31,8 @@ class FullyNNModel(BasicModule):
         self.num_events = num_events
         self.reverse_bottleneck = reverse_bottleneck
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
-                             dropout = dropout, rnn_layers = rnn_layers, mlp_layers = mlp_layers,
-                             nonlinear = nonlinear, device = device)
+                             dropout = dropout, self_attn_layer = self_attn_layer, mlp_layers = mlp_layers,
+                             nonlinear = nonlinear, n_head = n_head, device = device)
         if reverse_bottleneck:
             self.inv_neck_1 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
@@ -45,18 +46,20 @@ class FullyNNModel(BasicModule):
                                                                                # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
 
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                           time_next = time_next, mask = mask_next, mean = mean, var = var)
+                                           time_next = time_next, mask_history = mask_history, \
+                                           mask_next = mask_next, mean = mean, var = var)
 
         # preparing for multi-event training
         time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_next.requires_grad = True
 
-        integral = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        integral = self.model(events_history, time_history, time_next, mask = mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len]
         # Intensity values and their sum.
         intensity_for_each_event = torch.autograd.grad(
@@ -113,11 +116,11 @@ class FullyNNModel(BasicModule):
             return time_loss, event_loss, mae, the_number_of_events
 
 
-    def evaluate(self, events_history, time_history, taus, mean, var):
+    def evaluate(self, events_history, time_history, taus, mask, mean, var):
         integral = self.model(events_history, time_history, \
-            taus.repeat(1, 1, self.num_events), mean, var)                     # [batch_size, seq_len]                                                                               # int
+            taus.repeat(1, 1, self.num_events), mask, mean, var)               # [batch_size, seq_len]
 
-        return integral
+        return integral                                                        # [batch_size, seq_len]
 
     def divide_history_and_next(self, input, unsqueeze = False):
         input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
@@ -126,13 +129,13 @@ class FullyNNModel(BasicModule):
             input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
-            return self.evaluate(events_history, time_history, taus, mean, var).unsqueeze(-1) - \
+            return self.evaluate(events_history, time_history, taus, mask_history, mean, var).unsqueeze(-1) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
@@ -147,7 +150,7 @@ class FullyNNModel(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
-        gap = (tau_pred - time_next).squeeze(-1) * mask
+        gap = (tau_pred - time_next).squeeze(-1) * mask_next
         return torch.mean(torch.abs(gap)).item()
 
     # All methods not required by BasicModule are intensity plotter exclusive.
@@ -160,17 +163,19 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events = input_data[0][0], input_data[0][1]
+        input_time, input_events, _, mask, _ = input_data[0]
         mean, var = input_data[1]
         
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
+        mask_history, _ = self.divide_history_and_next(mask, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
                         self.model.integral_intensity(events_history, time_history, \
-                                                      time_next, resolution, mean, var)
+                                                      time_next, resolution, mask_history, mean, var)
                                                                                # 3 * [batch_size, seq_len * resolution]
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -185,16 +190,18 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events = input_data[0][0], input_data[0][1]
+        input_time, input_events, _, mask, _  = input_data[0]
         mean, var = input_data[1]
 
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
+        mask_history, _ = self.divide_history_and_next(mask, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
 
         probed_results, timestamp = self.model.model_probe_function(events_history, time_history, \
-                                                                    time_next, resolution, mean, var)
+                                                                    time_next, resolution, mask_history, mean, var)
                                                                                # [batch_size, seq_len * resolution, 1] * n
 
         return probed_results, timestamp

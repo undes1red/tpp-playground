@@ -3,6 +3,8 @@ import torch
 
 from .nonneg import NonNegLinear
 from .activate import *
+from .transformers import TransEncoder
+from .layers import TransformerLayer
 
 TA = {
     # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
@@ -35,19 +37,19 @@ class FullyNN(nn.Module):
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, rnn_layers, mlp_layers, nonlinear, device):
+    def __init__(self, d_history, d_intensity, num_events, dropout, self_attn_layer, mlp_layers, nonlinear, n_head, device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
 
-        self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
-        self.rnn = nn.LSTM(input_size = d_history + 1, hidden_size = d_history, num_layers = rnn_layers,\
-                           batch_first = True, dropout = dropout, device = device)
-
+        self.history_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, \
+                                d_hidden = 4 * d_history, n_layers = self_attn_layer,\
+                                n_head = n_head, d_qk = d_history, d_v = d_history, \
+                                dropout = dropout, device = device)
+        
         # self.hidden_x = NonNegLinear(self.num_events, d_intensity, bias = False, device = device)
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
-        self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
-        self.hidden_time = NonNegLinear(d_intensity, d_intensity, device = self.device)
+        self.hidden_time = NonNegLinear(1, d_intensity, device = self.device)
         nn.init.xavier_uniform_(self.hidden_x)
 
         self.hidden_p = nn.Linear(d_history, d_intensity, bias = True, device = device)
@@ -64,7 +66,7 @@ class FullyNN(nn.Module):
         self.non_neg_norm = nn.Tanh()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mask, mean, var):
         '''
         Args:
             events_history: [batch_size, seq_len]
@@ -74,18 +76,15 @@ class FullyNN(nn.Module):
         # Input data normalization
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
         time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
+        mask = mask.unsqueeze(dim = -1)                                        # [batch_size, seq_len, 1]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history = torch.cat(
-            (events_embeddings, time_history), dim = -1
-        )                                                                      # [batch_size, seq_len, d_history + 1]
         # Reshape hidden output for full connection layers.
-        output, (_, _) = self.rnn(history)                                     # [batch_size, seq_len, d_history]
+        output = self.history_encoder(events_history, time_history, non_pad_mask = mask)
+                                                                               # [batch_size, seq_len, d_history]
         output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)         # [batch_size, seq_len, num_events, d_history]
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity]
 
-        time = time_next.unsqueeze(-1) * self.non_neg(self.hidden_x)           # [batch_size, seq_len, num_events, d_intensity]
-        time = self.hidden_time(time)                                          # [batch_size, seq_len, num_events, d_intensity]
+        time = self.hidden_time(time.unsqueeze(-1))                            # [batch_size, seq_len, num_events, d_intensity]
 
         output = self.activate(time + hidden)                                  # [batch_size, seq_len, num_events, d_intensity]
 
@@ -100,7 +99,7 @@ class FullyNN(nn.Module):
 
         return integral
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var):
+    def integral_intensity(self, events_history, time_history, time_next, resolution, mask, mean, var):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -114,12 +113,10 @@ class FullyNN(nn.Module):
         time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
         time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
+        mask = mask.unsqueeze(dim = -1)                                        # [batch_size, seq_len, 1]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history = torch.cat(
-            (events_embeddings, time_history), dim = -1
-        )                                                                      # [batch_size, seq_len, d_history + 1]
-        output, (_, _) = self.rnn(history)                                     # [batch_size, seq_len, d_history]
+        output = self.history_encoder(events_history, time_history, non_pad_mask = mask)
+                                                                               # [batch_size, seq_len, d_history]
         output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)         # [batch_size, seq_len, num_events, d_history]
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity]
         batch_size, seq_len, _, _ = hidden.shape
@@ -178,12 +175,10 @@ class FullyNN(nn.Module):
         time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
         time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
+        mask = mask.unsqueeze(dim = -1)                                        # [batch_size, seq_len, 1]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history = torch.cat(
-            (events_embeddings, time_history), dim = -1
-        )                                                                      # [batch_size, seq_len, d_history + 1]
-        output, (_, _) = self.rnn(history)                                     # [batch_size, seq_len, d_history]
+        output = self.history_encoder(events_history, time_history, non_pad_mask = mask)
+                                                                               # [batch_size, seq_len, d_history]
         output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)         # [batch_size, seq_len, num_events, d_history]
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity]
         batch_size, seq_len, num_events, d_intensity = hidden.shape
