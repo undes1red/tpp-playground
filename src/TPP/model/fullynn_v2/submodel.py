@@ -4,7 +4,6 @@ import torch
 from .nonneg import NonNegLinear
 from .activate import *
 from .transformers import TransEncoder
-from .layers import TransformerLayer
 
 TA = {
     # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
@@ -47,10 +46,12 @@ class FullyNN(nn.Module):
                                 n_head = n_head, d_qk = d_history, d_v = d_history, \
                                 dropout = dropout, device = device)
         
-        # self.hidden_x = NonNegLinear(self.num_events, d_intensity, bias = False, device = device)
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
-        self.hidden_time = NonNegLinear(1, d_intensity, device = self.device)
-        nn.init.xavier_uniform_(self.hidden_x)
+        self.relative_time_affine = nn.Parameter(torch.zeros(num_events,  d_intensity, device = device, requires_grad = True))
+        self.absolute_time_affine = nn.Parameter(torch.zeros(num_events,  d_intensity, device = device, requires_grad = True))
+        self.hidden_time = NonNegLinear(d_intensity, d_intensity, device = self.device)
+        nn.init.xavier_uniform_(self.relative_time_affine)
+        nn.init.xavier_uniform_(self.absolute_time_affine)
 
         self.hidden_p = nn.Linear(d_history, d_intensity, bias = True, device = device)
 
@@ -63,7 +64,7 @@ class FullyNN(nn.Module):
 
         self.activate = TA[nonlinear]()
         self.non_neg = nn.Softplus()
-        self.non_neg_norm = nn.Tanh()
+        self.non_neg_weight = nn.ReLU()
 
 
     def forward(self, events_history, time_history, time_next, mask, mean, var):
@@ -84,20 +85,25 @@ class FullyNN(nn.Module):
         output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)         # [batch_size, seq_len, num_events, d_history]
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity]
 
-        time = self.hidden_time(time.unsqueeze(-1))                            # [batch_size, seq_len, num_events, d_intensity]
+        relative_time_emb = time_next.unsqueeze(-1) * self.non_neg_weight(self.relative_time_affine)
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
+        absolute_time_emb = torch.cumsum(time_next, dim = -1).unsqueeze(-1) * self.non_neg_weight(self.absolute_time_affine)
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
 
-        output = self.activate(time + hidden)                                  # [batch_size, seq_len, num_events, d_intensity]
+        relative_time_emb = self.hidden_time(relative_time_emb)                # [batch_size, seq_len, num_events, d_intensity]
+        output = self.activate(relative_time_emb + hidden)                     # [batch_size, seq_len, num_events, d_intensity]
 
         for layer in self.mlp:
             output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, num_events, d_intensity]
         
-        output = self.non_neg(self.agg(output)).squeeze(-1)                    # [batch_size, seq_len, num_events]
-        output = self.non_neg_norm(output)                                     # [batch_size, seq_len, num_events]
-        integral_for_each_event = -torch.log(1 - output + 1e-6)                # [batch_size, seq_len, num_events]
-        integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
+        integral_for_each_event = self.non_neg(self.agg(output)).squeeze(-1)   # [batch_size, seq_len, num_events]
+        # output = self.non_neg_norm(output)                                   # [batch_size, seq_len, num_events]
+        # integral_for_each_event = -torch.log(1 - integral_for_each_event + 1e-9)
+        #                                                                      # [batch_size, seq_len, num_events]
+        # integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
 
-        return integral
+        return integral_for_each_event
 
     def integral_intensity(self, events_history, time_history, time_next, resolution, mask, mean, var):
         '''
@@ -125,18 +131,22 @@ class FullyNN(nn.Module):
         time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
                                                                                # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        emb_time_expand = time_expand.unsqueeze(-1) * self.non_neg(self.hidden_x)
+        emb_relative_time_expand = time_expand.unsqueeze(-1) * self.non_neg_weight(self.relative_time_affine)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
-        emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity]
-        output = self.activate(emb_time_expand + hidden_expand)                # [batch_size, seq_len, resolution, num_events, d_intensity]
+        emb_absolute_time_expand = time_expand.unsqueeze(-1) * self.non_neg_weight(self.absolute_time_affine)
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
+        emb_relative_time_expand = self.hidden_time(emb_relative_time_expand)  # [batch_size, seq_len, resolution, num_events, d_intensity]
+        output = self.activate(emb_relative_time_expand + hidden_expand)
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         for layer in self.mlp:
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        output = self.non_neg(self.agg(output)).squeeze(-1)                    # [batch_size, seq_len, resolution, num_events]
-        output = self.non_neg_norm(output)                                     # [batch_size, seq_len, resolution, num_events]
-        expand_integral_for_each_event = -torch.log(1 - output + 1e-6)         # [batch_size, seq_len, resolution, num_events]
+        expand_integral_for_each_event = self.non_neg(self.agg(output)).squeeze(-1)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        # output = self.non_neg_norm(output)                                   # [batch_size, seq_len, resolution, num_events]
+        # expand_integral_for_each_event = -torch.log(1 - output + 1e-9)       # [batch_size, seq_len, resolution, num_events]
         expand_integral = expand_integral_for_each_event.sum(dim = -1)         # [batch_size, seq_len, resolution]
         
         expand_intensity = torch.autograd.grad(
@@ -161,7 +171,7 @@ class FullyNN(nn.Module):
 
         return expand_integral, expand_intensity, timestamp
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mask, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -187,7 +197,7 @@ class FullyNN(nn.Module):
         time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
                                                                                # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        emb_time_expand = time_expand.unsqueeze(-1) * self.non_neg(self.hidden_x)
+        emb_time_expand = time_expand.unsqueeze(-1) * self.non_neg_weight(self.relative_time_affine)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
         emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity]
         output = self.activate(emb_time_expand + hidden_expand)                # [batch_size, seq_len, resolution, num_events, d_intensity]
@@ -199,11 +209,11 @@ class FullyNN(nn.Module):
             output_storage.append(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] * (self.mlp.size + 1)
 
         accumulative_layer_output = self.non_neg(self.agg(output)).squeeze(-1) # [batch_size, seq_len, resolution, num_events]
-        expand_integral_for_each_event = self.non_neg_norm(accumulative_layer_output)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        expand_integral_for_each_event = -torch.log(1 - expand_integral_for_each_event + 1e-6)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        expand_integral = expand_integral_for_each_event.sum(dim = -1)         # [batch_size, seq_len, resolution]
+        # expand_integral_for_each_event = self.non_neg_norm(accumulative_layer_output)
+        #                                                                        # [batch_size, seq_len, resolution, num_events]
+        # expand_integral_for_each_event = -torch.log(1 - expand_integral_for_each_event + 1e-9)
+        #                                                                        # [batch_size, seq_len, resolution, num_events]
+        expand_integral = accumulative_layer_output.sum(dim = -1)              # [batch_size, seq_len, resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),

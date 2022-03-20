@@ -59,17 +59,18 @@ class FullyNNModel(BasicModule):
         time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
         time_next.requires_grad = True
 
-        integral = self.model(events_history, time_history, time_next, mask = mask_history, mean = mean, var = var)
-                                                                               # [batch_size, seq_len]
+        integral_for_each_event = self.model(events_history, time_history, time_next, mask = mask_history, mean = mean, var = var)
+                                                                               # [batch_size, seq_len, num_events]
         # Intensity values and their sum.
         intensity_for_each_event = torch.autograd.grad(
-            outputs = integral,
+            outputs = integral_for_each_event,
             inputs = time_next,
-            grad_outputs = torch.ones_like(integral),
+            grad_outputs = torch.ones_like(integral_for_each_event),
             create_graph = True,
         )[0]                                                                   # [batch_size, seq_len, num_events]
         check_tensor(intensity_for_each_event)
         intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
+        integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
 
         if self.reverse_bottleneck:
             intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
@@ -118,7 +119,7 @@ class FullyNNModel(BasicModule):
 
     def evaluate(self, events_history, time_history, taus, mask, mean, var):
         integral = self.model(events_history, time_history, \
-            taus.repeat(1, 1, self.num_events), mask, mean, var)               # [batch_size, seq_len]
+            taus.repeat(1, 1, self.num_events), mask, mean, var).sum(dim = -1) # [batch_size, seq_len]
 
         return integral                                                        # [batch_size, seq_len]
 

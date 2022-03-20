@@ -72,6 +72,7 @@ class TransEncoder(nn.Module):
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
         idx_emb = self.encode_position_idx(seq_idx).unsqueeze(dim = 0)         # [seq_len, d_input]
+        time = event_time                                                      # [batch_size, seq_len, 1]
 
         if event_type != None:
             events_emb = self.event_emb(event_type) + idx_emb                  # [batch_size, seq_len, d_input]
@@ -84,7 +85,7 @@ class TransEncoder(nn.Module):
                     non_pad_mask = non_pad_mask,
                     self_attn_mask = self_attn_mask)                           # [batch_size, seq_len, d_input]
             
-            time_emb = self.history_time_emb(event_time) + idx_emb             # [batch_size, seq_len, d_input]
+            time_emb = self.history_time_emb(time) + idx_emb                   # [batch_size, seq_len, d_input]
             time_emb, _ = self.time_encoder[0](
                     events_emb, time_emb, time_emb,
                     non_pad_mask = non_pad_mask,
@@ -100,7 +101,7 @@ class TransEncoder(nn.Module):
             
             time_emb += events_emb                                             # [batch_size, seq_len, d_input]
         else:
-            time_emb = self.history_time_emb(event_time) + idx_emb             # [batch_size, seq_len, d_input]
+            time_emb = self.history_time_emb(time) + idx_emb                   # [batch_size, seq_len, d_input]
             for enc_layer in self.time_encoder:
                 '''
                 history event sequence

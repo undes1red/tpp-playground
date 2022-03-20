@@ -139,9 +139,9 @@ class FullyNN(nn.Module):
         expand_integral = expand_integral_for_each_event.sum(dim = -1)         # [batch_size, seq_len, resolution]
         
         expand_intensity = torch.autograd.grad(
-            outputs=expand_integral,
+            outputs=expand_integral_for_each_event,
             inputs=time_expand,
-            grad_outputs=torch.ones_like(expand_integral),
+            grad_outputs=torch.ones_like(expand_integral_for_each_event),
             create_graph=True,
         )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = False
@@ -211,9 +211,9 @@ class FullyNN(nn.Module):
 
         # Gradient 1: Integral -> time
         event_gradient = torch.autograd.grad(
-            outputs=expand_integral,
+            outputs=expand_integral_foreach_event,
             inputs=time_expand,
-            grad_outputs=torch.ones_like(expand_integral),
+            grad_outputs=torch.ones_like(expand_integral_foreach_event),
             create_graph=True,
         )[0].reshape(batch_size, -1, self.num_events)                          # [batch_size, seq_len * resolution, num_events]
         accumulated_gradient = event_gradient.sum(dim = -1)                    # [batch_size, seq_len * resolution]

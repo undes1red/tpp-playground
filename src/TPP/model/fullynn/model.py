@@ -81,7 +81,7 @@ class FullyNNModel(BasicModule):
             intensity_for_each_event = intensity_for_each_event
                                                                                # [batch_size, seq_len, num_events]
 
-        event_probability = torch.nn.functoinal.softmax(intensity_for_each_event, dim = -1)
+        event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
         # event_probability = intensity_for_each_event / intensity_for_each_event.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, num_events]
