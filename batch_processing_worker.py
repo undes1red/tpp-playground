@@ -24,17 +24,17 @@ training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "syn", \
-    "--dataloader_config", "retweet/shift.json", \
-    "--dataset_name", ["retweet"], \
+    "--dataloader_config", "retweet/no_norm.json", \
+    "--dataset_name", ["mimic"], \
     "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
-    "--b", "128", \
+    "--b", "16", \
     "--n_warmup_steps", "5000", \
     "--model_name", "fullynn", \
-    "--model_config", ["normal/fullynn_no_norm_act.json", "normal/fullynn_no_norm.json", "normal/fullynn_no_norm_expend.json", \
-                       "normal/fullynn_no_act_expend.json", "normal/fullynn_no_all.json", \
-                       "normal/fullynn.json", "normal/fullynn_no_inv.json", "normal/fullynn_no_expand.json"],
+    "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_act_expand.json",
+                       "normal/fullynn_no_all.json", "normal/fullynn_no_expand.json", "normal/fullynn_no_inv.json", 
+                       "normal/fullynn_no_norm_act.json", "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_norm.json"],
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \

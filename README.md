@@ -4,7 +4,7 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 
 ## Model Zoo
 
-1. Our Model (Done)
+1. Dynamic-Weight-Generation-based FullyNN variant  (Done)
 2. FullyNN (Omi et al. Done)
 3. CTLSTM (Mei et al. Done)
 4. RMTPP (Du et al. Done with several training issues.)
@@ -20,3 +20,10 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 ## Additional
 
 1. RMTPP can not model the hawkes_2 process and there is no way to resolve it.
+
+## Required functionalities
+
+1. Background training with logs
+2. Refurbish current implementations and framework.
+3. More intelligent and extensible synthetic data generator.
+4. Exclude data files from the git repository.
