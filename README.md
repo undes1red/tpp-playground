@@ -27,3 +27,5 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 2. Refurbish current implementations and framework.
 3. More intelligent and extensible synthetic data generator.
 4. Exclude data files from the git repository.
+5. Automantic procedure selection.(WIP)
+6. Turn num_event into a dataset information card.

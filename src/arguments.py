@@ -1,5 +1,4 @@
 import argparse
-
 class BasicArguments:
     def __init__(self):
         self.parser = argparse.ArgumentParser()

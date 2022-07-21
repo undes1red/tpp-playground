@@ -33,25 +33,32 @@ class TrainingHost:
         self.trainer = getattr(procedure, self.procedure_name + 'Trainer')()
 
         '''
-        Reproducibility
+        Reproducibility.
         '''
         if opt.no_seed:
             import time
-            logger.warning(f'No explicit random seed is available. Now, the model will choose a number as the random seed by itself.')
+            logger.warning(f'Reproducibility only presents when a random seed is explicitly given. If you really request reproducible results.\
+                           Please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
+            logger.warning(f'No explicit random seed is detected, so the framework will spontaneously select a number as the random seed based on the UNIX timestamp.')
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
-            logger.info(f'It seems that your model loves {opt.seed} this time.')
+            logger.info(f'The model loves {opt.seed} this time.')
         else:
-            logger.info(f'You require that we should use number {opt.seed} as the random seed this time.')
+            logger.info(f'You request that we should use number {opt.seed} as the random seed.')
 
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
-
+        '''
+        Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for furhter information about
+        reproducibility
+        '''
         random.seed(opt.seed)
         torch.manual_seed(opt.seed)
         np.random.seed(opt.seed)
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
+
+        # Prepare for multithreading
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
 
         try:
             mp.set_start_method("forkserver")
@@ -88,7 +95,7 @@ class TrainingHost:
         Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
         '''
         if not opt.log and not opt.save_model and rank == 0:
-            logger.warning('No experiment result will be saved.')
+            logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
     
         '''
         Report device status
