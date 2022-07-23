@@ -52,7 +52,7 @@ def expand_true_intensity(time, intensity, opt):
 
 def expand_model_intensity(model, data, opt):
     if opt.model_name in intensity_available:
-        return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution]
+        return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution] * 3
     else:
         raise Exception('This model is incompatible with intensity prober!')
 

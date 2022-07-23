@@ -13,7 +13,7 @@ TA = {
     'sym_softplus': sym_softplus,
 
     # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
-    # analysis, we argue that this feature is required by approaches like FullyNN to regress long-tail functions like Hawkes intensity function.
+    # analysis, we argue that this feature is required by approaches like FullyNN to fit long-tail functions like Hawkes intensity function.
     'tanh': nn.Tanh,
     # Yet another function that has small gradients when it has big inputs. But as the log function is not bounded above, the hard integral bound introduced
     # by tanh can be alleviated.

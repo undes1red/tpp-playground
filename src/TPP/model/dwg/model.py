@@ -17,60 +17,75 @@ class TemporalModel(BasicModule):
                  no_scale,
                  device,
                  num_events,
+                 event_toggle = False,
                  mae_threshold = 2,
                  weight_gen_min = None,
                  time_weight_min = None):
         super(TemporalModel, self).__init__()
         self.device = device
+        self.event_toggle = event_toggle
         self.num_events = num_events
         self.mae_threshold = mae_threshold
+
+        '''
+        Model created here.
+        '''
         self.model = DynamicMLP(d_history = d_history, d_intensity = d_intensity, dropout = dropout, weight_gen_min = weight_gen_min,
                                 time_weight_min = time_weight_min,num_layers = rnn_layers, mlp_layers = mlp_layers, time_activation = time_activation,
-                                no_time_weight = no_time_weight, no_scale = no_scale, num_events = num_events, device = device)
+                                no_time_weight = no_time_weight, no_scale = no_scale, num_events = num_events, event_toggle = event_toggle, device = device)
 
     def forward(self, time, events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(events, unsqueeze = False)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)# [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(time_history = time_history, events_history = events_history,\
                                            time_next = time_next, mask = mask_next, mean = mean, var = var)
         
-        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
+        if self.event_toggle:
+            time_next = time_next.repeat(1, 1, self.num_events)                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
+            
         time_next.requires_grad = True
-        integral = self.model(events_history, time_history, time_next, mean, var,)
-                                                                               # [batch_size, seq_len, num_events]
+        integral = self.model(events_history, time_history, time_next, mean, var)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         intensity_per_event = torch.autograd.grad(
             outputs=integral,
             inputs=time_next,
             grad_outputs=torch.ones_like(integral),
             create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len, num_events]
+        )[0]                                                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
         check_tensor(intensity_per_event)
-        intensity = intensity_per_event.sum(dim = -1)                          # [batch_size, seq_len]
-        events_probability = torch.nn.functional.softmax(intensity_per_event, dim = -1)
-                                                                               # [batch_size, seq_len, num_events]
         time_next.requires_grad = False
-
-        time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, mask = mask_next)
-        event_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
+        intensity = intensity_per_event.sum(dim = -1)                          # [batch_size, seq_len]
+        if self.event_toggle: 
+            events_probability = torch.nn.functional.softmax(intensity_per_event, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
+            event_loss = torch.nn.functional.cross_entropy(events_probability.reshape(-1, self.num_events), \
                                                        events_next.reshape(-1).long(), reduction = 'none')
                                                                                # [batch_size * seq_len]
-        event_loss *= mask_next.reshape(-1)
-        event_loss = event_loss.sum()
-        the_number_of_events = mask_next.sum()
+            event_loss *= mask_next.reshape(-1)
+            event_loss = event_loss.sum()
 
+            time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral.sum(dim = -1), mask = mask_next)
+        else:
+            event_loss = torch.tensor(0., dtype = torch.float32, device = self.device)
+            time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, mask = mask_next)
+
+        the_number_of_events = mask_next.sum()
         return time_loss, mae, event_loss, the_number_of_events
 
     def evaluate(self, event_history, time_history, timestamp, mean, var):
-        integral = self.model(event_history, time_history, timestamp.repeat(1, 1, self.num_events), mean, var)
-                                                                               # [batch_size, seq_len]
-
-        return integral
+        if self.event_toggle:
+            timestamp = timestamp.repeat(1, 1, self.num_events)
+        integral = self.model(event_history, time_history, timestamp, mean, var)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        if self.event_toggle:
+            integral = integral.sum(dim = -1)
+        return integral                                                        # [batch_size, seq_len]
     
     def divide_history_and_next(self, input, unsqueeze = False):
         input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
@@ -125,11 +140,16 @@ class TemporalModel(BasicModule):
         integral, intensity, timestamp = self.model.intensity(time_history = time_history,\
                                                               time_next = time_next, event_history = event_history,\
                                                               resolution = resolution, mean = mean, var = var)
-                                                                               # 3 * [batch_size, seq_len * resolution, 1]
+                                                                               # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution] if we need events else 3 * [batch_size, seq_len * resolution]
         check_tensor(intensity)
         assert intensity.shape == integral.shape
-        intensity = intensity.squeeze(-1)                                      # [batch_size, seq_len * resolution]
-        integral = integral.squeeze(-1)                                        # [batch_size, seq_len * resolution]
+
+        '''
+        Compatibility with the ploter
+        '''
+        if self.event_toggle:
+            integral = integral.sum(dim = -1)                                  # [batch_size, seq_len * resolution]
+            intensity = intensity.sum(dim = -1)                                # [batch_size, seq_len * resolution]
 
         return integral, intensity, timestamp
     
@@ -152,7 +172,7 @@ class TemporalModel(BasicModule):
         probed_results, timestamp = self.model.model_probe_function(time_history = time_history,\
                                                                     time_next = time_next, event_history = event_history,\
                                                                     resolution = resolution, mean = mean, var = var)
-                                                                               # 3 * [batch_size, seq_len * resolution, 1]
+                                                                               # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution] if we need events else 3 * [batch_size, seq_len * resolution]
 
         return probed_results, timestamp
     

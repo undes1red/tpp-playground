@@ -158,7 +158,7 @@ class FullyNNModel(BasicModule):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
+              The original dataset records.
         resolution: int
                     How many interpretive numbers we have between an event interval?
         '''

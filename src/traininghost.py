@@ -37,8 +37,7 @@ class TrainingHost:
         '''
         if opt.no_seed:
             import time
-            logger.warning(f'Reproducibility only presents when a random seed is explicitly given. If you really request reproducible results.\
-                           Please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
+            logger.warning(f'Reproducibility only presents when a random seed is explicitly given. If you really request reproducible results. Please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
             logger.warning(f'No explicit random seed is detected, so the framework will spontaneously select a number as the random seed based on the UNIX timestamp.')
             random.seed(int(time.time()) % 65535)
             opt.seed = random.randint(0, 65535)
@@ -72,7 +71,7 @@ class TrainingHost:
         '''
         Multiprocessing training controller.
         '''
-        dist.init_process_group("nccl" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+        dist.init_process_group("gloo" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
 
         '''
         Gradient aggergation check
