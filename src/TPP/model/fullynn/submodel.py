@@ -43,28 +43,32 @@ class FullyNN(nn.Module):
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
-        self.history_module = history_module
+        self.history_module = history_module.lower()
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
             self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
-            if history_module == 'LSTM':
+            if self.history_module == 'lstm':
                 self.his_encoder = nn.LSTM(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
                             batch_first = True, dropout = dropout, device = device)
-            else:
+            elif self.history_module == 'transformers':
                 self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
                             event_toggle = event_toggle, device = device)
+            else:
+                raise Exception(f'Unknown history module name {history_module}.')
             self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
         else:
             self.events = None
-            if history_module == 'LSTM':
+            if self.history_module == 'lstm':
                 self.his_encoder = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = history_module_layers,\
                             batch_first = True, dropout = dropout, device = device)
-            else:
+            elif self.history_module == 'transformers':
                 self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
                             event_toggle = event_toggle, device = device)
+            else:
+                raise Exception(f'Unknown history module name {history_module}.')
             self.hidden_x = nn.Parameter(torch.zeros((1, d_intensity), device = self.device, requires_grad = True))
 
         # self.hidden_x = NonNegLinear(self.num_events, d_intensity, bias = False, device = device)
@@ -105,9 +109,9 @@ class FullyNN(nn.Module):
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
-        if self.history_module == 'LSTM':
+        if self.history_module == 'lstm':
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
-        else:
+        elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
 
@@ -154,9 +158,9 @@ class FullyNN(nn.Module):
         else:
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
         
-        if self.history_module == 'LSTM':
+        if self.history_module == 'lstm':
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
-        else:
+        elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
 
@@ -240,9 +244,9 @@ class FullyNN(nn.Module):
         else:
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
 
-        if self.history_module == 'LSTM':
+        if self.history_module == 'lstm':
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
-        else:
+        elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
 
