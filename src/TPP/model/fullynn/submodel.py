@@ -43,6 +43,7 @@ class FullyNN(nn.Module):
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
+        self.history_module = history_module
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
@@ -51,7 +52,7 @@ class FullyNN(nn.Module):
                 self.his_encoder = nn.LSTM(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
                             batch_first = True, dropout = dropout, device = device)
             else:
-                self.history_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
+                self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
                             event_toggle = event_toggle, device = device)
             self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
@@ -61,7 +62,7 @@ class FullyNN(nn.Module):
                 self.his_encoder = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = history_module_layers,\
                             batch_first = True, dropout = dropout, device = device)
             else:
-                self.history_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
+                self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
                             event_toggle = event_toggle, device = device)
             self.hidden_x = nn.Parameter(torch.zeros((1, d_intensity), device = self.device, requires_grad = True))
@@ -83,12 +84,13 @@ class FullyNN(nn.Module):
         self.non_neg = nn.Softplus()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var, mask):
         '''
         Args:
             events_history: [batch_size, seq_len]
             time_history:   [batch_size, seq_len, 1]
             time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
+            mask:           [batch_size, seq_len]
         '''
         # Input data normalization
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
@@ -103,7 +105,12 @@ class FullyNN(nn.Module):
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
-        output, (_, _) = self.his_encoder(history)                             # [batch_size, seq_len, d_history]
+        if self.history_module == 'LSTM':
+            output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
+        else:
+            output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, d_history]
+
         if self.event_toggle:
             output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)     # [batch_size, seq_len, num_events, d_history] if we need events else [batch_size, seq_len, d_history]
             time = time_next.unsqueeze(-1) * self.non_neg(self.hidden_x)       # [batch_size, seq_len, num_events, d_intensity]
@@ -122,7 +129,7 @@ class FullyNN(nn.Module):
 
         return integral
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var):
+    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -147,7 +154,12 @@ class FullyNN(nn.Module):
         else:
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
         
-        output, (_, _) = self.his_encoder(history)                             # [batch_size, seq_len, d_history]
+        if self.history_module == 'LSTM':
+            output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
+        else:
+            output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, d_history]
+
         if self.event_toggle:
             output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)     # [batch_size, seq_len, num_events, d_history]
 
@@ -204,7 +216,7 @@ class FullyNN(nn.Module):
 
         return expand_integral, expand_intensity, timestamp
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -228,7 +240,12 @@ class FullyNN(nn.Module):
         else:
             history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
 
-        output, (_, _) = self.his_encoder(history)                             # [batch_size, seq_len, d_history]
+        if self.history_module == 'LSTM':
+            output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
+        else:
+            output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, d_history]
+
         if self.event_toggle:
             output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)     # [batch_size, seq_len, num_events, d_history]
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]

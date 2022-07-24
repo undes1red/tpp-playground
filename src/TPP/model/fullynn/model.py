@@ -58,7 +58,7 @@ class FullyNNModel(BasicModule):
         if self.event_toggle:
             time_next = time_next.repeat(1, 1, self.num_events)                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
         time_next.requires_grad = True
-        integral = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        integral = self.model(events_history, time_history, time_next, mean = mean, var = var, mask = mask_next)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         if self.event_toggle:
             integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
@@ -106,10 +106,11 @@ class FullyNNModel(BasicModule):
         return time_loss, event_loss, mae, the_number_of_events
 
 
-    def evaluate(self, events_history, time_history, taus, mean, var):
+    def evaluate(self, events_history, time_history, taus, mean, var, mask):
         if self.event_toggle:
             taus = taus.repeat(1, 1, self.num_events)
-        integral = self.model(events_history, time_history, taus, mean, var)   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        integral = self.model(events_history, time_history, taus, mean, var, mask)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         if self.event_toggle:
             integral = integral.sum(dim = -1)
 
@@ -128,7 +129,7 @@ class FullyNNModel(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
-            return self.evaluate(events_history, time_history, taus, mean, var).unsqueeze(-1) - \
+            return self.evaluate(events_history, time_history, taus, mean, var, mask).unsqueeze(-1) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
@@ -156,17 +157,19 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events = input_data[0][0], input_data[0][1]
+        input_time, input_events, _, mask = input_data[0]
         mean, var = input_data[1]
         
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+
 
         expand_integral, expand_intensity, timestamp = \
                         self.model.integral_intensity(events_history, time_history, \
-                                                      time_next, resolution, mean, var)
+                                                      time_next, resolution, mean, var, mask_next)
 
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -181,16 +184,18 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events = input_data[0][0], input_data[0][1]
+        input_time, input_events, _, mask = input_data[0]
         mean, var = input_data[1]
 
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+
 
         probed_results, timestamp = self.model.model_probe_function(events_history, time_history, \
-                                                                    time_next, resolution, mean, var)
+                                                                    time_next, resolution, mean, var, mask_next)
                                                                                # [batch_size, seq_len * resolution, 1] * n
 
         return probed_results, timestamp
