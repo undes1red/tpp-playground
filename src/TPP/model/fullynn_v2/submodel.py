@@ -38,7 +38,7 @@ class FullyNN(nn.Module):
     '''
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, event_toggle, n_head, device):
+                 mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
@@ -54,7 +54,7 @@ class FullyNN(nn.Module):
             elif self.history_module == 'transformers':
                 self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
-                            event_toggle = event_toggle, device = device)
+                            event_toggle = event_toggle, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
             else:
                 raise Exception(f'Unknown history module name {history_module}.')
             self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
@@ -66,7 +66,7 @@ class FullyNN(nn.Module):
             elif self.history_module == 'transformers':
                 self.his_encoder = TransEncoder(num_types = num_events + 1, d_input = d_history, d_hidden = 4 * d_history, \
                             n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
-                            event_toggle = event_toggle, device = device)
+                            event_toggle = event_toggle, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
             else:
                 raise Exception(f'Unknown history module name {history_module}.')
             self.hidden_x = nn.Parameter(torch.zeros((1, d_intensity), device = self.device, requires_grad = True))

@@ -4,7 +4,7 @@ from .selfattn import SelfAttn
 from .nonneg import NonNegLinear
 
 class TransformerLayer(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, dropout = 0.1, wq_nonneg = False, wk_nonneg = False, wv_nonneg = False):
+    def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1):
         super(TransformerLayer, self).__init__()
         self.device = device
 

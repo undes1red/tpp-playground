@@ -12,7 +12,7 @@ A: The reason might still be the activation, because we detect that although the
 are significantly different, which is over 100 times larger when a bottleneck layer is applied.
 '''
 
-class FullyNNModel(BasicModule):
+class FullyNN2Model(BasicModule):
     def __init__(self, d_history,
                  num_events,
                  d_intensity,
@@ -26,8 +26,9 @@ class FullyNNModel(BasicModule):
                  mae_threshold = 2,
                  event_toggle = False,
                  reverse_bottleneck = True,
-                 no_bottleneck = False, no_norm = False, no_activate = False):
-        super(FullyNNModel, self).__init__()
+                 no_bottleneck = False, no_norm = False, no_activate = False,
+                 wq_nonneg = False, wk_nonneg = False, wv_nonneg = False):
+        super(FullyNN2Model, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
@@ -35,7 +36,8 @@ class FullyNNModel(BasicModule):
         self.reverse_bottleneck = reverse_bottleneck
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
                              dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                             mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, n_head = n_head, device = device)
+                             mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, n_head = n_head,
+                             wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
         if reverse_bottleneck and event_toggle:
             self.inv_neck_1 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)

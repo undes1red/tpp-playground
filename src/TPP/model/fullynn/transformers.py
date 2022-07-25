@@ -12,8 +12,9 @@ class TransEncoder(nn.Module):
     def __init__(
             self,
             num_types, d_input, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout, 
-            event_toggle, device):
+            n_layers, n_head, d_qk, d_v, dropout,
+            event_toggle, wq_nonneg, wk_nonneg, wv_nonneg,
+            device):
         super(TransEncoder, self).__init__()
         self.device = device
         self.d_input = d_input
@@ -38,7 +39,8 @@ class TransEncoder(nn.Module):
 
         self.time_encoder = nn.ModuleList([
             TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
-                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
+                             d_qk = d_qk, d_v = d_v, dropout = dropout, wq_nonneg = wq_nonneg, \
+                             wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = self.device)
             for _ in range(n_layers)])
 
     def encode_position_idx(self, idx):

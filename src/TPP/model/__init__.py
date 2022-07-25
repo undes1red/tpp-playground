@@ -26,7 +26,7 @@ modelpath = {
     'ifl': ['ifl.model', 'IFL'],
     'rmtpp': ['rmtpp.model', 'RMTPP'],
     'thp': ['thp.model', 'THP'],
-    # 'fullynn_v2': ['fullynn_v2.model', 'FullyNNModel'],
+    'fullynn_v2': ['fullynn_v2.model', 'FullyNN2Model'],
     # 'dwg_v2': ['dwg_v2.model', 'FullyNNModel']
 
     # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
