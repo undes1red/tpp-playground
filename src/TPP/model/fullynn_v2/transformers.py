@@ -13,10 +13,11 @@ class TransEncoder(nn.Module):
             self,
             num_types, d_input, d_hidden,
             n_layers, n_head, d_qk, d_v, dropout, 
-            device):
+            event_toggle, device):
         super(TransEncoder, self).__init__()
         self.device = device
         self.d_input = d_input
+        self.event_toggle = event_toggle
         self.num_types = num_types
 
         # position vector, used for temporal encoding
@@ -74,7 +75,7 @@ class TransEncoder(nn.Module):
         idx_emb = self.encode_position_idx(seq_idx).unsqueeze(dim = 0)         # [seq_len, d_input]
         time = event_time                                                      # [batch_size, seq_len, 1]
 
-        if event_type != None:
+        if self.event_toggle:
             events_emb = self.event_emb(event_type) + idx_emb                  # [batch_size, seq_len, d_input]
             for enc_layer in self.event_encoder:
                 '''

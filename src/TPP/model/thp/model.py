@@ -14,7 +14,7 @@ class THP(BasicModule):
         self.unbiased_integral = unbiased_integral
 
         # parameter for the weight of time difference
-        self.alpha = nn.Parameter(torch.tensor(-5, dtype = torch.float32, device = self.device, requires_grad = True))
+        self.alpha = nn.Parameter(torch.tensor(0, dtype = torch.float32, device = self.device, requires_grad = True))
 
         # parameter for the softplus function
         self.beta = beta
@@ -91,8 +91,7 @@ class THP(BasicModule):
         if events is not None:
             type_mask = torch.zeros([*events.size(), self.num_events], device = history.device)
             for i in range(self.num_events):
-                type_mask[:, :, i] = (events == i).bool().to(history.device)
-                                                                               # [batch_size, seq_len, num_types]
+                type_mask[:, :, i] = (events == i).bool().to(history.device)   # [batch_size, seq_len, num_types]
         else:
             '''
             All except the first events are included.
@@ -101,7 +100,7 @@ class THP(BasicModule):
 
 
         '''
-        Obtain values from intensity functions. But why they flitered out other intensity values?
+        Obtain values from intensity functions. But why do they fliter out other intensity values?
         '''
         aggregate_history = time.cumsum(dim = -1).unsqueeze(-1)                # [batch_size, seq_len, 1]
         type_lambda = torch.sum(F.softplus(history + self.alpha * time.unsqueeze(dim = -1) / aggregate_history, self.beta) * type_mask, dim=2)
@@ -151,6 +150,19 @@ class THP(BasicModule):
     
         unbiased_integral = all_lambda * diff_time                             # [batch_size, seq_len]
         return unbiased_integral
+
+    def compute_expanded_integral(self, history, time, resolution, non_pad_mask, type_mask):
+        '''
+        The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
+        be recorded as part of the output.
+        '''
+        diff_time = time * non_pad_mask
+        aggregate_time = diff_time.cumsum(dim = -1).unsqueeze(dim = -1)
+        temp_time = diff_time.unsqueeze(2) * \
+                    torch.rand([*diff_time.size(), resolution], device=history.device)
+                                                                               # [batch_size, seq_len, num_samples]
+        temp_hid = torch.sum(history * type_mask, dim=2, keepdim=True)         # [batch_size, seq_len, 1]
+
 
     def function_prober(self, input_data, resolution):
         '''

@@ -47,6 +47,8 @@ class MultiheadAttention(nn.Module):
         self.d_v = d_v
         self.dropout = dropout
 
+        assert self.n_head > 0
+
         # Linear: d_input -> d_q, d_k, or d_v
         if wq_nonneg:
             self.w_q = NonNegLinear(d_input, self.d_q * self.n_head, bias = False, device = self.device)

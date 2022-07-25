@@ -17,109 +17,102 @@ class FullyNNModel(BasicModule):
                  num_events,
                  d_intensity,
                  dropout,
-                 self_attn_layer,
+                 history_module_layers,
                  mlp_layers,
                  nonlinear,
                  device,
+                 history_module = 'LSTM',
+                 n_head = 0,
                  mae_threshold = 2,
+                 event_toggle = False,
                  reverse_bottleneck = True,
-                 n_head = 2,
                  no_bottleneck = False, no_norm = False, no_activate = False):
         super(FullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
+        self.event_toggle = event_toggle
         self.reverse_bottleneck = reverse_bottleneck
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
-                             dropout = dropout, self_attn_layer = self_attn_layer, mlp_layers = mlp_layers,
-                             nonlinear = nonlinear, n_head = n_head, device = device)
-        if reverse_bottleneck:
+                             dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
+                             mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, n_head = n_head, device = device)
+        if reverse_bottleneck and event_toggle:
             self.inv_neck_1 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
             self.inv_neck_2 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
-        else:
-            self.scalar  = torch.nn.Parameter(torch.tensor(1., device = self.device))
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # 2 * [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # 2 * [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask, unsqueeze = False)
-                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
         mae = 0
         if evaluate:
             mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                           time_next = time_next, mask_history = mask_history, \
-                                           mask_next = mask_next, mean = mean, var = var)
+                                           time_next = time_next, mask = mask_next, mean = mean, var = var)
 
-        # preparing for multi-event training
-        time_next = time_next.repeat(1, 1, self.num_events)                    # [batch_size, seq_len, num_events]
+        # preparing for multi-event training when needed
+        if self.event_toggle:
+            time_next = time_next.repeat(1, 1, self.num_events)                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
         time_next.requires_grad = True
-
-        integral_for_each_event = self.model(events_history, time_history, time_next, mask = mask_history, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events]
+        integral = self.model(events_history, time_history, time_next, mean = mean, var = var, mask = mask_next)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        if self.event_toggle:
+            integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
+        
         # Intensity values and their sum.
         intensity_for_each_event = torch.autograd.grad(
-            outputs = integral_for_each_event,
+            outputs = integral,
             inputs = time_next,
-            grad_outputs = torch.ones_like(integral_for_each_event),
+            grad_outputs = torch.ones_like(integral),
             create_graph = True,
-        )[0]                                                                   # [batch_size, seq_len, num_events]
-        check_tensor(intensity_for_each_event)
+        )[0]
+        check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
         intensity = intensity_for_each_event.sum(dim = -1)                     # [batch_size, seq_len]
-        integral = integral_for_each_event.sum(dim = -1)                       # [batch_size, seq_len]
-
-        if self.reverse_bottleneck:
-            intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
-                                                                               # [batch_size, seq_len, num_events]
-            intensity_for_each_event = self.inv_neck_2(intensity_for_each_event)
-                                                                               # [batch_size, seq_len, num_events]
-        else:
-            '''
-            Or, output the original intensity value directly.
-            '''
-            intensity_for_each_event = intensity_for_each_event
-                                                                               # [batch_size, seq_len, num_events]
-          
-        event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
-                                                                               # [batch_size, seq_len, num_events]
         
-        # Debug: intensity mean and variation probe.
-        intensity_mean, intensity_var = intensity_for_each_event.mean(dim = -1) * mask_next, \
-                                        intensity_for_each_event.var(dim = -1) * mask_next
-                                                                               # [batch_size, seq_len]
-        event_probability_mean, event_probability_var = event_probability.mean(dim = -1) * mask_next, \
-                                                        event_probability.var(dim = -1) * mask_next
-                                                                               # [batch_size, seq_len]
-        intensity_mean, intensity_var, event_probability_mean, event_probability_var = \
-            intensity_mean.mean().item(), intensity_var.mean().item(), event_probability_mean.mean().item(), event_probability_var.mean().item()
-                                                                               # int * 4
-
+        '''
+        This part is only available when evnet_toggle = True
+        '''
+        if self.event_toggle:
+            if self.reverse_bottleneck:
+                intensity_for_each_event = self.inv_neck_1(intensity_for_each_event)
+                                                                               # [batch_size, seq_len, num_events]
+                intensity_for_each_event = self.inv_neck_2(intensity_for_each_event)
+                                                                               # [batch_size, seq_len, num_events]
+            else:
+                '''
+                Or, output the original intensity value directly.
+                '''
+                intensity_for_each_event = intensity_for_each_event
+                                                                               # [batch_size, seq_len, num_events]
+            event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
+            event_loss = torch.nn.functional.cross_entropy(event_probability.reshape(-1, self.num_events), \
+                                                        events_next.reshape(-1).long(), reduction = 'none')
+            event_loss *= mask_next.reshape(-1)
+            event_loss = event_loss.sum()
+        else:
+            event_loss = torch.tensor(0., dtype = torch.float32)
+    
         assert intensity.shape == integral.shape
         time_next.requires_grad = False
-
         time_loss = self.time_loss_f(intensity = intensity, \
                                      intensity_integral = integral, mask = mask_next)
-        event_loss = torch.nn.functional.cross_entropy(event_probability.reshape(-1, self.num_events), \
-                                                        events_next.reshape(-1).long(), reduction = 'none')
-
-        event_loss *= mask_next.reshape(-1)
-        event_loss = event_loss.sum()
         the_number_of_events = mask_next.sum()
 
-        if evaluate:
-            return time_loss, event_loss, mae, the_number_of_events, \
-                [intensity_mean, intensity_var, event_probability_mean, event_probability_var]
-        else:
-            return time_loss, event_loss, mae, the_number_of_events
+        return time_loss, event_loss, mae, the_number_of_events
 
 
-    def evaluate(self, events_history, time_history, taus, mask, mean, var):
-        integral = self.model(events_history, time_history, \
-            taus.repeat(1, 1, self.num_events), mask, mean, var).sum(dim = -1) # [batch_size, seq_len]
+    def evaluate(self, events_history, time_history, taus, mean, var, mask):
+        if self.event_toggle:
+            taus = taus.repeat(1, 1, self.num_events)
+        integral = self.model(events_history, time_history, taus, mean, var, mask)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        if self.event_toggle:
+            integral = integral.sum(dim = -1)
 
         return integral                                                        # [batch_size, seq_len]
 
@@ -130,13 +123,13 @@ class FullyNNModel(BasicModule):
             input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
-            return self.evaluate(events_history, time_history, taus, mask_history, mean, var).unsqueeze(-1) - \
+            return self.evaluate(events_history, time_history, taus, mean, var, mask).unsqueeze(-1) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
@@ -151,7 +144,7 @@ class FullyNNModel(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
-        gap = (tau_pred - time_next).squeeze(-1) * mask_next
+        gap = (tau_pred - time_next).squeeze(-1) * mask
         return torch.mean(torch.abs(gap)).item()
 
     # All methods not required by BasicModule are intensity plotter exclusive.
@@ -159,25 +152,25 @@ class FullyNNModel(BasicModule):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
+              The original dataset records.
         resolution: int
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, mask, _ = input_data[0]
+        input_time, input_events, _, mask = input_data[0]
         mean, var = input_data[1]
         
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
-        mask_history, _ = self.divide_history_and_next(mask, unsqueeze = False)
-                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+
 
         expand_integral, expand_intensity, timestamp = \
                         self.model.integral_intensity(events_history, time_history, \
-                                                      time_next, resolution, mask_history, mean, var)
-                                                                               # 3 * [batch_size, seq_len * resolution]
+                                                      time_next, resolution, mean, var, mask_next)
+
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
         return expand_integral, expand_intensity, timestamp
@@ -191,18 +184,18 @@ class FullyNNModel(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, mask, _  = input_data[0]
+        input_time, input_events, _, mask = input_data[0]
         mean, var = input_data[1]
 
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
                                                                                # [batch_size, seq_len, 1]
         events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
-        mask_history, _ = self.divide_history_and_next(mask, unsqueeze = False)
-                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+
 
         probed_results, timestamp = self.model.model_probe_function(events_history, time_history, \
-                                                                    time_next, resolution, mask_history, mean, var)
+                                                                    time_next, resolution, mean, var, mask_next)
                                                                                # [batch_size, seq_len * resolution, 1] * n
 
         return probed_results, timestamp
@@ -245,18 +238,8 @@ class FullyNNModel(BasicModule):
                 var = var
         )
 
-        gamma = 2
-        def new_loss(gamma, *kwargs):
-            total_loss = 0
-            for loss in kwargs:
-                total_loss += torch.pow(loss, gamma)
-            
-            total_loss /= len(kwargs)
-            total_loss = torch.pow(total_loss, 1 / gamma)
-            
-            return total_loss
 
-        loss = new_loss(gamma, time_loss, events_loss)
+        loss = time_loss + events_loss
         loss.backward()
     
         time_loss = time_loss.item() / the_number_of_events
@@ -270,7 +253,7 @@ class FullyNNModel(BasicModule):
     
         model.eval()
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
-        time_loss, events_loss, mae, the_number_of_events, debug_data = model(
+        time_loss, events_loss, mae, the_number_of_events = model(
                 input_time = time_seq, input_events = event_seq, mask = mask, evaluate = True,\
                 mean = mean, var = var
         )
@@ -279,7 +262,7 @@ class FullyNNModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum() / the_number_of_events
         
-        return [time_loss, fact, events_loss, mae, *debug_data]
+        return [time_loss, fact, events_loss, mae]
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -294,7 +277,7 @@ class FullyNNModel(BasicModule):
             Evaluation process
             [absolute loss, relative loss, events loss, mae value]
             '''
-            return [input[0], input[0] - input[1], input[2], input[3], input[4], input[5], input[6], input[7]]
+            return [input[0], input[0] - input[1], input[2], input[3]]
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
@@ -314,17 +297,12 @@ class FullyNNModel(BasicModule):
             format_dict['relative_loss'] = input[1]
             format_dict['events_loss'] = input[2]
             format_dict['mae'] = input[3]
-            format_dict['intensity_mean'] = input[4]
-            format_dict['intensity_var'] = input[5]
-            format_dict['event_probability_mean'] = input[6]
-            format_dict['event_probability_var'] = input[7]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f', 'mae': ':2.8f',\
-                                         'intensity_mean': ':6.5f', 'intensity_var': ':6.5f', 'event_probability_mean': ':6.5f', 'event_probability_var': ':6.5f'}
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f', 'mae': ':2.8f'}
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-    format_dict_length = 8
+    format_dict_length = 4
     
     logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f'}
 
