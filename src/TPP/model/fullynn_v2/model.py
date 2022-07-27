@@ -159,7 +159,7 @@ class FullyNN2Model(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, mask = input_data[0]
+        input_time, input_events, _, mask = input_data[0][:4]
         mean, var = input_data[1]
         
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
@@ -186,7 +186,7 @@ class FullyNN2Model(BasicModule):
                     How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
-        input_time, input_events, _, mask = input_data[0]
+        input_time, input_events, _, mask = input_data[0][:4]
         mean, var = input_data[1]
 
         time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
