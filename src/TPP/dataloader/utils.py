@@ -30,9 +30,10 @@ def seed_worker(worker_id):
 dataloader_modulepath = {
     # These following dataloaders fits all other models.
     'syn': ['synthetic.synthetic_dataset', 'syn_dataloader'],
+    'syn_arg': ['synthetic_autoregressive.synthetic_autoregressive_dataset', 'synarg_dataloader'],
     'ctlstm': ['ctlstm.ctlstm_dataset', 'ctlstm_dataloader'],
     'cnf': ['cnf.cnf_dataset', 'cnf_dataloader'],
-    'ifl': ['ifl.ifl_dataset', 'ifl_dataloader']
+    'ifl': ['ifl.ifl_dataset', 'ifl_dataloader'],
 
     # 2021-10-14 update: legacy dataloaders are deprecated and are removed from the dataloader zoo.
     # Take your own risk to readd and use them.

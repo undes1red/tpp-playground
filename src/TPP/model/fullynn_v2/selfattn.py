@@ -20,30 +20,30 @@ class SelfAttn(nn.Module):
         '''
         Args:
 
-        1. q: input tensor. shape: [batch_size, seq_len, n_head, d_qk]
-        2. k: input tensor. shape: [batch_size, seq_len, n_head, d_qk]
-        3. v: input tensor. shape: [batch_size, seq_len, n_head, d_v]
+        1. q: input tensor. shape: [..., seq_len, n_head, d_qk]
+        2. k: input tensor. shape: [..., seq_len, n_head, d_qk]
+        3. v: input tensor. shape: [..., seq_len, n_head, d_v]
         4. mask: mask_out several values in the attention matrices. shape: [seq_len, seq_len]
 
         Output:
         1. output: the result of self attention. shape: [batch_size, seq_len, n_head, d_v]
         '''
 
-        q /= self.temperature                                                  # [batch_size, seq_len, n_head, d_qk]
+        q /= self.temperature                                                  # [..., seq_len, n_head, d_qk]
 
-        attn = torch.einsum('ijkl, imkl -> ikjm', q, k)                        # [batch_size, n_head, seq_len, seq_len]
+        attn = torch.einsum('...jkl, ...mkl -> ...kjm', q, k)                  # [..., n_head, seq_len, seq_len]
 
         if mask is not None:
-            attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
+            attn = attn.masked_fill(mask.unsqueeze(-3), -1e9)                  # [..., n_head, seq_len, seq_len]
         
         if self.wq_nonneg or self.wk_nonneg:
-            attn = self.dropout(F.sigmoid(attn, dim = -1))                     # [batch_size, n_head, seq_len, seq_len]
+            attn = self.dropout(torch.sigmoid(attn))                           # [..., n_head, seq_len, seq_len]
         else:
-            attn = self.dropout(F.softmax(attn, dim = -1))                     # [batch_size, n_head, seq_len, seq_len]
+            attn = self.dropout(F.softmax(attn, dim = -1))                     # [..., n_head, seq_len, seq_len]
         
         if self.wv_nonneg and not self.wq_nonneg and not self.wk_nonneg:
-            attn = F.softplus(attn)                                            # [batch_size, n_head, seq_len, seq_len]
+            attn = F.softplus(attn)                                            # [..., n_head, seq_len, seq_len]
 
-        output = torch.einsum('ijkl, iljn -> ikjn', attn, v)                   # [batch_size, seq_len, n_head, d_v]
+        output = torch.einsum('...jkl, ...ljn -> ...kjn', attn, v)             # [..., seq_len, n_head, d_v]
 
         return output, attn

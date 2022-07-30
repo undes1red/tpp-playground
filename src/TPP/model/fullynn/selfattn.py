@@ -37,7 +37,7 @@ class SelfAttn(nn.Module):
             attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
         
         if self.wq_nonneg or self.wk_nonneg:
-            attn = self.dropout(F.sigmoid(attn, dim = -1))                     # [batch_size, n_head, seq_len, seq_len]
+            attn = self.dropout(torch.sigmoid(attn))                           # [batch_size, n_head, seq_len, seq_len]
         else:
             attn = self.dropout(F.softmax(attn, dim = -1))                     # [batch_size, n_head, seq_len, seq_len]
         

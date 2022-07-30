@@ -14,16 +14,16 @@ are significantly different, which is over 100 times larger when a bottleneck la
 
 class FullyNNModel(BasicModule):
     def __init__(self, d_history,
-                 num_events,
                  d_intensity,
                  dropout,
                  history_module_layers,
                  mlp_layers,
                  nonlinear,
+                 mae_threshold,
+                 num_events,
                  device,
                  history_module = 'LSTM',
                  n_head = 0,
-                 mae_threshold = 2,
                  event_toggle = False,
                  reverse_bottleneck = True,
                  no_bottleneck = False, no_norm = False, no_activate = False,
@@ -246,7 +246,7 @@ class FullyNNModel(BasicModule):
     
         time_loss = time_loss.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
-        fact = score.sum() / the_number_of_events
+        fact = score.sum().item() / the_number_of_events
         
         return [time_loss, fact, events_loss]
     
@@ -262,7 +262,7 @@ class FullyNNModel(BasicModule):
     
         time_loss = time_loss.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
-        fact = score.sum() / the_number_of_events
+        fact = score.sum().item() / the_number_of_events
         
         return [time_loss, fact, events_loss, mae]
 
@@ -319,6 +319,6 @@ class FullyNNModel(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report[1].item(), test_report[1].item(), test_report[2].item()]
+        return [evaluation_report[1], test_report[1], test_report[2]]
     
     metric_number = 3 # metric number is the length of the output of choose_metric

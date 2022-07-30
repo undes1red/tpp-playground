@@ -643,7 +643,7 @@ def extract_data(data, opt):
     return extract_data_from_rawdata[opt.dataloader_name](data)
 
 def syn_extract(raw_data):
-    [time_seq, event_seq, score, mask, intensity], (mean, var) = raw_data
+    [time_seq, event_seq, _, _, intensity], _ = raw_data
     return time_seq, event_seq[:, 1:], intensity
 
 def ctlstm_extract(raw_data):
@@ -665,9 +665,19 @@ def ifl_extract(raw_data):
     )                                                                          # [batch_size, seq_len]
     return time, event, intensity
 
+def syn_arg_extract(raw_data):
+    [_, _, result, _, event, intensity, _], _ = raw_data
+    # pad the time sequence
+    result = torch.cat(
+        (torch.zeros((result.shape[0], 1), device = result.device), result), dim = -1
+    )
+    return result, event, intensity
+
+
 extract_data_from_rawdata = {
     'syn': syn_extract,
     'ctlstm': ctlstm_extract,
     'cnf': cnf_extract,
-    'ifl': ifl_extract
+    'ifl': ifl_extract,
+    'syn_arg': syn_arg_extract
 }

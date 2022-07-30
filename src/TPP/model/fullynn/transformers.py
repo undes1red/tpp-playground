@@ -34,7 +34,8 @@ class TransEncoder(nn.Module):
 
         self.event_encoder = nn.ModuleList([
             TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
-                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
+                             d_qk = d_qk, d_v = d_v, dropout = dropout, wq_nonneg = wq_nonneg, \
+                             wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = self.device)
             for _ in range(n_layers)])
 
         self.time_encoder = nn.ModuleList([
