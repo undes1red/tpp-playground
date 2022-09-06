@@ -132,7 +132,9 @@ class TransDecoder(nn.Module):
         self.cls = nn.Parameter(torch.randn(self.d_input, dtype = torch.float32, requires_grad = True, device = device))
 
         # Should we introduce more complex time_scalar based on our prior knowledge about TPP?
-        self.time_scaler = nn.Identity()
+        self.time_scaler_function_1 = nn.Tanh()
+        self.time_scaler_parameter_1 = nn.Parameter(torch.tensor(0., device = device, requires_grad=True))
+
         self.time_encoder = NonNegLinear(1, d_input, bias = False, device = device)
 
         self.decoder = nn.ModuleList(
@@ -168,7 +170,7 @@ class TransDecoder(nn.Module):
 
         # We preprocess the mask as the sequence here is supposed to be 1 item longer than the history.
         mask = torch.cat(
-            (mask, torch.ones(batch_size, seq_len, 1, device = self.device)),
+            (mask, (mask.sum(dim = -1) > 0).int().unsqueeze(dim = -1)),
             dim = -1
         )                                                                      # [batch_size, seq_len, history_length + 1]
         self_attn_mask_keypad = (torch.ones_like(mask, device = self.device) - mask).unsqueeze(dim = -1)
@@ -187,18 +189,23 @@ class TransDecoder(nn.Module):
         interval_from_current_to_history = (torch.sum(relative_time, dim = -1, keepdim = True) - torch.cumsum(relative_time, dim = -1)).float()
                                                                                # [batch_size, seq_len, history_length + 1]
         # Tackle the Pytorch precision tolerance which may lead to tiny computation errors in interval_from_current_to_history
-        interval_from_current_to_history[:, :, -1] = 0
+        # Tuning: Remove the relative time information part 2 in the history.
+        interval_from_current_to_history[:, :, -1] = result
+
+        emb_time_1 = self.time_scaler_function_1(self.nonneg_activate(self.time_scaler_parameter_1) * interval_from_current_to_history)
+                                                                               # [batch_size, seq_len, history_length + 1]
         
         # Time activation function may be required here before feeded into the time encoder.
-        emb_time = self.time_encoder(self.time_scaler(interval_from_current_to_history).unsqueeze(dim = -1))
+        emb_time = self.time_encoder(emb_time_1.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, history_length + 1, d_input]
 
-        emb_for_integral = self.nonneg_activate(new_history) + emb_time        # [batch_size, seq_len, history_length + 1, d_input]
+        emb_for_integral = self.nonneg_activate(new_history) + emb_time
+                                                                               # [batch_size, seq_len, history_length + 1, d_input]
 
         for monotonic_layer in self.decoder:
             emb_for_integral, _ = monotonic_layer(
                 emb_for_integral, emb_for_integral, emb_for_integral,
-                non_pad_mask = mask.unsqueeze(dim = -1),
+                non_pad_mask = None,
                 self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, history_length + 1, d_input]
         
         cls_embedding = emb_for_integral[:, :, -1, :]                          # [batch_size, seq_len, d_input]
@@ -236,7 +243,7 @@ class TransDecoder(nn.Module):
 
         # We preprocess the mask as the sequence here is supposed to be 1 item longer than the history.
         mask = torch.cat(
-            (mask, torch.ones(batch_size, seq_len, 1, device = self.device)),
+            (mask, (mask.sum(dim = -1) > 0).int().unsqueeze(dim = -1)),
             dim = -1
         )                                                                      # [batch_size, seq_len, history_length + 1]
         self_attn_mask_keypad = (torch.ones_like(mask, device = self.device) - mask).unsqueeze(dim = -1)
@@ -259,13 +266,17 @@ class TransDecoder(nn.Module):
         interval_from_current_to_history = (torch.sum(relative_time, dim = -1, keepdim = True) - torch.cumsum(relative_time, dim = -1)).float()
                                                                                # [batch_size, seq_len, resolution, history_length + 1]
         # Tackle the floatpoint number precision tolerance which may lead to tiny computation errors in interval_from_current_to_history
-        interval_from_current_to_history[:, :, :, -1] = 0
-        
+        interval_from_current_to_history[:, :, :, -1] = result
+
+        emb_time_1 = self.time_scaler_function_1(self.nonneg_activate(self.time_scaler_parameter_1) * interval_from_current_to_history)
+                                                                               # [batch_size, seq_len, resolution, history_length + 1]
+
         # Time activation function may be required here before feeded into the time encoder.
-        emb_time = self.time_encoder(self.time_scaler(interval_from_current_to_history).unsqueeze(dim = -1))
+        emb_time = self.time_encoder(emb_time_1.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, resolution, history_length + 1, d_input]
 
-        emb_for_integral = self.nonneg_activate(expand_new_history) + emb_time # [batch_size, seq_len, resolution, history_length + 1, d_input]
+        emb_for_integral = self.nonneg_activate(expand_new_history) + emb_time
+                                                                               # [batch_size, seq_len, resolution, history_length + 1, d_input]
 
         for monotonic_layer in self.decoder:
             emb_for_integral, _ = monotonic_layer(
@@ -275,9 +286,12 @@ class TransDecoder(nn.Module):
         
         cls_embedding = emb_for_integral[:, :, :, -1, :]                       # [batch_size, seq_len, resolution, d_input]
 
-        # Integral
-        integral = self.nonneg_activate(self.integral(cls_embedding)).squeeze(dim = -1)
+        # Integral offset
+        integral_original = self.nonneg_activate(self.integral(cls_embedding)).squeeze(dim = -1)
                                                                                # [batch_size, seq_len, resolution]
+        integral_zero = integral_original[:, :, 0].detach()                    # [batch_size, seq_len]
+        integral = integral_original - integral_zero.unsqueeze(dim = -1)       # [batch_size, seq_len, resolution]
+
 
         # Intensity values and their sum.
         intensity = torch.autograd.grad(

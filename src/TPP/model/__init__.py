@@ -21,13 +21,15 @@ modelpath = {
     # [file name, Model wrapper name]
     'dwg': ['dwg.model', 'TemporalModel'],
     'fullynn': ['fullynn.model', 'FullyNNModel'],
+    'multi_fullynn': ['multi_fullynn.model', 'MultiFullyNNModel'],
     'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
     'cnf': ['cnf.model', 'CNFWrapper'],
     'ifl': ['ifl.model', 'IFL'],
     'rmtpp': ['rmtpp.model', 'RMTPP'],
     'thp': ['thp.model', 'THP'],
     'fullynn_v2': ['fullynn_v2.model', 'FullyNN2Model'],
-    # 'dwg_v2': ['dwg_v2.model', 'FullyNNModel']
+    'attn_cm': ['attn_cm.model', 'AttnCMWrapper'],
+    'fullynn_v3': ['fullynn_v3.model', 'FullyNN3Model'],
 
     # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
     # Please take your own risk when you readd and use them. 

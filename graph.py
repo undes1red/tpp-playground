@@ -53,7 +53,7 @@ if __name__ == '__main__':
     # Find the checkpoint file.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
     folder_suffix = 'output_' + model_hyperparameters
-    checkpoint_folder = os.path.join(root, 'data', 'outputs', opt.dataset_name, folder_suffix)
+    checkpoint_folder = os.path.join(root, 'model', opt.dataset_name, folder_suffix)
     logger.info(f'Choosed model checkpoint file is in directory {checkpoint_folder}.')
 
     # where these figures output.

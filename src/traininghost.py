@@ -71,7 +71,7 @@ class TrainingHost:
         '''
         Multiprocessing training controller.
         '''
-        dist.init_process_group("gloo" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+        dist.init_process_group("nccl" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
 
         '''
         Gradient aggergation check

@@ -38,7 +38,7 @@ This function should return
 2. We will utilize intensity functions values and their integrals for probability distribution.
    We don't need to implement another model method to obtain them.
 '''
-intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp', 'rmtpp', 'fullynn_v2']
+intensity_available = ['dwg', 'fullynn', 'ctlstm', 'thp', 'rmtpp', 'fullynn_v2', 'fullynn_v3', 'multi_fullynn']
 
 '''
 Intensity function drawing utils
@@ -138,7 +138,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2']
+probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2', 'fullynn_v3']
 
 def expand_model_probability(opt):
     if opt.model_name not in probability_available:
@@ -212,11 +212,24 @@ def draw_features(model, data, desc, plot_count, opt):
     This function is for model probing. It can be super useful when you need to dig into a model and see
     what really happens.
     data: [time_diff, score, target_intensity]
+
+    Update 2022-08-21: now you can use additional_plot to draw plots like attention heatmap.
     '''
 
     time, event, _ = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().squeeze()      # [batch_size, seq_len]
-    probed_data, timestamp = model.model_prober(data, opt.resolution)
+    data, timestamp  = model.model_prober(data, opt.resolution)
+    if len(data) == 1:
+        '''
+        No additional maps available.
+        '''
+        probed_data = data[0]
+        additional_plot = {}
+    else:
+        '''
+        We have additional maps.
+        '''
+        probed_data, additional_plot = data
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     event = event.squeeze().cpu().numpy()
 
@@ -243,6 +256,21 @@ def draw_features(model, data, desc, plot_count, opt):
         logger.info(f'Debug plot {key} finished drawing.')
         plt.close(fig = fig)
     
+    if len(additional_plot.keys()) > 0:
+        logger.info('Now we start drawing the additional maps.')
+    else:
+        logger.info('No additional task is required.')
+
+    for key, value in additional_plot.items():
+        for idx, per_map in enumerate(value):
+            map_name, data = per_map
+            fig = plt.figure()
+            if hasattr(sns, key):
+                getattr(sns, key)(**data)
+            plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count),  key + '_' + map_name + '_' + str(idx) + '.png'), dpi = 1000)
+            logger.info(f'Debug {key} {map_name} {idx} finished drawing.')
+            plt.close(fig = fig)
+
 
 def draw(model, data, desc, plot_count, opt):
     if opt.plot_type == 'intensity':

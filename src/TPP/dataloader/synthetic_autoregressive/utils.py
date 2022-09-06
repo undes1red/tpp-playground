@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-def transform_autoregression(data_input, history_seq):
+def transform_autoregression(data_input, history_seq, num_events):
     history_time = []
     history_event = []
     result = []
@@ -23,7 +23,7 @@ def transform_autoregression(data_input, history_seq):
             raise ValueError("Non-monotonic increase time input detected.")
 
         padded_time = np.concatenate(([0.] * (history_seq - 1), time))
-        padded_event_seq = np.concatenate(([6] * (history_seq - 1), event_seq))
+        padded_event_seq = np.concatenate(([num_events + 1] * (history_seq - 1), event_seq))
         arg_history_time = []
         arg_history_event = []
 
@@ -37,9 +37,6 @@ def transform_autoregression(data_input, history_seq):
         score.append(L[1:].tolist())
         event.append(event_seq[1:].tolist())
         intensity.append(intensity_seq[1:].tolist())
-    
-        if index > 10000:
-            break
-
+        
     return pd.DataFrame.from_dict({'history_time': history_time, 'history_event': history_event, 'result': result, \
                                    'score': score, 'event': event, 'intensity': intensity})

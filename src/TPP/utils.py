@@ -89,7 +89,7 @@ class Metric():
         output = True
 
         for input_number, recorded in zip(tmp, self.best_metric):
-            if input_number >= recorded:
+            if input_number > recorded:
                 output = False
                 break
         

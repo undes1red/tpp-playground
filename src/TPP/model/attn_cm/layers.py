@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .selfattn import SelfAttn
@@ -172,10 +171,8 @@ class NonNegFFN(nn.Module):
         super(NonNegFFN, self).__init__()
         self.device = device
         
-        # self.w_1 = NonNegLinear(d_input, d_hidden, device = self.device)
-        # self.w_2 = NonNegLinear(d_hidden, d_input, device = self.device)
-        self.w = nn.Parameter(torch.zeros(d_input, dtype = torch.float32, device = device, requires_grad=True))
-        nn.init.normal_(self.w)
+        self.w_1 = NonNegLinear(d_input, d_hidden, device = self.device)
+        self.w_2 = NonNegLinear(d_hidden, d_input, device = self.device)
 
         self.norm = NonNegNorm(device = device)
 
@@ -188,12 +185,11 @@ class NonNegFFN(nn.Module):
         '''
         residual = x
 
-        # x = self.norm(x)                                                       # [..., d_input]
-        # x = F.softplus(self.w_1(x))                                            # [..., d_hidden]
-        # x = self.w_2(x)                                                        # [..., d_input]
-        x = x * torch.tanh(self.w)                                             # [..., d_input]
-
+        x = self.norm(x)                                                       # [..., d_input]
+        x = F.softplus(self.w_1(x))                                            # [..., d_hidden]
+        x = self.w_2(x)                                                        # [..., d_input]
         x += residual
+
         x = self.norm(x)                                                       # [..., d_input]
 
         return x

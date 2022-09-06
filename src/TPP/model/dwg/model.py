@@ -119,7 +119,8 @@ class TemporalModel(BasicModule):
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
                                                                                # [batch_size, seq_len, 1]
         gap = (tau_pred - time_next).squeeze(-1) * mask                        # [batch_size, seq_len]
-        return torch.mean(torch.abs(gap)).item()
+        gap_mean = torch.sum(torch.abs(gap)) / mask.sum()
+        return gap_mean.item()
 
     # All methods not required by BasicModule are intensity plotter exclusive.
     def function_prober(self, input_data, resolution):
