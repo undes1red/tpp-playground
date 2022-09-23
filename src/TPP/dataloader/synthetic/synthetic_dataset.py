@@ -20,7 +20,7 @@ class SynDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, num_events, plot = False, shift = False, input_norm_data = False):
+    def __init__(self, data, device, num_events, plot = False, shift = False, shift_time = False, input_norm_data = False):
         super(SynDataset, self).__init__()
         self.data = data
         self.device = device
@@ -30,7 +30,16 @@ class SynDataset(utils.data.Dataset):
         self.var = 1
 
         # Data preprocessing
-        self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
+        if shift_time:
+            '''
+            Current stackoverflow specific
+            '''
+            for idx, item in enumerate(self.data.time_seq):
+                first_event_abs_time = item[0]
+                self.data.time_seq[idx].insert(0, first_event_abs_time - 0.8)
+        else:
+            self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
+
         self.data.time_seq = self.data.time_seq.apply(diff, shift = shift)
         # if input_norm_data:
         #     self.data.time_seq = self.data.time_seq.apply(math.log)

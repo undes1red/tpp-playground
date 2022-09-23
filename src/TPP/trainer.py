@@ -87,7 +87,7 @@ class TPPTrainer:
                            name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
                                             self.opt.dataset_name, str(self.opt.dataloader_config)]), \
                            dir = os.path.join(self.opt.log, self.log_folder), \
-                           resume = 'never'
+                           resume = 'never', settings = wandb.Settings(start_method="fork")
                            )
                 wandb.watch(self.model, log = 'all', log_freq = self.opt.n_report_steps)
     

@@ -402,11 +402,11 @@ class TransDecoder(nn.Module):
         integral_for_all_events = {}
         loss = {}
         for i in range(self.num_types):
-            intensity_for_all_events[f'event_{i}_intensity'] = intensity[:, :, :, i].reshape(batch_size, -1)
+            intensity_for_all_events[f'event_intensity_ {i}'] = intensity[:, :, :, i].reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
-            integral_for_all_events[f'event_{i}_integral'] = integral[:, :, :, i].reshape(batch_size, -1)
+            integral_for_all_events[f'event_integral_{i}'] = integral[:, :, :, i].reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
-            loss[f'event_{i}_loss'] = (-torch.log(intensity[:, :, :, i]) + integral[:, :, :, i]).reshape(batch_size, -1)
+            loss[f'event_loss_{i}'] = (-torch.log(intensity[:, :, :, i]) + integral[:, :, :, i]).reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
 
         integral = integral.sum(dim = -1).reshape(batch_size, -1)              # [batch_size, seq_len * resolution]

@@ -3,6 +3,7 @@
 
 import subprocess, os, argparse, itertools, math
 from src.traininghost import getLogger
+from parameter_set import parameter_retriver
 
 logger = getLogger(__name__)
 
@@ -11,6 +12,9 @@ parser.add_argument('--script_type', type = str, choices = ['train', 'plot'], de
                                      help = 'You can use this only argument to select what you want to do.')
 parser.add_argument('--GPU', type = int, default = None, help='How many GPU you want to use? Set it to None to use all GPUs, \
                                                                  or set it to negative number or None for CPU learning.')
+parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
+parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
+
 opt = parser.parse_args()
 # Environment variables
 do_not_use_gpu = False
@@ -18,61 +22,6 @@ if opt.GPU is not None and opt.GPU >= 0:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(opt.GPU)
 else:
     do_not_use_gpu = True
-
-
-training_hyperparameter_list = [
-    "train.py", \
-    "--no_seed", \
-    "--dataloader_name", "syn", \
-    "--dataloader_config", "retweet/no_norm.json", \
-    "--dataset_name", ["mimic"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
-    "--b", "16", \
-    "--n_warmup_steps", "5000", \
-    "--model_name", "fullynn", \
-    "--model_config", ["normal/fullynn.json", "normal/fullynn_no_act.json", "normal/fullynn_no_act_expand.json",
-                       "normal/fullynn_no_all.json", "normal/fullynn_no_expand.json", "normal/fullynn_no_inv.json", 
-                       "normal/fullynn_no_norm_act.json", "normal/fullynn_no_norm_expand.json", "normal/fullynn_no_norm.json"],
-    "--lr", "0.002", \
-    "--save_mode", "best", \
-    "--lr_sched", \
-    "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
-    "" if do_not_use_gpu else "--cuda", \
-    "--n_cycles", "0.5",\
-    "--wandb"
-]
-
-plot_hyperparameter_list = [
-    "graph.py", \
-    "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["normal/fullynn_no_norm_act.json", "normal/fullynn_no_norm.json", "normal/fullynn_no_norm_expend.json", \
-                       "normal/fullynn_no_act.json", "normal/fullynn_no_act_expend.json", "normal/fullynn_no_all.json", \
-                       "normal/fullynn_no_inv.json", "normal/fullynn_no_expand.json"], \
-    "--lr", "0.002", \
-    "--batch_size", "128", \
-    "--n_training_steps", "50000", \
-    "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "hawkes_1_new_v1", "hawkes_2_new_v1", "self_correct_v2",\
-                       "self_correct_new_v1", "poisson_new_v1", "poisson_v2"], \
-    "--dataloader_name", "syn", \
-    "--figure_count", "10", \
-    "--train", \
-    "--test", \
-    "--evaluation", \
-    # "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability"], \
-    "--dataloader_config", "normal/plot.json", \
-    "--resolution", "100", \
-    "" if do_not_use_gpu else "--cuda", \
-]
-
-hyperparameters_dict = {
-    'train': training_hyperparameter_list,
-    'plot': plot_hyperparameter_list
-}
 
 def list_generator(hyperparameter_list):
     '''
@@ -153,7 +102,8 @@ def list_generator(hyperparameter_list):
                     add_mark = True
 
 task_count = 1
-for hp_list in list_generator(hyperparameters_dict[opt.script_type]):
+for hp_list in list_generator(parameter_retriver(opt)):
+    hp_list.append("" if do_not_use_gpu else "--cuda")
     process = subprocess.Popen([
             'python3'
     ] + hp_list)

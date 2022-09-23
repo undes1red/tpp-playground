@@ -3,6 +3,7 @@ import seaborn as sns
 import torch, os
 import pandas as pd
 import numpy as np
+from scipy.stats import spearmanr
 from .utils import getLogger, restore_dataset_name
 
 logger = getLogger(name = __file__)
@@ -81,8 +82,21 @@ def draw_intensity(model, data, desc, plot_count, opt):
 
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     event = event.squeeze().cpu().numpy()
+    annotation = None
     if true_intensity is not None:
         true_intensity = true_intensity.squeeze().detach().cpu().numpy()
+        # Calculate pearson, spearman corrilation and L^1 distance here.
+        # Then, print these values directly on the plots.
+        
+        # Spearman correlation
+        rho = spearmanr(a = true_intensity, b = model_intensity)[0]
+        # Pearson correlation
+        r = np.corrcoef(x = true_intensity, y = model_intensity)[0, 1]
+        # L1 distance
+        L1 = L1_distance(x = true_intensity, y = model_intensity, timestamp = timestamp, resolution = opt.resolution)
+
+        annotation = f'ρ = {rho}, r = {r}, L1 = {L1}'
+
     
     if true_intensity is not None:
         df = pd.DataFrame.from_dict(
@@ -103,6 +117,8 @@ def draw_intensity(model, data, desc, plot_count, opt):
     sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_intensity_plot)
     sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
     fig.set_size_inches(length,height)
+    if annotation is not None:
+        fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
 
     if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
         os.makedirs(os.path.join(opt.store_dir, 'intensity'))
@@ -138,7 +154,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2', 'fullynn_v3']
+probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2', 'fullynn_v3', 'multi_fullynn']
 
 def expand_model_probability(opt):
     if opt.model_name not in probability_available:
@@ -181,6 +197,17 @@ def draw_probability(model, data, desc, plot_count, opt):
     event = event.squeeze().cpu().numpy()
     if true_probability is not None:
         true_probability = true_probability.squeeze().detach().cpu().numpy()
+        # Calculate pearson, spearman corrilation and L^1 distance here.
+        # Then, print these values directly on the plots.
+        
+        # Spearman correlation
+        rho = spearmanr(a = true_probability, b = model_probability)[0]
+        # Pearson correlation
+        r = np.corrcoef(x = true_probability, y = model_probability)[0, 1]
+        # L1 distance
+        L1 = L1_distance(x = true_probability, y = model_probability, timestamp = timestamp, resolution = opt.resolution)
+
+        annotation = f'ρ = {rho}, r = {r}, L1 = {L1}'
     
     if true_probability is not None:
         df = pd.DataFrame.from_dict(
@@ -201,6 +228,8 @@ def draw_probability(model, data, desc, plot_count, opt):
     sns.lineplot(x = 'Time', y = 'Probability Distribution', hue = '', data = df_probability_plot)
     sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
     fig.set_size_inches(length,height)
+    if annotation is not None:
+        fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
 
     if not os.path.exists(os.path.join(opt.store_dir, 'probability_distribution')):
         os.makedirs(os.path.join(opt.store_dir, 'probability_distribution'))
@@ -236,25 +265,26 @@ def draw_features(model, data, desc, plot_count, opt):
     if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(plot_count))):
         os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(plot_count)))
     
-    df_time = pd.DataFrame.from_dict(
-            {'Time': aggregate_time, 'Point': np.zeros_like(aggregate_time), 'Event': [f'Event {item}' for item in event]}
-    )
-
-    for key, value in probed_data.items():
-        value = value.squeeze().detach().cpu().numpy()
-        df = pd.DataFrame.from_dict(
-                {'Time': timestamp, key: value}
-            )
-
-        # Draw plot
-        fig = plt.figure()
-        sns.lineplot(x = 'Time', y = key, data = df)
-        sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
-        fig.set_size_inches(length,height)
-
-        plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
-        logger.info(f'Debug plot {key} finished drawing.')
-        plt.close(fig = fig)
+    if not opt.plot_type == 'debug_addition_only':
+        df_time = pd.DataFrame.from_dict(
+                {'Time': aggregate_time, 'Point': np.zeros_like(aggregate_time), 'Event': [f'Event {item}' for item in event]}
+        )
+    
+        for key, value in probed_data.items():
+            value = value.squeeze().detach().cpu().numpy()
+            df = pd.DataFrame.from_dict(
+                    {'Time': timestamp, key: value}
+                )
+    
+            # Draw plot
+            fig = plt.figure()
+            sns.lineplot(x = 'Time', y = key, data = df)
+            sns.scatterplot(x = 'Time', y = 'Point', data = df_time, palette = 'pastel', hue = 'Event')
+            fig.set_size_inches(length,height)
+    
+            plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count), key + '.png'), dpi = 1000)
+            logger.info(f'Debug plot {key} finished drawing.')
+            plt.close(fig = fig)
     
     if len(additional_plot.keys()) > 0:
         logger.info('Now we start drawing the additional maps.')
@@ -277,7 +307,7 @@ def draw(model, data, desc, plot_count, opt):
         draw_intensity(model, data, desc, plot_count, opt)
     elif opt.plot_type == 'probability':
         draw_probability(model, data, desc, plot_count, opt)
-    elif opt.plot_type == 'debug':
+    elif opt.plot_type == 'debug' or opt.plot_type == 'debug_addition_only':
         draw_features(model, data, desc, plot_count, opt)
     else:
         raise Exception('Unknown plot type detected!')
@@ -709,3 +739,27 @@ extract_data_from_rawdata = {
     'ifl': ifl_extract,
     'syn_arg': syn_arg_extract
 }
+
+def L1_distance(x, y, timestamp, resolution):
+    '''
+    This function calculates the L^1 distance between two functions.
+    Input:
+    1. x:          function values
+                   [seq_len * resolution, num_events]
+    2. y:          function values
+                   the number of points from [t_{i - 1}, t_i]
+    3. time:       \Delta t
+                   the number of event types
+    '''
+
+    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [seq_len, resolution - 1]
+    timestamp = timestamp.reshape(-1, resolution)                              # [seq_len, resolution]
+    timestamp = np.diff(timestamp, axis = -1)                                  # [seq_len, resolution - 1]
+
+    L1 = (function_interval * timestamp).sum()
+
+    # round up the value smaller than 1e-6
+    if L1 < 1e-6:
+        L1 = 0
+
+    return L1

@@ -30,7 +30,7 @@ if __name__ == '__main__':
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--evaluation', action='store_true')
-    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'debug'], default = 'intensity', help='Temporal point process only.')
+    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'debug', 'debug_addition_only'], default = 'intensity', help='Temporal point process only.')
     parser.add_argument('--custom_collator', action='store_true',\
                 help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
 

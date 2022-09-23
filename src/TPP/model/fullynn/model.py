@@ -28,17 +28,21 @@ class FullyNNModel(BasicModule):
                  event_toggle = False,
                  reverse_bottleneck = True,
                  no_bottleneck = False, no_norm = False, no_activate = False,
-                 wq_nonneg = False, wk_nonneg = False, wv_nonneg = False):
+                 wq_nonneg = False, wk_nonneg = False, wv_nonneg = False,
+                 split_comp_graph = True):
         super(FullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
         self.event_toggle = event_toggle
-        self.reverse_bottleneck = reverse_bottleneck
+        self.reverse_bottleneck = reverse_bottleneck if split_comp_graph else False
+        self.split_comp_graph = split_comp_graph
+
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
                              dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                              mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, n_head = n_head,
-                             wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
+                             wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, split_comp_graph = split_comp_graph, 
+                             device = device)
         if reverse_bottleneck and event_toggle:
             self.inv_neck_1 = InvertedBottleneck(self.num_events, self.num_events * 4, device = device, \
                                                  no_bottleneck = no_bottleneck, no_norm = no_norm, no_activate = no_activate)
@@ -105,7 +109,7 @@ class FullyNNModel(BasicModule):
             event_loss = torch.tensor(0., dtype = torch.float32)
             f1 = 0
         
-        if not self.evaluate and self.event_toggle and not self.reverse_bottleneck:
+        if not evaluate and self.event_toggle and not self.reverse_bottleneck:
             event_loss = torch.tensor(0., dtype = torch.float32)
     
         time_loss = self.time_loss_f(intensity = intensity_for_each_event, events_next = events_next, \
@@ -203,11 +207,11 @@ class FullyNNModel(BasicModule):
         _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
 
-        probed_results, timestamp = self.model.model_probe_function(events_history, time_history, \
+        probed_results, additional_plot, timestamp = self.model.model_probe_function(events_history, time_history, \
                                                                     time_next, resolution, mean, var, mask_next)
-                                                                               # [batch_size, seq_len * resolution, 1] * n
+                                                                               # [batch_size, seq_len * resolution] * n
 
-        return probed_results, timestamp
+        return (probed_results, additional_plot), timestamp
     
     def time_loss_f(self, intensity, intensity_integral, mask, events_next):
         '''
@@ -264,7 +268,6 @@ class FullyNNModel(BasicModule):
                 input_time = time_seq, input_events = event_seq, mask = mask, mean = mean,\
                 var = var
         )
-
 
         loss = time_loss + events_loss
         loss.backward()

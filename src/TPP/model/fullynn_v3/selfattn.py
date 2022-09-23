@@ -45,7 +45,7 @@ class SelfAttn(nn.Module):
         
         if self.wq_nonneg or self.wk_nonneg:
             # Tanh() or other activations?
-            attn = self.dropout(torch.log(1 + self.shift * attn))              # [..., n_head, seq_len, 1]
+            attn = self.dropout(torch.tanh(self.shift * attn))                 # [..., n_head, seq_len, 1]
         else:
             attn = self.dropout(F.softmax(attn, dim = -1))                     # [..., n_head, seq_len, 1]
         

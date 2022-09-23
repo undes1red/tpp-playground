@@ -38,12 +38,15 @@ class FullyNN(nn.Module):
     '''
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, device):
+                 mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, zero_shift, 
+                 zero_detach, device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.history_module = history_module.lower()
+        self.zero_shift = zero_shift
+        self.zero_detach = zero_detach
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
@@ -99,17 +102,16 @@ class FullyNN(nn.Module):
         # Input data normalization
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
         time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
-
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history = torch.cat(
-                (events_embeddings, time_history), dim = -1
-            )
-        else:
-            history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
         if self.history_module == 'lstm':
+            if self.event_toggle:
+                events_embeddings = self.events(events_history)                # [batch_size, seq_len, d_history]
+                history = torch.cat(
+                    (events_embeddings, time_history), dim = -1
+                )
+            else:
+                history = time_history                                         # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
         elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
@@ -127,7 +129,25 @@ class FullyNN(nn.Module):
 
         integral = self.non_neg(self.agg(output)).squeeze(-1)                  # [batch_size, seq_len]
 
-        return integral
+        integral_zero = 0
+        if self.zero_shift:
+            zero = torch.ones_like(time_next) * (- mean / var)
+            zero = zero * self.non_neg(self.hidden_x)                          # [batch_size, seq_len, d_intensity]
+            zero = self.hidden_time(zero)                                      # [batch_size, seq_len, d_intensity]
+            output_zero = self.activate(zero + hidden)                         # [batch_size, seq_len, d_intensity]
+
+            for layer in self.mlp:
+                output_zero = layer(output_zero)                               # [batch_size, seq_len, d_intensity]
+                output_zero = self.activate(output_zero)                       # [batch_size, seq_len, d_intensity]
+            
+            if self.zero_detach:
+                integral_zero = self.non_neg(self.agg(output_zero)).squeeze(-1).detach()
+                                                                               # [batch_size, seq_len]
+            else:
+                integral_zero = self.non_neg(self.agg(output_zero)).squeeze(-1)
+                                                                               # [batch_size, seq_len]
+
+        return integral - integral_zero
 
     def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask):
         '''
@@ -141,71 +161,57 @@ class FullyNN(nn.Module):
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_next = time_next.repeat(1, 1, self.num_events)                # [batch_size, seq_len, num_events]
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history = torch.cat(
-                (events_embeddings, time_history), dim = -1
-            )
-        else:
-            history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
-        
+        time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
+        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, 1]
+
         if self.history_module == 'lstm':
+            if self.event_toggle:
+                events_embeddings = self.events(events_history)                # [batch_size, seq_len, d_history]
+                history = torch.cat(
+                    (events_embeddings, time_history), dim = -1
+                )
+            else:
+                history = time_history                                         # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
         elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
 
-        if self.event_toggle:
-            output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)     # [batch_size, seq_len, num_events, d_history]
-
-        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        if self.event_toggle:
-            history_expand = hidden.unsqueeze(-3).repeat(1, 1, resolution, 1, 1)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_history]
-        else:
-            history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)  # [batch_size, seq_len, resolution, d_history]
+        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
+        history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)      # [batch_size, seq_len, resolution, d_history]
         batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
 
         time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
-                                                                               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution, 1]
+                                                                               # [batch_size, seq_len, resolution, 1]
         time_expand.requires_grad = True
-        if self.event_toggle:
-            emb_time_expand = time_expand.unsqueeze(-1) * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            emb_time_expand = time_expand * self.non_neg(self.hidden_x)        # [batch_size, seq_len, resolution, d_intensity]
+        emb_time_expand = time_expand * self.non_neg(self.hidden_x)            # [batch_size, seq_len, resolution, d_intensity]
 
-        emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, d_intensity]
+        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, d_intensity]
 
         for layer in self.mlp:
-            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, resolution, d_intensity]
+            output = self.activate(output)                                     # [batch_size, seq_len, resolution, d_intensity]
 
-        expand_integral = self.non_neg(self.agg(output)).squeeze(-1)           # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        expand_integral = self.non_neg(self.agg(output)).squeeze(-1)           # [batch_size, seq_len, resolution]
         
+        if self.zero_shift:
+            integral_at_zero = expand_integral[:, :, 0].unsqueeze(dim = -1)    # [batch_size, seq_len, 1]
+            if self.zero_detach:
+                expand_integral -= integral_at_zero.detach()                   # [batch_size, seq_len, resolution]
+            else:
+                expand_integral -= integral_at_zero                            # [batch_size, seq_len, resolution]
+
         expand_intensity = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
             create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution, 1]
-        if self.event_toggle:
-            expand_integral = expand_integral.reshape(batch_size, seq_len * resolution, -1)
-                                                                               # [batch_size, seq_len * resolution, num_events]
-            expand_intensity = expand_intensity.reshape(batch_size, seq_len * resolution, -1)
-                                                                               # [batch_size, seq_len * resolution, num_events]
-            expand_integral = expand_integral.sum(dim = -1)                    # [batch_size, seq_len * resolution]
-            expand_intensity = expand_intensity.sum(dim = -1)                  # [batch_size, seq_len * resolution]
-        else:
-            expand_intensity = expand_intensity.squeeze(-1).reshape(batch_size, seq_len * resolution)
+        )[0]                                                                   # [batch_size, seq_len, resolution, 1]
+        expand_intensity = expand_intensity.squeeze(-1).reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]
-            expand_integral = expand_integral.reshape(batch_size, seq_len * resolution)
+        expand_integral = expand_integral.reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]
         time_expand.requires_grad = False
 
@@ -229,56 +235,51 @@ class FullyNN(nn.Module):
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
-        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_next = time_next.repeat(1, 1, self.num_events)                # [batch_size, seq_len, num_events]        
+        original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]     
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
         time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history = torch.cat(
-                (events_embeddings, time_history), dim = -1
-            )
-        else:
-            history = time_history                                             # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
-
         if self.history_module == 'lstm':
+            if self.event_toggle:
+                events_embeddings = self.events(events_history)                # [batch_size, seq_len, d_history]
+                history = torch.cat(
+                    (events_embeddings, time_history), dim = -1
+                )
+            else:
+                history = time_history                                         # [batch_size, seq_len, d_history + 1] if we need events else [batch_size, seq_len, 1]
+
             output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, d_history]
         elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
 
-        if self.event_toggle:
-            output = output.unsqueeze(-2).repeat(1, 1, self.num_events, 1)     # [batch_size, seq_len, num_events, d_history]
-        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        if self.event_toggle:
-            history_expand = hidden.unsqueeze(-3).repeat(1, 1, resolution, 1, 1)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_history]
-        else:
-            history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)  # [batch_size, seq_len, resolution, d_history]
+        hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
+        history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)      # [batch_size, seq_len, resolution, d_history]
         batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
 
         time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
-                                                                               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution, 1]
+                                                                               # [batch_size, seq_len, resolution, 1]
         time_expand.requires_grad = True
-        if self.event_toggle:
-            emb_time_expand = time_expand.unsqueeze(-1) * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            emb_time_expand = time_expand * self.non_neg(self.hidden_x)        # [batch_size, seq_len, resolution, d_intensity]
+        emb_time_expand = time_expand * self.non_neg(self.hidden_x)            # [batch_size, seq_len, resolution, d_intensity]
 
-        emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output_storage = [output]                                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, d_intensity]
+        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, d_intensity]
+        output_storage = [output]                                              # [batch_size, seq_len, resolution, d_intensity]
 
         for layer in self.mlp:
-            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output_storage.append(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] * (self.mlp_size + 1) if we need events else [batch_size, seq_len, resolution, d_intensity] * (self.mlp_size + 1)
+            output = layer(output)                                             # [batch_size, seq_len, resolution, d_intensity]
+            output = self.activate(output)                                     # [batch_size, seq_len, resolution, d_intensity]
+            output_storage.append(output)                                      # [batch_size, seq_len, resolution, d_intensity] * (self.mlp_size + 1)
         
-        accumulative_layer_output = self.agg(output).squeeze(-1)               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-        expand_integral = self.non_neg(accumulative_layer_output)              # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        accumulative_layer_output = self.agg(output).squeeze(-1)               # [batch_size, seq_len, resolution]
+        expand_integral = self.non_neg(accumulative_layer_output)              # [batch_size, seq_len, resolution]
+
+        if self.zero_shift:
+            integral_at_zero = expand_integral[:, :, 0].unsqueeze(dim = -1)    # [batch_size, seq_len, 1]
+            if self.zero_detach:
+                expand_integral -= integral_at_zero.detach()                   # [batch_size, seq_len, resolution]
+            else:
+                expand_integral -= integral_at_zero                            # [batch_size, seq_len, resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
@@ -291,7 +292,7 @@ class FullyNN(nn.Module):
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
             create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution, 1]
+        )[0]                                                                   # [batch_size, seq_len, resolution, 1]
 
         # Gradient 2: All layer output -> time
         output_storage_gradient = {}
@@ -301,24 +302,18 @@ class FullyNN(nn.Module):
                 inputs=time_expand,
                 grad_outputs=torch.ones_like(item),
                 create_graph=True,
-            )[0]                                                               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution, 1]
-            subgradient = subgradient.sum(dim = -1).reshape(batch_size, -1)    # [batch_size, seq_len * resolution]
+            )[0]                                                               # [batch_size, seq_len, resolution, 1]
+            subgradient = subgradient.squeeze(dim = -1).reshape(batch_size, -1)# [batch_size, seq_len * resolution]
             output_storage_gradient[f'mlp_{idx}_grad'] = subgradient           # [batch_size, seq_len * resolution] * (self.mlp.size + 1)
                 
         time_expand.requires_grad = False
 
-        accumulated_gradient = event_gradient.sum(dim = -1).reshape(batch_size, -1)
+        accumulated_gradient = event_gradient.squeeze(dim = -1).reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
         if self.event_toggle:
-            event_gradient = event_gradient.chunk(self.num_events, dim = -1)   # [batch_size, seq_len, resolution] * num_events
-            event_intensity = {}
-            for idx, item in enumerate(event_gradient):
-                event_intensity[f'event_{idx}'] = item.reshape(batch_size, -1) # [batch_size, seq_len * resolution]
-    
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
                 **output_storage_gradient,\
-                **event_intensity,\
                 **{"final_output": expand_integral.sum(dim = -1).reshape(batch_size, -1)},
                 "loss": -torch.log(accumulated_gradient) + expand_integral.sum(dim = -1).reshape(batch_size, -1)
                 }

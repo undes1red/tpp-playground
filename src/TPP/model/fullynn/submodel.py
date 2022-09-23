@@ -1,5 +1,7 @@
 import torch.nn as nn
 import torch
+from scipy.stats import spearmanr
+import numpy as np
 
 from .nonneg import NonNegLinear
 from .activate import *
@@ -38,12 +40,13 @@ class FullyNN(nn.Module):
     '''
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, device):
+                 mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, split_comp_graph, device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.history_module = history_module.lower()
+        self.split_comp_graph = split_comp_graph
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
@@ -57,7 +60,10 @@ class FullyNN(nn.Module):
                             event_toggle = event_toggle, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
             else:
                 raise Exception(f'Unknown history module name {history_module}.')
-            self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
+            if split_comp_graph:
+                self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
+            else:
+                self.hidden_x = nn.Parameter(torch.zeros((1, d_intensity), device = self.device, requires_grad = True))
         else:
             self.events = None
             if self.history_module == 'lstm':
@@ -317,10 +323,42 @@ class FullyNN(nn.Module):
         accumulated_gradient = event_gradient.sum(dim = -1).reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
         if self.event_toggle:
-            event_gradient = event_gradient.chunk(self.num_events, dim = -1)   # [batch_size, seq_len, resolution] * num_events
+            intensities = event_gradient.chunk(self.num_events, dim = -1)      # [batch_size, seq_len, resolution] * num_events
             event_intensity = {}
-            for idx, item in enumerate(event_gradient):
-                event_intensity[f'event_{idx}'] = item.reshape(batch_size, -1) # [batch_size, seq_len * resolution]
+            for idx, item in enumerate(intensities):
+                formed_intensity = item.reshape(batch_size, -1)
+                event_intensity[f'event_intensity_{idx}'] = formed_intensity   # [batch_size, seq_len * resolution]
+
+            # additional plot, measure the spearman correlation across available events.
+            additional_plot = {
+                'heatmap': []
+            }
+
+            expand_intensity = event_gradient.reshape(event_gradient.shape[0], -1, event_gradient.shape[-1]).detach().cpu().numpy()
+                                                                               # [batch_size, seq_len * resolution, num_event]
+
+            for idx, item in enumerate(expand_intensity):
+                heatmap_data = {}
+                # rho: spearman coefficient
+                heatmap_data['spearman'] = spearmanr(item)[0]
+                # r: pearson coefficient
+                heatmap_data['pearson'] = np.corrcoef(item, rowvar = False)
+                # L^1 metric
+                heatmap_data['L1'] = L1_distance(item, resolution = resolution, num_events = self.num_events, time_next = time_next[idx])
+
+                # add plots
+                for key, value in heatmap_data.items():
+                    idx = 0
+                    additional_plot['heatmap'].append(
+                    [
+                        f'{key}_{idx}',
+                        {
+                            'data': value,
+                            'cmap': "YlGnBu",
+                            'vmin': 0
+                        }
+                    ])
+                    idx += 1
     
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
@@ -337,7 +375,7 @@ class FullyNN(nn.Module):
                 "loss": -torch.log(accumulated_gradient) + expand_integral.reshape(batch_size, -1)
                 }
 
-        return result, timestamp
+        return result, additional_plot, timestamp
 
 
 class InvertedBottleneck(nn.Module):
@@ -366,3 +404,35 @@ class InvertedBottleneck(nn.Module):
             x = self.activate(x)                                               # [..., d_input]
 
         return residual + x
+
+def L1_distance(input, resolution, num_events, time_next):
+    '''
+    This function calculates the L^1 distance between two functions in scattered form.
+    Input:
+    1. input:      function values
+                   [seq_len * resolution, num_events]
+    2. resolution: int
+                   the number of points from [t_{i - 1}, t_i]
+    3. num_event:  int
+                   the number of event types
+    4. time_next:  [seq_len, num_events]
+                   the length of all intervals with interpolations.
+    '''
+
+    input = input.reshape(-1, resolution, num_events)                          # [seq_len, resolution, num_events]
+    input = np.transpose(input, (2, 0, 1))                                     # [num_events, seq_len, resolution]
+    intensity_1 = np.expand_dims(input, axis = 1).repeat(num_events, axis = 1) # [num_events, num_events, seq_len, resolution]
+    intensity_2 = np.expand_dims(input, axis = 0).repeat(num_events, axis = 0) # [num_events, num_events, seq_len, resolution]
+    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
+
+    gap = np.expand_dims(time_next, axis = 1)                                  # [num_events, 1, seq_len]
+    gap = gap / (resolution - 1)
+    gap = np.transpose(gap, (2, 0, 1))                                         # [num_events, seq_len, 1]
+    gap = np.expand_dims(gap, axis = 1)                                        # [num_events, 1, seq_len, 1]
+
+    L1 = (delta_intensity * gap)[:, :, :, :-1].sum(axis = -1).sum(axis = -1)   # [num_events, num_events]
+
+    # round up the value smaller than 1e-6
+    L1[L1 < 1e-6] = 0
+
+    return L1

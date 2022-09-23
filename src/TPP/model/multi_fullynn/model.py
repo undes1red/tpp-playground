@@ -1,5 +1,8 @@
 from .submodel import FullyNN
 from ..utils import BasicModule
+
+from scipy.stats import spearmanr
+import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import f1_score
@@ -28,19 +31,26 @@ class MultiFullyNNModel(BasicModule):
                  n_head = 0,
                  event_toggle = False,
                  wq_nonneg = False, wk_nonneg = False, wv_nonneg = False,
-                 negative_loss = False):
+                 negative_loss = False, zero_shift = True,
+                 zero_detach = True):
         super(MultiFullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.negative_loss = negative_loss
+        self.zero_shift = zero_shift
+        self.zero_detach = zero_detach
+
+        if self.event_toggle is False:
+            self.num_events = 1
         
         self.model = nn.ModuleList([
             FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
                     dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                     mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, n_head = n_head,
-                    wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
+                    wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, zero_shift = zero_shift, 
+                    zero_detach = zero_detach, device = device)
                     for _ in range(self.num_events)])
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
@@ -52,8 +62,8 @@ class MultiFullyNNModel(BasicModule):
 
         mae = 0
         if evaluate:
-            mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                           time_next = time_next, mask = mask_next, mean = mean, var = var)
+            mae = self.mean_absolute_error(events_history = events_history, events_next = events_next, 
+                                           time_history = time_history, time_next = time_next, mask = mask_next, mean = mean, var = var)
 
         # preparing for multi-event training when needed
         time_next.requires_grad = True
@@ -103,13 +113,11 @@ class MultiFullyNNModel(BasicModule):
             event_loss = torch.tensor(0., dtype = torch.float32)
             f1 = 0
 
-    
         time_loss = self.time_loss_f(intensity = intensity, events_next = events_next, \
                                      intensity_integral = integral, mask = mask_next, negative_loss = self.negative_loss)
         the_number_of_events = mask_next.sum()
 
         return time_loss, event_loss, mae, f1, the_number_of_events
-
 
     def evaluate(self, events_history, time_history, taus, mean, var, mask):
         integral = []
@@ -131,10 +139,13 @@ class MultiFullyNNModel(BasicModule):
             input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
+    def mean_absolute_error(self, events_history, events_next, time_history, time_next, mask, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
+
+        Update: 2022-09-23
+        Add event-wise MAE support.
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
             return self.evaluate(events_history, time_history, taus, mean, var, mask).unsqueeze(-1) - \
@@ -183,9 +194,9 @@ class MultiFullyNNModel(BasicModule):
             expand_integral.append(expand_integral_item)
             expand_intensity.append(expand_intensity_item)
         
-        expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1) # [batch_size, seq_len]
+        expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1) # [batch_size, seq_len * resolution]
         expand_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
-                                                                               # [batch_size, seq_len]
+                                                                               # [batch_size, seq_len * resolution]
 
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -220,13 +231,46 @@ class MultiFullyNNModel(BasicModule):
             expand_integral.append(expand_integral_item)
             expand_intensity.append(expand_intensity_item)
 
-        expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1) # [batch_size, seq_len]
-        expand_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
-                                                                               # [batch_size, seq_len]
-        probed_results['intensity'] = expand_intensity
-        probed_results['integral'] = expand_integral
+        expand_sum_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1)
+                                                                               # [batch_size, seq_len * resolution]
+        expand_sum_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
+                                                                               # [batch_size, seq_len * resolution]
+        probed_results['intensity'] = expand_sum_integral
+        probed_results['integral'] = expand_sum_intensity
 
-        return (probed_results,), timestamp
+        # additional plot, measure the spearman correlation across available events.
+        additional_plot = {
+            'heatmap': []
+        }
+
+        expand_intensity = torch.stack(expand_intensity, dim = -1).detach().cpu().numpy()
+                                                                               # [batch_size, seq_len * resolution, num_event]
+
+        for idx, item in enumerate(expand_intensity):
+            heatmap_data = {}
+            # rho: spearman coefficient
+            heatmap_data['spearman'] = spearmanr(item)[0]
+            # r: pearson coefficient
+            heatmap_data['pearson'] = np.corrcoef(item, rowvar = False)
+            # L^1 metric
+            heatmap_data['L1'] = L1_distance(item, resolution = resolution, num_events = self.num_events,
+                                             time_next = time_next[idx].detach().cpu().numpy())
+
+            # add plots
+            for key, value in heatmap_data.items():
+                idx = 0
+                additional_plot['heatmap'].append(
+                [
+                    f'{key}_{idx}',
+                    {
+                        'data': value,
+                        'cmap': "YlGnBu",
+                        'vmin': 0
+                    }
+                ])
+                idx += 1
+
+        return (probed_results, additional_plot), timestamp
     
     def time_loss_f(self, intensity, intensity_integral, mask, events_next, negative_loss):
         '''
@@ -378,3 +422,36 @@ class MultiFullyNNModel(BasicModule):
         return [evaluation_report[3], test_report[2], test_report[3]]
     
     metric_number = 3 # metric number is the length of the output of choose_metric
+
+
+def L1_distance(input, resolution, num_events, time_next):
+    '''
+    This function calculates the L^1 distance between two functions.
+    Input:
+    1. input:      function values
+                   [seq_len * resolution, num_events]
+    2. resolution: int
+                   the number of points from [t_{i - 1}, t_i]
+    3. num_event:  int
+                   the number of event types
+    4. time_next:  [seq_len, num_events]
+                   the length of all intervals with interpolations.
+    '''
+
+    input = input.reshape(-1, resolution, num_events)                          # [seq_len, resolution, num_events]
+    input = np.transpose(input, (2, 0, 1))                                     # [num_events, seq_len, resolution]
+    intensity_1 = np.expand_dims(input, axis = 1).repeat(num_events, axis = 1) # [num_events, num_events, seq_len, resolution]
+    intensity_2 = np.expand_dims(input, axis = 0).repeat(num_events, axis = 0) # [num_events, num_events, seq_len, resolution]
+    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
+
+    gap = np.expand_dims(time_next, axis = 1)                                  # [num_events, 1, seq_len]
+    gap = gap / (resolution - 1)
+    gap = np.transpose(gap, (2, 0, 1))                                         # [num_events, seq_len, 1]
+    gap = np.expand_dims(gap, axis = 1)                                        # [num_events, 1, seq_len, 1]
+
+    L1 = (delta_intensity * gap)[:, :, :, :-1].sum(axis = -1).sum(axis = -1)   # [num_events, num_events]
+
+    # round up the value smaller than 1e-6
+    L1[L1 < 1e-6] = 0
+
+    return L1
