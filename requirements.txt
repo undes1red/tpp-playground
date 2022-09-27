@@ -3,3 +3,4 @@ torch_optimizer
 tqdm
 pandas
 psutil
+einops

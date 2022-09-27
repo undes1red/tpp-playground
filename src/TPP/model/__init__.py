@@ -22,6 +22,7 @@ modelpath = {
     'dwg': ['dwg.model', 'TemporalModel'],
     'fullynn': ['fullynn.model', 'FullyNNModel'],
     'multi_fullynn': ['multi_fullynn.model', 'MultiFullyNNModel'],
+    'multi_fullynn_arg': ['multi_fullynn_arg.model', 'MultiFullyNNModel'],
     'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
     'cnf': ['cnf.model', 'CNFWrapper'],
     'ifl': ['ifl.model', 'IFL'],
@@ -32,7 +33,7 @@ modelpath = {
     'fullynn_v3': ['fullynn_v3.model', 'FullyNN3Model'],
 
     # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
-    # Please take your own risk when you readd and use them. 
+    # Please take your own risk when you read and use them. 
 }
 
 def model_zoo(name):
