@@ -146,7 +146,8 @@ bookorder_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "no_norm.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["intensity", "probability"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200"
 ]
@@ -166,7 +167,8 @@ mimic_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "no_norm.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug_addition_only"], \
+    "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "mimic/plot.json", \
     "--resolution", "200"
 ]
@@ -186,7 +188,8 @@ retweet_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200"
 ]
@@ -206,8 +209,30 @@ stackoverflow_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["intensity", "probability"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
+    "--resolution", "200"
+]
+
+stackoverflow_01_plot_hyperparameter_list = [
+    "graph.py", \
+    "--seed", "32", \
+    "--model_name", "multi_fullynn", \
+    "--model_config", ["stackoverflow_0.01/fullynn.json", "stackoverflow_0.01/fullynn_no_shift.json", \
+                       "stackoverflow_0.01/fullynn_no_neg.json", "stackoverflow_0.01/fullynn_no_neg_shift.json"], \
+    "--lr", "0.0005", \
+    "--batch_size", "128", \
+    "--n_training_steps", "500", \
+    "--dataset_name", "stackoverflow_0.01", \
+    "--dataloader_name", "syn", \
+    "--figure_count", "10", \
+    "--train", \
+    "--test", \
+    "--evaluation", \
+    "--used_dataloader_config", "no_norm.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    "--dataloader_config", "stackoverflow_0.01/plot.json", \
     "--resolution", "200"
 ]
 
@@ -225,8 +250,9 @@ syn_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "stackoverflow/plot.json", \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug_addition_only"], \
+    "--dataloader_config", "syn/plot.json", \
     "--resolution", "200"
 ]
 
@@ -244,5 +270,6 @@ plot_hyperparameter = {
     'mimic': mimic_plot_hyperparameter_list,
     'retweet': retweet_plot_hyperparameter_list,
     'stackoverflow': stackoverflow_plot_hyperparameter_list,
+    'stackoverflow_0.01': stackoverflow_01_plot_hyperparameter_list,
     'syn': syn_plot_hyperparameter_list
 }

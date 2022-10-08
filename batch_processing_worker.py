@@ -103,7 +103,8 @@ def list_generator(hyperparameter_list):
 
 task_count = 1
 for hp_list in list_generator(parameter_retriver(opt)):
-    hp_list.append("" if do_not_use_gpu else "--cuda")
+    if not do_not_use_gpu:
+        hp_list.append("--cuda")
     process = subprocess.Popen([
             'python3'
     ] + hp_list)

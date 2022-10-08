@@ -195,6 +195,7 @@ def draw_probability(model, data, desc, plot_count, opt):
 
     timestamp = timestamp.detach().cpu().numpy().cumsum()
     event = event.squeeze().cpu().numpy()
+    annotation = None
     if true_probability is not None:
         true_probability = true_probability.squeeze().detach().cpu().numpy()
         # Calculate pearson, spearman corrilation and L^1 distance here.
@@ -293,13 +294,24 @@ def draw_features(model, data, desc, plot_count, opt):
 
     for key, value in additional_plot.items():
         for idx, per_map in enumerate(value):
-            map_name, data = per_map
+            annotation = None
+            if len(per_map) == 2:
+                map_name, data = per_map
+            else:
+                map_name, data, annotation = per_map
+
             fig = plt.figure()
             if hasattr(sns, key):
-                getattr(sns, key)(**data)
+                ax = getattr(sns, key)(**data)
+            if annotation is not None:
+                x = data['data'][data['x']]
+                y = data['data'][data['y']]
+                for x_, y_ in zip(x, y):
+                    ax.text(x_ - 0.15, y_, f'{y_:.2f}', **annotation)
+
             plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(plot_count),  key + '_' + map_name + '_' + str(idx) + '.png'), dpi = 1000)
-            logger.info(f'Debug {key} {map_name} {idx} finished drawing.')
             plt.close(fig = fig)
+            logger.info(f'Debug {key} {map_name} {idx} finished drawing.')
 
 
 def draw(model, data, desc, plot_count, opt):

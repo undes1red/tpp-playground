@@ -5,7 +5,8 @@ from scipy.stats import spearmanr
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
+from einops import rearrange, repeat, reduce
 
 
 def check_tensor(x):
@@ -67,6 +68,9 @@ class MultiFullyNNModel(BasicModule):
                         self.mean_absolute_error(events_history = events_history, events_next = events_next, 
                                                  time_history = time_history, time_next = time_next, 
                                                  mask = mask_next, mean = mean, var = var)
+            # mae_mean_of_all_event = \
+            #             self.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
+            #                                                mask = mask_next, mean = mean, var = var)
 
         # preparing for multi-event training when needed
         time_next.requires_grad = True
@@ -171,9 +175,166 @@ class MultiFullyNNModel(BasicModule):
         mae_mean_of_all_event = torch.sum(torch.abs(gap)) / mask.sum()
 
         return mae_mean_of_all_event.item()
+    
+    def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var):
+        '''
+        Well...We will do something totally different by performing event-wise MAE.
+        First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
+        Next, given time predictions. (Expectation? or probability bigger than 0.5?)
+        
+        Monte-Carlo estiamtion are required.
+        '''
+
+        # might be a good idea to utilise function_prober.
+        # Now we need to build the input_data by ourselves.
+        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # [batch_size, seq_len, 1]
+        events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+
+        # set a relatively large number as the infinity
+        if mean == 0 and var == 1:
+            max_ = input_time.mean() + 5 * input_time.var()
+            time_next_inf = torch.ones_like(time_history, device = self.device) * max_
+                                                                               # [batch_size, seq_len, 1]
+        else:
+            max_ = mean + 5 * var
+            time_next_inf = torch.ones_like(time_history, device = self.device) * max_
+                                                                               # [batch_size, seq_len, 1]
+        resolution = min(max(int(torch.max(time_next_inf).item() // 0.001), 100), 5000)
+        # resolution = max(int(torch.max(time_next_inf).item() // 0.001), 100)
+        expand_integral_to_inf = []
+        expand_intensity_to_inf = []
+        for item in self.model:
+            expand_integral_item_to_inf, expand_intensity_item_to_inf, timestamp \
+                = item.integral_intensity(events_history, time_history, time_next_inf, resolution, mean, var, mask_next)
+            expand_integral_to_inf.append(expand_integral_item_to_inf)
+            expand_intensity_to_inf.append(expand_intensity_item_to_inf)
+        
+        expand_integral_to_inf = torch.stack(expand_integral_to_inf, dim = -1) # [batch_size, seq_len * resolution, num_event]
+        expand_intensity_to_inf = torch.stack(expand_intensity_to_inf, dim = -1)
+                                                                               # [batch_size, seq_len * resolution, num_event]
+        expand_integral_to_inf = rearrange(expand_integral_to_inf, 'b (s r) n -> b s r n', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_event]
+        expand_intensity_to_inf = rearrange(expand_intensity_to_inf, 'b (s r) n -> b s r n', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_event]
+        timestamp = rearrange(timestamp, 'b (s r) -> b s r', r = resolution)   # [batch_size, seq_len, resolution]
+
+        # step 1: find the event
+        expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
+                                                                               # [batch_size, seq_len, resolution, num_event]
+        probability_integral = expand_probability_per_event[:, :, :-1, :] * (timestamp[:, :, 1:].unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, resolution, num_event]
+        probability_integral = probability_integral.sum(dim = -2)              # [batch_size, seq_len, num_event]
+        predict_index = torch.argmax(probability_integral, dim = -1)           # [batch_size, seq_len]
+
+        # Only available when batch_size = 1
+        f1 = f1_score(y_true = events_next.squeeze().detach().cpu(),
+                      y_pred = predict_index.squeeze().detach().cpu(), average = 'macro')
+        
+        # Only available when batch_size = 1
+        top_k_acc = []
+        if self.num_events > 2:
+            for k in range(1, self.num_events + 1):
+                top_k_acc.append(
+                    top_k_accuracy_score(y_true = events_next.squeeze().detach().cpu(),
+                                         y_score = probability_integral.reshape(-1, self.num_events).detach().cpu(),
+                                         k = k,
+                                         labels = np.arange(self.num_events))
+                )
+        else:
+            top_k_acc.append(
+                accuracy_score(
+                    y_true = events_next.squeeze().detach().cpu(),
+                    y_pred = predict_index.squeeze().detach().cpu()
+                )
+            )
+            top_k_acc.append(1.0)
+        
+        del expand_probability_per_event, timestamp, expand_intensity_to_inf, expand_integral_to_inf
+
+        # step 2: get the time prediction for that kind of event
+        mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
+                                                                               probability_integral, resolution, mask_next, mean, var, max_)
+        mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
+                                                                  probability_integral, resolution, mask_next, mean, var, max_)
+        
+        mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict) / mask_next.sum()
+        mae_per_event_avg = torch.sum(mae_per_event) / mask_next.sum()
+
+        return f1, top_k_acc, (mae_per_event_pure_predict_avg.item(), mae_per_event_avg.item()), \
+               (mae_per_event_pure_predict, mae_per_event)
+
+    def evaluate_per_event(self, events_history, event_next, time_history, taus, resolution, mean, var, mask):
+        integral_all_event = []
+        intensity_all_event = []
+        # Train k FullyNN models for k different event types.
+        for item in self.model:
+            sub_integral, sub_intensity, timestamp = item.integral_intensity(events_history, time_history, taus, resolution, mean, var, mask)
+                                                                               # [batch_size, seq_len * resolution] * n
+            integral_all_event.append(sub_integral)
+            intensity_all_event.append(sub_intensity)
+        
+        integral_all_event = torch.stack(integral_all_event, dim = -1)         # [batch_size, seq_len * resolution, num_events]
+        intensity_all_event = torch.stack(intensity_all_event, dim = -1)       # [batch_size, seq_len * resolution, num_events]
+
+        intensity_all_event = rearrange(intensity_all_event, 'b (s r) n -> b s r n', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        integral_all_event = rearrange(integral_all_event, 'b (s r) n -> b s r n', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        timestamp = rearrange(timestamp, 'b (s r) -> b s r', r = resolution)   # [batch_size, seq_len, resolution, num_events]
+
+        event_next_index = torch.nn.functional.one_hot(event_next.long(), num_classes = self.num_events).unsqueeze(dim = -2)
+                                                                               # [batch_size, seq_len, 1, num_events]
+        intensity_i = (intensity_all_event * event_next_index).sum(dim = -1)   # [batch_size, seq_len, resolution]
+
+        p_dist = intensity_i * torch.exp(-integral_all_event.sum(dim = -1))    # [batch_size, seq_len, resolution]
+        probability = torch.sum(p_dist[:, :, :-1] * timestamp[:, :, 1:], dim = -1)
+                                                                               # [batch_size, seq_len]
+
+        return probability
+
+    def mean_absolute_error_per_event_worker(self, events_history, events_next, 
+        time_history, time_next, probability_integral, resolution, mask, mean, var, max_val):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+
+        '''
+        def bisect_target(events_history, time_history, taus, mean, var):
+            p_xt = self.evaluate_per_event(events_history, events_next, time_history, taus,
+                                           resolution, mean, var, mask)        # [batch_size, seq_len]
+            event_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_event]
+            p_x = torch.sum(probability_integral * event_next_one_hot, dim = -1)
+                                                                               # [batch_size, seq_len]
+            p_t_x = p_xt / p_x                                                 # [batch_size, seq_len]
+            p_gap = p_t_x - (1 / self.mae_threshold)                           # [batch_size, seq_len]
+
+            return p_gap.unsqueeze(dim = -1)
+            
+            
+        def median_prediction(events_history, time_history, l, r, mean, var):
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target(events_history, time_history, c, mean, var)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
+        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len, 1]
+        tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
+        gap = (tau_pred - time_next).squeeze(-1) * mask
+        gap = torch.abs(gap)
+
+        return gap
+
 
     # All methods not required by BasicModule are intensity plotter exclusive.
-    def function_prober(self, input_data, resolution):
+    def function_prober(self, input_data, resolution, sum = True):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -199,9 +360,14 @@ class MultiFullyNNModel(BasicModule):
             expand_integral.append(expand_integral_item)
             expand_intensity.append(expand_intensity_item)
         
-        expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1) # [batch_size, seq_len * resolution]
-        expand_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
+        if sum:
+            expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1)
                                                                                # [batch_size, seq_len * resolution]
+            expand_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
+                                                                               # [batch_size, seq_len * resolution]
+        else:
+            expand_integral = torch.stack(expand_integral, dim = -1)           # [batch_size, seq_len * resolution, num_event]
+            expand_intensity = torch.stack(expand_intensity, dim = -1)         # [batch_size, seq_len * resolution, num_event]
 
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -243,10 +409,74 @@ class MultiFullyNNModel(BasicModule):
         probed_results['intensity'] = expand_sum_integral
         probed_results['integral'] = expand_sum_intensity
 
+        f1, top_k, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
+        # mae_per_event = self.mean_absolute_error(events_history, events_next, time_history, time_next, mask_next, mean, var)
+        maes_avg = np.array(maes_avg)
+
+        data_mae_avg = {
+            'x': np.ones_like(maes_avg) * f1,
+            'y': maes_avg,
+            'marks': ['Predicted labels', 'True labels']
+        }
+
+        data_top_k = {
+            'x': np.arange(1, self.num_events + 1),
+            'y': top_k,
+            'marks': 'Top-K accuracy'
+        }
+
+        data_maes = {
+            'x': list(range(len(maes[0][0]))) * 2,
+            'y': np.concatenate(
+                (torch.log(1 + maes[0]).detach().cpu().numpy().squeeze(), torch.log(1 + maes[1]).detach().cpu().numpy().squeeze())
+            ),
+            'marks': ['MAE_k against prediction'] *len(maes[0][0]) +  ['MAE_k against real events'] * len(maes[0][0])
+        }
+
         # additional plot, measure the spearman correlation across available events.
         additional_plot = {
-            'heatmap': []
+            'heatmap': [],
+            'pointplot': [],
+            'lineplot': []
         }
+
+        # Point plot
+        additional_plot['pointplot'].append([
+            'mae_per_event',
+            {
+                'x': 'x',
+                'y': 'y',
+                'data': data_mae_avg,
+                'hue': 'marks'
+            },
+            {
+                'horizontalalignment': 'center',
+                'color': 'black',
+                'weight': 'light'
+            }
+        ])
+
+        # Line plot
+        additional_plot['lineplot'].append([
+            'top_k_accuracy',
+            {
+                'x': 'x',
+                'y': 'y',
+                'hue': 'marks',
+                'data': data_top_k,
+                'markers': True
+            }
+        ])
+        additional_plot['lineplot'].append([
+            'log_mae_k',
+            {
+                'x': 'x',
+                'y': 'y',
+                'hue': 'marks',
+                'data': data_maes,
+                'markers': True
+            }
+        ])
 
         expand_intensity = torch.stack(expand_intensity, dim = -1).detach().cpu().numpy()
                                                                                # [batch_size, seq_len * resolution, num_event]
@@ -255,6 +485,9 @@ class MultiFullyNNModel(BasicModule):
             heatmap_data = {}
             # rho: spearman coefficient
             heatmap_data['spearman'] = spearmanr(item)[0]
+            if self.num_events == 2:
+                heatmap_data['spearman'] = np.array([[1, heatmap_data['spearman']], [heatmap_data['spearman'], 1]])
+
             # r: pearson coefficient
             heatmap_data['pearson'] = np.corrcoef(item, rowvar = False)
             # L^1 metric

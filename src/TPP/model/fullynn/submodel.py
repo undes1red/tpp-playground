@@ -142,7 +142,7 @@ class FullyNN(nn.Module):
 
         return integral
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask):
+    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -213,8 +213,9 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len * resolution, num_events]
             expand_intensity = expand_intensity.reshape(batch_size, seq_len * resolution, -1)
                                                                                # [batch_size, seq_len * resolution, num_events]
-            expand_integral = expand_integral.sum(dim = -1)                    # [batch_size, seq_len * resolution]
-            expand_intensity = expand_intensity.sum(dim = -1)                  # [batch_size, seq_len * resolution]
+            if sum:
+                expand_integral = expand_integral.sum(dim = -1)                # [batch_size, seq_len * resolution]
+                expand_intensity = expand_intensity.sum(dim = -1)              # [batch_size, seq_len * resolution]
         else:
             expand_intensity = expand_intensity.squeeze(-1).reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]

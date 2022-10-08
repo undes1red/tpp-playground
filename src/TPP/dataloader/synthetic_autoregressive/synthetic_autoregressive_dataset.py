@@ -21,7 +21,7 @@ class SynAregDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, num_events, history_length = 5, plot = False, shift = False, shift_time = False, input_norm_data = False):
+    def __init__(self, data, device, num_events, history_length = 2, plot = False, shift = False, shift_time = False, input_norm_data = False):
         super(SynAregDataset, self).__init__()
         self.data = data
         self.device = device

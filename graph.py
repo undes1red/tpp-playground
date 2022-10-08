@@ -91,6 +91,17 @@ if __name__ == '__main__':
     logger.info('Model restore completed.')
     logger.info(print_args(opt))
 
+    # f1 = 0
+    # mae_per_event = 0
+    # for data in iter_test:
+    #     f1_, _, (mae_per_event_, _) = model.mean_absolute_error_per_event(input_time = data[0][0], input_events = data[0][1], 
+    #                                                               mask = data[0][-2], mean = data[1][0], var = data[1][1])
+    #     f1 += f1_
+    #     mae_per_event += mae_per_event_
+    # 
+    # f1 = f1 / len(iter_test)
+    # mae_per_event = mae_per_event / len(iter_test)
+    # print(f'The average f1 is {f1}, and the average of mae_per_event is {mae_per_event}.')
 
     # We will get three records from the training set, test set, and evaluation set, respectively.
     for figure_index in range(opt.figure_count):
