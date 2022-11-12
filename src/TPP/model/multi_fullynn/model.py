@@ -8,9 +8,8 @@ import torch.nn as nn
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 
-
 def check_tensor(x):
-    assert (x < 0).cpu().numpy().any() == False
+    assert (x < 0).any() == False
 
 '''
 Q1: why without bottleneck, the intensity function for each type of event fails to learn?
@@ -87,7 +86,8 @@ class MultiFullyNNModel(BasicModule):
                 outputs = sub_integral,
                 inputs = time_next,
                 grad_outputs = torch.ones_like(sub_integral),
-                create_graph = True,
+                retain_graph = True,
+                create_graph = True
             )[0]
             sub_intensity = sub_intensity.squeeze(dim = -1)
             check_tensor(sub_intensity)                                        # [batch_size, seq_len, 1]
@@ -176,7 +176,7 @@ class MultiFullyNNModel(BasicModule):
 
         return mae_mean_of_all_event.item()
     
-    def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var):
+    def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var, fast = False):
         '''
         Well...We will do something totally different by performing event-wise MAE.
         First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
@@ -193,17 +193,31 @@ class MultiFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
+        memory_ceiling = 5e7
+
+        _, seq_len = events_next.shape
+
         # set a relatively large number as the infinity
         if mean == 0 and var == 1:
-            max_ = input_time.mean() + 5 * input_time.var()
+            max_ = input_time.mean() + 10 * input_time.var()
+            # max_ can not be too huge for precesion concerns.
+            max_ = min(max_, 1e5)
+
             time_next_inf = torch.ones_like(time_history, device = self.device) * max_
                                                                                # [batch_size, seq_len, 1]
         else:
-            max_ = mean + 5 * var
+            max_ = mean + 10 * var
+            # max_ can not be too huge for precesion concerns.
+            max_ = min(max_, 1e5)
+
             time_next_inf = torch.ones_like(time_history, device = self.device) * max_
                                                                                # [batch_size, seq_len, 1]
-        resolution = min(max(int(torch.max(time_next_inf).item() // 0.001), 100), 5000)
-        # resolution = max(int(torch.max(time_next_inf).item() // 0.001), 100)
+
+        resolution = min(max(int(torch.max(time_next_inf).item() // 0.005), 100), 5000)
+        # resolution = max(int(torch.max(time_next_inf).item() // 0.01), 100)
+        if seq_len * resolution * self.num_events > memory_ceiling:
+            resolution = int(memory_ceiling // (seq_len * self.num_events))
+                
         expand_integral_to_inf = []
         expand_intensity_to_inf = []
         for item in self.model:
@@ -212,7 +226,8 @@ class MultiFullyNNModel(BasicModule):
             expand_integral_to_inf.append(expand_integral_item_to_inf)
             expand_intensity_to_inf.append(expand_intensity_item_to_inf)
         
-        expand_integral_to_inf = torch.stack(expand_integral_to_inf, dim = -1) # [batch_size, seq_len * resolution, num_event]
+        expand_integral_to_inf = torch.stack(expand_integral_to_inf, dim = -1)
+                                                                               # [batch_size, seq_len * resolution, num_event]
         expand_intensity_to_inf = torch.stack(expand_intensity_to_inf, dim = -1)
                                                                                # [batch_size, seq_len * resolution, num_event]
         expand_integral_to_inf = rearrange(expand_integral_to_inf, 'b (s r) n -> b s r n', r = resolution)
@@ -228,6 +243,7 @@ class MultiFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len, resolution, num_event]
         probability_integral = probability_integral.sum(dim = -2)              # [batch_size, seq_len, num_event]
         predict_index = torch.argmax(probability_integral, dim = -1)           # [batch_size, seq_len]
+        probability_integral_sum = probability_integral.sum(dim = -1)          # [batch_size, seq_len]
 
         # Only available when batch_size = 1
         f1 = f1_score(y_true = events_next.squeeze().detach().cpu(),
@@ -235,26 +251,32 @@ class MultiFullyNNModel(BasicModule):
         
         # Only available when batch_size = 1
         top_k_acc = []
-        if self.num_events > 2:
-            for k in range(1, self.num_events + 1):
+        if not fast:
+            if self.num_events > 2:
+                for k in range(1, self.num_events + 1):
+                    top_k_acc.append(
+                        top_k_accuracy_score(y_true = events_next.squeeze().detach().cpu(),
+                                             y_score = probability_integral.reshape(-1, self.num_events).detach().cpu(),
+                                             k = k,
+                                             labels = np.arange(self.num_events))
+                    )
+            else:
                 top_k_acc.append(
-                    top_k_accuracy_score(y_true = events_next.squeeze().detach().cpu(),
-                                         y_score = probability_integral.reshape(-1, self.num_events).detach().cpu(),
-                                         k = k,
-                                         labels = np.arange(self.num_events))
+                    accuracy_score(
+                        y_true = events_next.squeeze().detach().cpu(),
+                        y_pred = predict_index.squeeze().detach().cpu()
+                    )
                 )
-        else:
-            top_k_acc.append(
-                accuracy_score(
-                    y_true = events_next.squeeze().detach().cpu(),
-                    y_pred = predict_index.squeeze().detach().cpu()
-                )
-            )
-            top_k_acc.append(1.0)
+                top_k_acc.append(1.0)
         
         del expand_probability_per_event, timestamp, expand_intensity_to_inf, expand_integral_to_inf
 
         # step 2: get the time prediction for that kind of event
+        if mean == 0:
+            resolution = max(min(int(input_time.mean().item() // 0.005), 1000), 1)
+        else:
+            resolution = max(min(int(mean // 0.005), 1000), 1)
+        
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
                                                                                probability_integral, resolution, mask_next, mean, var, max_)
         mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
@@ -263,12 +285,13 @@ class MultiFullyNNModel(BasicModule):
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict) / mask_next.sum()
         mae_per_event_avg = torch.sum(mae_per_event) / mask_next.sum()
 
-        return f1, top_k_acc, (mae_per_event_pure_predict_avg.item(), mae_per_event_avg.item()), \
+        return f1, top_k_acc, probability_integral_sum, (mae_per_event_pure_predict_avg.item(), mae_per_event_avg.item()), \
                (mae_per_event_pure_predict, mae_per_event)
 
     def evaluate_per_event(self, events_history, event_next, time_history, taus, resolution, mean, var, mask):
         integral_all_event = []
         intensity_all_event = []
+
         # Train k FullyNN models for k different event types.
         for item in self.model:
             sub_integral, sub_intensity, timestamp = item.integral_intensity(events_history, time_history, taus, resolution, mean, var, mask)
@@ -409,7 +432,7 @@ class MultiFullyNNModel(BasicModule):
         probed_results['intensity'] = expand_sum_integral
         probed_results['integral'] = expand_sum_intensity
 
-        f1, top_k, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
+        f1, top_k, probability_sum, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
         # mae_per_event = self.mean_absolute_error(events_history, events_next, time_history, time_next, mask_next, mean, var)
         maes_avg = np.array(maes_avg)
 
@@ -433,15 +456,18 @@ class MultiFullyNNModel(BasicModule):
             'marks': ['MAE_k against prediction'] *len(maes[0][0]) +  ['MAE_k against real events'] * len(maes[0][0])
         }
 
+        data_probability_sum = {
+            'x': torch.arange(probability_sum.shape[-1]),
+            'y': probability_sum.detach().squeeze().cpu().numpy()
+        }
+
         # additional plot, measure the spearman correlation across available events.
         additional_plot = {
-            'heatmap': [],
-            'pointplot': [],
-            'lineplot': []
+            'heatmap': []
         }
 
         # Point plot
-        additional_plot['pointplot'].append([
+        additional_plot['pointplot'] = [[
             'mae_per_event',
             {
                 'x': 'x',
@@ -454,10 +480,10 @@ class MultiFullyNNModel(BasicModule):
                 'color': 'black',
                 'weight': 'light'
             }
-        ])
+        ],]
 
         # Line plot
-        additional_plot['lineplot'].append([
+        additional_plot['lineplot'] = [[
             'top_k_accuracy',
             {
                 'x': 'x',
@@ -466,8 +492,17 @@ class MultiFullyNNModel(BasicModule):
                 'data': data_top_k,
                 'markers': True
             }
-        ])
-        additional_plot['lineplot'].append([
+        ],
+        [
+            'probability_sum',
+            {
+                'x': 'x',
+                'y': 'y',
+                'data': data_probability_sum,
+                'markers': True
+            }
+        ],
+        [
             'log_mae_k',
             {
                 'x': 'x',
@@ -476,7 +511,7 @@ class MultiFullyNNModel(BasicModule):
                 'data': data_maes,
                 'markers': True
             }
-        ])
+        ]]
 
         expand_intensity = torch.stack(expand_intensity, dim = -1).detach().cpu().numpy()
                                                                                # [batch_size, seq_len * resolution, num_event]
@@ -657,9 +692,9 @@ class MultiFullyNNModel(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report[3], test_report[2], test_report[3]]
+        return [test_report[3], ]
     
-    metric_number = 3 # metric number is the length of the output of choose_metric
+    metric_number = 1 # metric number is the length of the output of choose_metric
 
 
 def L1_distance(input, resolution, num_events, time_next):

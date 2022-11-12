@@ -58,6 +58,39 @@ def expand_model_intensity(model, data, opt):
         raise Exception('This model is incompatible with intensity prober!')
 
 
+def spearman_and_l1(model, data, opt):
+    _, model_intensity, timestamp = expand_model_intensity(model, data, opt)   # [batch_size, seq_len * resolution]
+    time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
+    true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
+
+    # torch.tensor to numpy.array
+    model_intensity = model_intensity.squeeze().detach().cpu().numpy()
+    if np.isnan(model_intensity).any():
+        '''
+        Model intensity prediction has failed!
+        '''
+        logger.error('We detect NaN in the intensity predictions! Please try again after checking the training log and retraining your model.')
+        return 0
+
+    timestamp = timestamp.detach().cpu().numpy().cumsum()
+    event = event.squeeze().cpu().numpy()
+
+    rho, r, L1 = 0, 0, 0
+    if true_intensity is not None:
+        true_intensity = true_intensity.squeeze().detach().cpu().numpy()
+        # Calculate pearson, spearman corrilation and L^1 distance here.
+        # Then, print these values directly on the plots.
+        
+        # Spearman correlation
+        rho = spearmanr(a = true_intensity, b = model_intensity)[0]
+        # Pearson correlation
+        r = np.corrcoef(x = true_intensity, y = model_intensity)[0, 1]
+        # L1 distance
+        L1 = L1_distance(x = true_intensity, y = model_intensity, timestamp = timestamp, resolution = opt.resolution)
+    
+    return rho, r, L1
+
+
 def draw_intensity(model, data, desc, plot_count, opt):
     '''
     Now you should investigate your own model implementations and modify this function.
@@ -95,7 +128,7 @@ def draw_intensity(model, data, desc, plot_count, opt):
         # L1 distance
         L1 = L1_distance(x = true_intensity, y = model_intensity, timestamp = timestamp, resolution = opt.resolution)
 
-        annotation = f'ρ = {rho}, r = {r}, L1 = {L1}'
+        annotation = f'ρ = {rho}, L1 = {L1}'
 
     
     if true_intensity is not None:
@@ -208,7 +241,7 @@ def draw_probability(model, data, desc, plot_count, opt):
         # L1 distance
         L1 = L1_distance(x = true_probability, y = model_probability, timestamp = timestamp, resolution = opt.resolution)
 
-        annotation = f'ρ = {rho}, r = {r}, L1 = {L1}'
+        annotation = f'ρ = {rho}, L1 = {L1}'
     
     if true_probability is not None:
         df = pd.DataFrame.from_dict(

@@ -6,14 +6,14 @@ stackoverflow_training_hyperparameter_list = [
     "--dataloader_name", "syn", \
     "--dataloader_config", "stackoverflow/shift.json",
     "--dataset_name", ["stackoverflow"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
+    "--n_training_steps", "3000", \
+    "--n_evaluation_steps", "50", \
+    "--n_report_steps", "50", \
     "--b", "128", \
-    "--n_warmup_steps", "5000", \
+    "--n_warmup_steps", "600", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_shift.json", "stackoverflow/fullynn_no_neg.json", "stackoverflow/fullynn_no_neg_shift.json"],
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -27,7 +27,7 @@ stackoverflow_01_training_hyperparameter_list = [
     "--no_seed", \
     "--dataloader_name", "syn", \
     "--dataloader_config", "stackoverflow/shift.json",
-    "--dataset_name", ["stackoverflow_0.02"], \
+    "--dataset_name", ["stackoverflow_0.01"], \
     "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
@@ -50,14 +50,14 @@ retweet_training_hyperparameter_list = [
     "--dataloader_name", "syn", \
     "--dataloader_config", "retweet/shift.json",
     "--dataset_name", ["retweet"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
+    "--n_training_steps", "6000", \
+    "--n_evaluation_steps", "50", \
+    "--n_report_steps", "50", \
     "--b", "128", \
-    "--n_warmup_steps", "5000", \
+    "--n_warmup_steps", "1200", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_shift.json", "retweet/fullynn_no_neg.json", "retweet/fullynn_no_neg_shift.json"],
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -72,14 +72,14 @@ mimic_training_hyperparameter_list = [
     "--dataloader_name", "syn", \
     "--dataloader_config", "mimic/no_norm.json",
     "--dataset_name", ["mimic"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
+    "--n_training_steps", "10000", \
+    "--n_evaluation_steps", "100", \
+    "--n_report_steps", "100", \
     "--b", "128", \
-    "--n_warmup_steps", "5000", \
+    "--n_warmup_steps", "1000", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_shift.json", "mimic/fullynn_no_neg.json", "mimic/fullynn_no_neg_shift.json"],
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -92,16 +92,16 @@ bookorder_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "syn", \
-    "--dataloader_config", "bookorder/no_norm.json",
+    "--dataloader_config", "bookorder/shift.json",
     "--dataset_name", ["bookorder"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
-    "--b", "128", \
-    "--n_warmup_steps", "5000", \
+    "--n_training_steps", "1000", \
+    "--n_evaluation_steps", "20", \
+    "--n_report_steps", "20", \
+    "--b", "64", \
+    "--n_warmup_steps", "250", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_shift.json", "bookorder/fullynn_no_neg.json", "bookorder/fullynn_no_neg_shift.json"],
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -115,14 +115,14 @@ syn_training_hyperparameter_list = [
     "--no_seed", \
     "--dataloader_name", "syn", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
+    "--n_training_steps", "10000", \
+    "--n_evaluation_steps", "100", \
+    "--n_report_steps", "100", \
     "--b", "128", \
-    "--n_warmup_steps", "5000", \
+    "--n_warmup_steps", "1000", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["syn/fullynn.json", "syn/fullynn_no_shift.json", "syn/fullynn_no_neg.json", "syn/fullynn_no_neg_shift.json"],
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -136,18 +136,19 @@ bookorder_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_shift.json", "bookorder/fullynn_no_neg.json", "bookorder/fullynn_no_neg_shift.json"], \
-    "--lr", "0.002", \
-    "--batch_size", "128", \
-    "--n_training_steps", "50000", \
+    "--lr", "0.001", \
+    "--batch_size", "64", \
+    "--n_training_steps", "1000", \
     "--dataset_name", "bookorder", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "no_norm.json", \
-    "--plot_type", ["intensity", "probability"], \
+    "--used_dataloader_config", "shift.json", \
+    # "--plot_type", ["intensity", "probability"], \
     # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200"
 ]
@@ -157,9 +158,9 @@ mimic_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_shift.json", "mimic/fullynn_no_neg.json", "mimic/fullynn_no_neg_shift.json"], \
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--batch_size", "128", \
-    "--n_training_steps", "50000", \
+    "--n_training_steps", "10000", \
     "--dataset_name", "mimic", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
@@ -178,9 +179,9 @@ retweet_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_shift.json", "retweet/fullynn_no_neg.json", "retweet/fullynn_no_neg_shift.json"], \
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--batch_size", "128", \
-    "--n_training_steps", "50000", \
+    "--n_training_steps", "6000", \
     "--dataset_name", "retweet", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
@@ -199,9 +200,10 @@ stackoverflow_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_shift.json", "stackoverflow/fullynn_no_neg.json", "stackoverflow/fullynn_no_neg_shift.json"], \
-    "--lr", "0.002", \
+    # "--model_config", ["stackoverflow/fullynn_no_shift.json", "stackoverflow/fullynn_no_neg_shift.json"], \
+    "--lr", "0.001", \
     "--batch_size", "128", \
-    "--n_training_steps", "50000", \
+    "--n_training_steps", "3000", \
     "--dataset_name", "stackoverflow", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
@@ -209,8 +211,8 @@ stackoverflow_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability"], \
-    # "--plot_type", ["debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200"
 ]
@@ -219,20 +221,22 @@ stackoverflow_01_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
-    "--model_config", ["stackoverflow_0.01/fullynn.json", "stackoverflow_0.01/fullynn_no_shift.json", \
-                       "stackoverflow_0.01/fullynn_no_neg.json", "stackoverflow_0.01/fullynn_no_neg_shift.json"], \
+    "--model_config", ["stackoverflow_0.05/fullynn.json", "stackoverflow_0.05/fullynn_no_shift.json", \
+                       "stackoverflow_0.05/fullynn_no_neg.json", "stackoverflow_0.05/fullynn_no_neg_shift.json"], \
     "--lr", "0.0005", \
     "--batch_size", "128", \
-    "--n_training_steps", "500", \
-    "--dataset_name", "stackoverflow_0.01", \
+    "--n_training_steps", "1500", \
+    "--dataset_name", "stackoverflow_0.05", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "no_norm.json", \
+    "--used_dataloader_config", "shift.json", \
+    # "--plot_type", ["intensity", "probability"], \
+    # "--plot_type", ["debug"], \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "stackoverflow_0.01/plot.json", \
+    "--dataloader_config", "stackoverflow_0.05/plot.json", \
     "--resolution", "200"
 ]
 
@@ -241,19 +245,21 @@ syn_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["syn/fullynn.json", "syn/fullynn_no_shift.json", "syn/fullynn_no_neg.json", "syn/fullynn_no_neg_shift.json"], \
-    "--lr", "0.002", \
+    "--lr", "0.001", \
     "--batch_size", "128", \
-    "--n_training_steps", "50000", \
+    "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--dataloader_name", "syn", \
-    "--figure_count", "10", \
+    "--figure_count", "5", \
     "--train", \
     "--test", \
     "--evaluation", \
     # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug_addition_only"], \
+    "--plot_type", ["intensity", "probability"], \
+    # "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "syn/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--synthetic_evaluation"
 ]
 
 training_hyperparameter = {

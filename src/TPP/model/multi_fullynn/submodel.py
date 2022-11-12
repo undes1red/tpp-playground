@@ -5,6 +5,8 @@ from .nonneg import NonNegLinear
 from .activate import *
 from .transformers import TransEncoder
 
+def check_tensor(x):
+    assert (x < 0).any() == False
 
 TA = {
     # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
@@ -101,7 +103,7 @@ class FullyNN(nn.Module):
         '''
         # Input data normalization
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
+        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
         if self.history_module == 'lstm':
@@ -116,8 +118,9 @@ class FullyNN(nn.Module):
         elif self.history_module == 'transformers':
             output = self.his_encoder(events_history, time_history, mask.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, d_history]
-
-        time = time_next * self.non_neg(self.hidden_x)                         # [batch_size, seq_len, d_intensity]
+        
+        output = output.contiguous()                                           # [batch_size, seq_len, d_history]
+        time = (time_next * self.non_neg(self.hidden_x))                       # [batch_size, seq_len, d_intensity]
 
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
         time = self.hidden_time(time)                                          # [batch_size, seq_len, d_intensity]
@@ -161,9 +164,7 @@ class FullyNN(nn.Module):
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
-
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, 1]
 
         if self.history_module == 'lstm':
             if self.event_toggle:
@@ -179,13 +180,13 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len, d_history]
 
         hidden = self.hidden_p(output)                                         # [batch_size, seq_len, d_intensity]
-        history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)      # [batch_size, seq_len, resolution, d_history]
+        history_expand = hidden.unsqueeze(-2).repeat(1, 1, resolution, 1)      # [batch_size, seq_len, resolution, d_intensity]
         batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
 
-        time_expand = time_multiplier.reshape(1, 1, resolution, 1) * time_next.unsqueeze(-2)
-                                                                               # [batch_size, seq_len, resolution, 1]
-        time_expand.requires_grad = True
-        emb_time_expand = time_expand * self.non_neg(self.hidden_x)            # [batch_size, seq_len, resolution, d_intensity]
+        original_time_expand.requires_grad = True
+        time_expand = (original_time_expand - mean) / var                      # [batch_size, seq_len, resolution]
+        emb_time_expand = time_expand.unsqueeze(dim = -1) * self.non_neg(self.hidden_x)
+                                                                               # [batch_size, seq_len, resolution, d_intensity]
 
         emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, d_intensity]
         output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, d_intensity]
@@ -197,23 +198,29 @@ class FullyNN(nn.Module):
         expand_integral = self.non_neg(self.agg(output)).squeeze(-1)           # [batch_size, seq_len, resolution]
         
         if self.zero_shift:
-            integral_at_zero = expand_integral[:, :, 0].unsqueeze(dim = -1)    # [batch_size, seq_len, 1]
+            integral_at_zero = expand_integral[:, :, 0].clone().unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, 1]
             if self.zero_detach:
-                expand_integral -= integral_at_zero.detach()                   # [batch_size, seq_len, resolution]
+                expand_integral = expand_integral - integral_at_zero.detach()
+                                                                               # [batch_size, seq_len, resolution]
             else:
-                expand_integral -= integral_at_zero                            # [batch_size, seq_len, resolution]
+                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, resolution]
 
         expand_intensity = torch.autograd.grad(
             outputs=expand_integral,
-            inputs=time_expand,
-            grad_outputs=torch.ones_like(expand_integral),
-            create_graph=True,
+            inputs=original_time_expand,
+            grad_outputs=torch.ones_like(expand_integral)
         )[0]                                                                   # [batch_size, seq_len, resolution, 1]
-        expand_intensity = expand_intensity.squeeze(-1).reshape(batch_size, seq_len * resolution)
+        original_time_expand.requires_grad = False
+
+        # check tensor
+        check_tensor(expand_intensity)
+        check_tensor(expand_integral)
+
+        expand_intensity = expand_intensity.detach().squeeze(-1).reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]
-        expand_integral = expand_integral.reshape(batch_size, seq_len * resolution)
+        expand_integral = expand_integral.detach().reshape(batch_size, seq_len * resolution)
                                                                                # [batch_size, seq_len * resolution]
-        time_expand.requires_grad = False
 
         '''
         Restore the original timestamp
@@ -232,6 +239,8 @@ class FullyNN(nn.Module):
         time_history: [batch_size, seq_len, 1]
         time_next:    [batch_size, seq_len, num_events]
         resolution:   int
+
+        not used in multi_fullynn
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
@@ -277,9 +286,10 @@ class FullyNN(nn.Module):
         if self.zero_shift:
             integral_at_zero = expand_integral[:, :, 0].unsqueeze(dim = -1)    # [batch_size, seq_len, 1]
             if self.zero_detach:
-                expand_integral -= integral_at_zero.detach()                   # [batch_size, seq_len, resolution]
+                expand_integral = expand_integral - integral_at_zero.detach()
+                                                                               # [batch_size, seq_len, resolution]
             else:
-                expand_integral -= integral_at_zero                            # [batch_size, seq_len, resolution]
+                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),

@@ -5,8 +5,10 @@
 from src.TPP.utils import suffix, read_json, getLogger, print_args
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
-from src.TPP.plotter_utils import draw
+from src.TPP.plotter_utils import draw, spearman_and_l1
 import os, argparse, torch
+from tqdm import tqdm
+from itertools import tee
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -35,6 +37,7 @@ if __name__ == '__main__':
                 help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
 
     parser.add_argument('--cuda', action='store_true', help='Use GPUs to accelerate model evaluation speed.')
+    parser.add_argument('--synthetic_evaluation', action='store_true', help='Use this argument to switch to synthetic evaluation')
     logger = getLogger(name = 'Plotter')
 
     # It is nasty
@@ -76,9 +79,29 @@ if __name__ == '__main__':
     torch.manual_seed(model_setting.seed)
     opt.n_worker = 0
     train, evaluation, test = prepare_dataloaders(opt)
-    iter_train = iter(train)
-    iter_test = iter(test)
-    iter_eva = iter(evaluation)
+
+    train = iter(train)
+    test = iter(test)
+    evaluation = iter(evaluation)
+
+    train_size, test_size, evaluation_size = len(train), len(test), len(evaluation)
+
+    # Copy iterators
+    train_mae, train_graph = tee(train)
+    test_mae, test_graph = tee(test)
+    evaluation_mae, evaluation_graph = tee(evaluation)
+
+    iterator_dict_mae = {
+        'train': [train_mae, train_size],
+        'test': [test_mae, test_size],
+        'evaluation': [evaluation_mae, evaluation_size]
+    }
+
+    iterator_dict_graph = {
+        'train': train_graph,
+        'test': test_graph,
+        'evaluation': evaluation_graph       
+    }
 
     # Create model object.
     model_class = get_model(name = opt.model_name)
@@ -91,33 +114,76 @@ if __name__ == '__main__':
     logger.info('Model restore completed.')
     logger.info(print_args(opt))
 
-    # f1 = 0
-    # mae_per_event = 0
-    # for data in iter_test:
-    #     f1_, _, (mae_per_event_, _) = model.mean_absolute_error_per_event(input_time = data[0][0], input_events = data[0][1], 
-    #                                                               mask = data[0][-2], mean = data[1][0], var = data[1][1])
-    #     f1 += f1_
-    #     mae_per_event += mae_per_event_
-    # 
-    # f1 = f1 / len(iter_test)
-    # mae_per_event = mae_per_event / len(iter_test)
-    # print(f'The average f1 is {f1}, and the average of mae_per_event is {mae_per_event}.')
+    graph = False
 
-    # We will get three records from the training set, test set, and evaluation set, respectively.
-    for figure_index in range(opt.figure_count):
-        if opt.train:
-            train_data = next(iter_train)
-            draw(model, train_data, 'train', figure_index, opt = opt)
-            logger.info(f'Figure train_{figure_index} finished drawing.')
+    if not graph:
+        for key, (value, value_size) in iterator_dict_mae.items():
+            if key != 'test':
+                continue
+            print(f'The length of the {key} dataset is {value_size}')
 
-        if opt.evaluation:
-            evaluation_data = next(iter_eva)
-            draw(model, evaluation_data, 'evaluation', figure_index, opt = opt)
-            logger.info(f'Figure evaluation_{figure_index} finished drawing.')
+            if opt.synthetic_evaluation:
+                rho, r, L1 = 0, 0, 0
+            else:
+                f1 = 0
+                mae_per_event_pred = 0
+                mae_per_event_real = 0
 
-        if opt.test:
-            test_data = next(iter_test)
-            draw(model, test_data, 'test', figure_index, opt = opt)
-            logger.info(f'Figure test_{figure_index} finished drawing.')
-    
+            for data in tqdm(value, desc = f'{key}', leave = False, total = value_size):
+                input_time = data[0][0]
+                input_events = data[0][1]
+                mask = data[0][-2]
+                mean = data[1][0]
+                var = data[1][1]
+                # filter out the event sequences with single event.
+                if input_time.shape[-1] == 1:
+                    continue
+
+                if opt.synthetic_evaluation:
+                    rho_, r_, L1_ = spearman_and_l1(model = model, data = data, opt = opt)
+                    rho += rho_
+                    r += r_
+                    L1 += L1_
+                else:
+                    f1_, _, _, (mae_per_event_predict, mae_per_event_avg), for_debug = \
+                        model.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
+                                                            mask = mask, mean = mean, var = var, fast = True)
+                    f1 += f1_
+                    mae_per_event_pred += mae_per_event_predict
+                    mae_per_event_real += mae_per_event_avg
+            
+            if opt.synthetic_evaluation:
+                rho = rho / value_size
+                r = r / value_size
+                L1 = L1 / value_size
+                report = f'For dataset {key}, the average pearson coefficient is {rho}. The average spearman coefficient is {r}, and the mean of L1 distance is {L1}.'
+            else:
+                f1 = f1 / value_size
+                mae_per_event_pred = mae_per_event_pred / value_size
+                mae_per_event_real = mae_per_event_real / value_size
+                report = f'For dataset {key}, the average f1 is {f1}. The average of mae_per_event against predictions is {mae_per_event_pred}, while the mean of mae_per_event against real events is {mae_per_event_real}.'
+        
+
+            print(report)
+            with open(os.path.join(opt.store_dir, f'result_{key}.log'), 'w') as f:
+                f.write(report)
+
+    if graph:
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        for figure_index in range(opt.figure_count):
+            if opt.train:
+                train_data = next(iterator_dict_graph['train'])
+                draw(model, train_data, 'train', figure_index, opt = opt)
+                logger.info(f'Figure train_{figure_index} finished drawing.')
+
+            if opt.evaluation:
+                evaluation_data = next(iterator_dict_graph['evaluation'])
+                draw(model, evaluation_data, 'evaluation', figure_index, opt = opt)
+                logger.info(f'Figure evaluation_{figure_index} finished drawing.')
+
+            if opt.test:
+                test_data = next(iterator_dict_graph['test'])
+                draw(model, test_data, 'test', figure_index, opt = opt)
+                logger.info(f'Figure test_{figure_index} finished drawing.')
+
     logger.info('Task finished')
