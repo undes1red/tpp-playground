@@ -144,13 +144,13 @@ class TransformerTPP(nn.Module):
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
 
         # prediction of next time stamp
-        self.time_predictor = Predictor(d_input, 1, device = self.device)
+        # self.time_predictor = Predictor(d_input, 1, device = self.device)
 
         # prediction of next event type
-        if num_types > 1:
-            self.type_predictor = Predictor(d_input, num_types, device = self.device)
-        else:
-            self.type_predictor = None
+        # if num_types > 1:
+        #     self.type_predictor = Predictor(d_input, num_types, device = self.device)
+        # else:
+        #     self.type_predictor = None
 
     def forward(self, event_time, event_type, non_pad_mask):
         """
@@ -164,13 +164,12 @@ class TransformerTPP(nn.Module):
         non_pad_mask = non_pad_mask.unsqueeze(-1)
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
-        intensity_output = self.linear(enc_output)                             # [batch_size, seq_len, num_types]
 
-        time_prediction = self.time_predictor(enc_output, non_pad_mask)        # [batch_size, seq_len, 1]
+        # time_prediction = self.time_predictor(enc_output, non_pad_mask)      # [batch_size, seq_len, 1]
 
-        if self.type_predictor:
-            type_prediction = self.type_predictor(enc_output, non_pad_mask)    # [batch_size, seq_len, num_types]
-        else:
-            type_prediction = None
+        # if self.type_predictor:
+        #     type_prediction = self.type_predictor(enc_output, non_pad_mask)  # [batch_size, seq_len, num_types]
+        # else:
+        #     type_prediction = None
 
-        return intensity_output, (type_prediction, time_prediction)
+        return enc_output

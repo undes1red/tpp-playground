@@ -187,7 +187,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2', 'fullynn_v3', 'multi_fullynn']
+probability_available = ['dwg', 'fullynn', 'rmtpp', 'ifl', 'fullynn_v2', 'fullynn_v3', 'multi_fullynn', 'thp']
 
 def expand_model_probability(opt):
     if opt.model_name not in probability_available:

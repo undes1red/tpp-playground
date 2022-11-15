@@ -122,7 +122,7 @@ syn_training_hyperparameter_list = [
     "--n_warmup_steps", "1000", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["syn/fullynn.json", "syn/fullynn_no_shift.json", "syn/fullynn_no_neg.json", "syn/fullynn_no_neg_shift.json"],
-    "--lr", "0.001", \
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -147,8 +147,8 @@ bookorder_plot_hyperparameter_list = [
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
     # "--plot_type", ["intensity", "probability"], \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200"
 ]
@@ -168,8 +168,8 @@ mimic_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "no_norm.json", \
-    # "--plot_type", ["intensity", "probability", "debug_addition_only"], \
-    "--plot_type", ["debug_addition_only"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "mimic/plot.json", \
     "--resolution", "200"
 ]
@@ -189,8 +189,8 @@ retweet_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug_addition_only"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200"
 ]
@@ -211,8 +211,8 @@ stackoverflow_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200"
 ]
@@ -245,17 +245,17 @@ syn_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["syn/fullynn.json", "syn/fullynn_no_shift.json", "syn/fullynn_no_neg.json", "syn/fullynn_no_neg_shift.json"], \
-    "--lr", "0.001", \
+    "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--dataloader_name", "syn", \
-    "--figure_count", "5", \
+    "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["intensity", "probability"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability"], \
     # "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \

@@ -12,8 +12,7 @@ stackoverflow_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "600", \
     "--model_name", "fullynn", \
-    # "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json", "stackoverflow/fullynn_zero_shift.json"],
-    "--model_config", ["stackoverflow/fullynn_CL.json", "stackoverflow/fullynn_zero_shift_CL.json"],
+    "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json", "stackoverflow/fullynn_zero_shift.json", "stackoverflow/fullynn_CL.json", "stackoverflow/fullynn_zero_shift_CL.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -35,8 +34,8 @@ retweet_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1200", \
     "--model_name", "fullynn", \
-    # "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json", "retweet/fullynn_zero_shift.json"],
-    "--model_config", ["retweet/fullynn_CL.json", "retweet/fullynn_zero_shift_CL.json"],
+    "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json", "retweet/fullynn_zero_shift.json", "retweet/fullynn_CL.json", "retweet/fullynn_zero_shift_CL.json"],
+    "--model_config", [],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -58,8 +57,7 @@ mimic_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1000", \
     "--model_name", "fullynn", \
-    # "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json", "mimic/fullynn_zero_shift.json"],
-    "--model_config", ["mimic/fullynn_CL.json", "mimic/fullynn_zero_shift_CL.json"],
+    "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json", "mimic/fullynn_zero_shift.json", "mimic/fullynn_CL.json", "mimic/fullynn_zero_shift_CL.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -81,8 +79,7 @@ bookorder_training_hyperparameter_list = [
     "--b", "64", \
     "--n_warmup_steps", "250", \
     "--model_name", "fullynn", \
-    # "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json", "bookorder/fullynn_zero_shift.json"],
-    "--model_config", ["bookorder/fullynn_CL.json", "bookorder/fullynn_zero_shift_CL.json"],
+    "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json", "bookorder/fullynn_zero_shift.json", "bookorder/fullynn_CL.json", "bookorder/fullynn_zero_shift_CL.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -103,9 +100,8 @@ syn_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1000", \
     "--model_name", "fullynn", \
-    # "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json"],
-    "--model_config", ["syn/fullynn_CL.json", "syn/fullynn_zero_shift_CL.json"],
-    "--lr", "0.001", \
+    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json", "syn/fullynn_CL.json", "syn/fullynn_zero_shift_CL.json"],
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -129,8 +125,8 @@ retweet_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200"
 ]
@@ -150,9 +146,9 @@ stackoverflow_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", ["shift.json"], \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    # "--used_dataloader_config", ["shift.json"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200"
 ]
@@ -173,8 +169,8 @@ mimic_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "no_norm.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     # "--plot_type", ["intensity", "probability"], \
     "--dataloader_config", "mimic/plot.json", \
     "--resolution", "200"
@@ -195,30 +191,30 @@ bookorder_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    # "--used_dataloader_config", "shift.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "bookorder/plot.json", \
-    "--resolution", "100"
+    "--resolution", "200"
 ]
 
 syn_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
+    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json", "syn/fullynn_CL.json", "syn/fullynn_zero_shift_CL.json"], \
+    "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--dataloader_name", "syn", \
-    "--figure_count", "5", \
+    "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["intensity", "probability"], \
-    # "--plot_type", ["debug"], \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
     "--synthetic_evaluation"

@@ -163,6 +163,7 @@ class FullyNN(nn.Module):
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
+                                                                    
         original_time_expand = time_multiplier * time_next                     # [batch_size, seq_len, resolution]
         time_history = (time_history - mean) / var                             # [batch_size, seq_len, 1]
 

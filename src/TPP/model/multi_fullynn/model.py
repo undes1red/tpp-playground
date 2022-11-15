@@ -182,7 +182,7 @@ class MultiFullyNNModel(BasicModule):
         First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
         Next, given time predictions. (Expectation? or probability bigger than 0.5?)
         
-        Monte-Carlo estiamtion are required.
+        Monte-Carlo estimation are required.
         '''
 
         # might be a good idea to utilise function_prober.
