@@ -95,7 +95,7 @@ class THP(BasicModule):
         '''
         aggregate_time = time.cumsum(dim = -1)                                 # [batch_size, seq_len]
         scaled_time = (time / aggregate_time).unsqueeze(dim = -1)              # [batch_size, seq_len, 1]
-        intensity_all_event = F.softplus(self.model.linear(history) + F.softplus(self.alpha) * scaled_time, beta = self.beta)
+        intensity_all_event = F.softplus(self.model.linear(history) + self.alpha * scaled_time, beta = self.beta)
                                                                                # [batch_size, seq_len, num_types]
         intensity = torch.sum(intensity_all_event * type_mask, dim = -1)       # [batch_size, seq_len]
 
@@ -140,7 +140,7 @@ class THP(BasicModule):
         intensity_all_event_pre_softplus = intensity_all_event_pre_softplus.unsqueeze(dim = -1).repeat(1, 1, 1, num_samples)
                                                                                # [batch_size, seq_len, num_types, num_samples]
 
-        all_lambda = F.softplus(intensity_all_event_pre_softplus + F.softplus(self.alpha) * temp_time / aggregate_time, self.beta)
+        all_lambda = F.softplus(intensity_all_event_pre_softplus + self.alpha * temp_time / aggregate_time, self.beta)
                                                                                # [batch_size, seq_len, num_types, num_samples]
         lambda_mean = torch.mean(all_lambda, dim = -1)                         # [batch_size, seq_len, num_types]
     
@@ -189,7 +189,7 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history).detach()         # [batch_size, seq_len, num_types]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_types]
         
-        expanded_intensity = F.softplus(F.softplus(self.alpha.detach()) * scaled_expanded_time + intensity_for_each_event, self.beta)
+        expanded_intensity = F.softplus(self.alpha.detach() * scaled_expanded_time + intensity_for_each_event, self.beta)
                                                                                # [batch_size, seq_len, resolution, num_types]
         intensity_sum_across_events = torch.sum(expanded_intensity, dim = -1)  # [batch_size, seq_len, resolution]
         integral_sum_across_events = torch.cumsum(intensity_sum_across_events * expanded_time_gap, dim = -1)
@@ -261,7 +261,7 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history).detach()         # [batch_size, seq_len, num_types]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_types]
         
-        expanded_intensity = F.softplus(F.softplus(self.alpha.detach()) * scaled_expanded_time + intensity_for_each_event, self.beta)
+        expanded_intensity = F.softplus(self.alpha.detach() * scaled_expanded_time + intensity_for_each_event, self.beta)
                                                                                # [batch_size, seq_len, resolution, num_types]
         intensity_sum_across_events = torch.sum(expanded_intensity, dim = -1)  # [batch_size, seq_len, resolution]
         integral_sum_across_events = torch.cumsum(intensity_sum_across_events * expanded_time_gap, dim = -1)
@@ -340,7 +340,7 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history)                  # [batch_size, seq_len, num_types]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_types]
         
-        expanded_intensity = torch.sum(F.softplus(F.softplus(self.alpha) * scaled_expanded_time + intensity_for_each_event, self.beta), dim =-1)
+        expanded_intensity = torch.sum(F.softplus(self.alpha * scaled_expanded_time + intensity_for_each_event, self.beta), dim =-1)
                                                                                # [batch_size, seq_len, resolution]
         
         # Only works when expanded_time_gap is tiny.
@@ -384,7 +384,7 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history)                  # [batch_size, seq_len, num_types]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_types]
         
-        expanded_intensity = torch.sum(F.softplus(F.softplus(self.alpha) * scaled_expanded_time + intensity_for_each_event, self.beta), dim =-1)
+        expanded_intensity = torch.sum(F.softplus(self.alpha * scaled_expanded_time + intensity_for_each_event, self.beta), dim =-1)
                                                                                # [batch_size, seq_len, resolution]
         
         # Only works when expanded_time_gap is tiny.
