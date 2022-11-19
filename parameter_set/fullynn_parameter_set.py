@@ -146,7 +146,7 @@ stackoverflow_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--used_dataloader_config", ["shift.json"], \
+    "--used_dataloader_config", ["shift.json"], \
     "--plot_type", ["intensity", "probability", "debug"], \
     # "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
@@ -191,7 +191,7 @@ bookorder_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--used_dataloader_config", "shift.json", \
+    "--used_dataloader_config", "shift.json", \
     "--plot_type", ["intensity", "probability", "debug"], \
     # "--plot_type", ["debug"], \
     "--dataloader_config", "bookorder/plot.json", \
@@ -214,7 +214,7 @@ syn_plot_hyperparameter_list = [
     "--evaluation", \
     "--plot_type", ["intensity", "probability", "debug"], \
     # "--plot_type", ["intensity", "probability"], \
-    "--plot_type", ["debug"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
     "--synthetic_evaluation"

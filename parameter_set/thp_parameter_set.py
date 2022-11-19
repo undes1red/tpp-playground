@@ -22,8 +22,8 @@ syn_training_hyperparameter_list = [
 syn_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json", "syn/fullynn_CL.json", "syn/fullynn_zero_shift_CL.json"], \
+    "--model_name", "thp", \
+    "--model_config", ["syn/thp.json"], \
     "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \
@@ -33,12 +33,11 @@ syn_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["intensity", "probability"], \
-    "--plot_type", ["debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["intensity", "probability"], \
+    # "--plot_type", ["debug"], \
     "--dataloader_config", "syn/plot.json", \
-    "--resolution", "200", \
-    "--synthetic_evaluation"
+    "--resolution", "200"
 ]
 
 training_hyperparameter = {

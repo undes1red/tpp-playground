@@ -199,6 +199,7 @@ class THP(BasicModule):
         probability = expanded_time_gap.unsqueeze(dim = -1) * probabilty_expanded_event
                                                                                # [batch_size, seq_len, resolution, num_types]
         probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_types]
+        probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_event = torch.argmax(probability, dim = -1)                  # [batch_size, seq_len]
 
         # F1 value and top_k_acc are only avaliable when batch_size = 1
@@ -224,13 +225,6 @@ class THP(BasicModule):
                     )
                 )
                 top_k_acc.append(1.0)
-        
-        # placeholder
-        probability_integral_sum = 0
-        mae_per_event_pure_predict_avg = torch.tensor(0)
-        mae_per_event_avg = torch.tensor(0)
-        mae_per_event_pure_predict = 0
-        mae_per_event = 0
 
         if mean == 0:
             resolution = max(min(int(input_time.mean().item() * 200), 1000), 1)
@@ -348,6 +342,8 @@ class THP(BasicModule):
                                                                                # [batch_size, seq_len, resolution]
 
         expanded_intensity = expanded_intensity.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
+        expanded_integral_unbiased = expanded_integral_unbiased.reshape(batch_size, -1)
+                                                                               # [batch_size, seq_len * resolution]
 
         # aggregated timestamp
         timestamp = torch.cat(

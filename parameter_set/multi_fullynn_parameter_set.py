@@ -147,8 +147,8 @@ bookorder_plot_hyperparameter_list = [
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
     # "--plot_type", ["intensity", "probability"], \
-    "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200"
 ]
@@ -189,8 +189,8 @@ retweet_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["debug_addition_only"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200"
 ]
@@ -200,7 +200,6 @@ stackoverflow_plot_hyperparameter_list = [
     "--seed", "32", \
     "--model_name", "multi_fullynn", \
     "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_shift.json", "stackoverflow/fullynn_no_neg.json", "stackoverflow/fullynn_no_neg_shift.json"], \
-    # "--model_config", ["stackoverflow/fullynn_no_shift.json", "stackoverflow/fullynn_no_neg_shift.json"], \
     "--lr", "0.001", \
     "--batch_size", "128", \
     "--n_training_steps", "3000", \
@@ -211,8 +210,8 @@ stackoverflow_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--used_dataloader_config", "shift.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", ["debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200"
 ]
@@ -254,9 +253,9 @@ syn_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
     # "--plot_type", ["intensity", "probability"], \
-    # "--plot_type", ["debug_addition_only"], \
+    "--plot_type", ["debug_addition_only"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
     "--synthetic_evaluation"

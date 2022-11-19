@@ -399,7 +399,9 @@ class FullyNN(nn.Module):
                         {
                             'data': value,
                             'cmap': "YlGnBu",
-                            'vmin': 0
+                            'vmin': 0,
+                            'vmax': max(5, np.max(value)),
+                            'annot': True
                         }
                     ])
                     idx += 1
