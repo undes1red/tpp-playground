@@ -1,5 +1,6 @@
 import math, torch
 import torch.nn as nn
+from einops import rearrange, reduce, repeat
 
 from .layers import TransformerLayer
 from .utils import *
@@ -49,37 +50,41 @@ class TransEncoder(nn.Module):
         Input:  [seq_len]
         Output: [batch_size, seq_len, d_input]
         """
-
-        result = idx.unsqueeze(-1) / self.position_vec
+        
+        idx = rearrange(idx, '... -> ... 1')
+        result = idx / self.position_vec                                       # [seq_len, d_input]
         result[:, 0::2] = torch.sin(result[:, 0::2])
         result[:, 1::2] = torch.cos(result[:, 1::2])
+
+        result = rearrange(result, '... -> 1 ...')
         return result
 
-    def forward(self, event_type, event_time, non_pad_mask):
+    def forward(self, events_history, time_history, non_pad_mask):
         """
         Encode event sequences via masked self-attention.
         Args:
-        1. event_type: 
-        2. event_time: input time intervals. shape: [batch_size, seq_len, 1]
-        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len, 1]
+        1. events_history: historical events.        shape: [batch_size, seq_len]
+        2. time_history: historical time intervals.  shape: [batch_size, seq_len]
+        3. non_pad_mask: pad mask tensor.            shape: [batch_size, seq_len]
         """
 
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        seq_idx = torch.arange(non_pad_mask.shape[1], device = self.device)
+        batch_size, seq_len = time_history.shape
+        seq_idx = torch.arange(seq_len, device = self.device)                  # [seq_len]
         
-        self_attn_mask_subseq = get_subsequent_mask(event_time)
+        self_attn_mask_subseq = get_subsequent_mask(events_history)            # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
-                                                                               # [batch_size, seq_len, 1]
-        self_attn_mask_keypad = self_attn_mask_keypad.repeat(1, 1, self_attn_mask_keypad.shape[1])
+                                                                               # [batch_size, seq_len]
+        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s s1', s1 = seq_len)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
-        idx_emb = self.encode_position_idx(seq_idx).unsqueeze(dim = 0)         # [seq_len, d_input]
-        time = event_time                                                      # [batch_size, seq_len, 1]
+        idx_emb = self.encode_position_idx(seq_idx)                            # [1, seq_len, d_input]
+        time = rearrange(time_history, '... -> ... 1')                         # [batch_size, seq_len, 1]
 
         if self.event_toggle:
-            events_emb = self.event_emb(event_type) + idx_emb                  # [batch_size, seq_len, d_input]
+            events_emb = self.event_emb(events_history) + idx_emb              # [batch_size, seq_len, d_input]
             for enc_layer in self.event_encoder:
                 '''
                 history event sequence
@@ -116,84 +121,3 @@ class TransEncoder(nn.Module):
                     self_attn_mask = self_attn_mask)                           # [batch_size, seq_len, d_input]
 
         return time_emb
-
-class HistoryTimeMixer(nn.Module):
-    """ A History and Time information mixer with self attention mechanism. """
-
-    def __init__(
-            self,
-            num_types, d_input, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout, 
-            device):
-        super(HistoryTimeMixer, self).__init__()
-        self.device = device
-        self.d_input = d_input
-        self.num_types = num_types
-
-        # position vector, used for temporal encoding
-        self.position_vec = torch.tensor(
-            [math.pow(10000.0, 2.0 * (i // 2) / d_input) for i in range(d_input)],
-            device=self.device)
-
-        # Two time Encoder here
-        # Relative time encoder and absolution time encoder
-        self.relative_time_emb = NonNegLinear(1, d_input, device = self.device)
-        self.absolute_time_emb = NonNegLinear(1, d_input, device = self.device)
-
-        self.mixer = nn.ModuleList([
-            TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
-                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device,\
-                             wq_nonneg = True, wk_nonneg = False, wv_nonneg = True)
-            ] + [
-            TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
-                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device,\
-                             wq_nonneg = True, wk_nonneg = True, wv_nonneg = True)
-            for _ in range(n_layers - 1)])
-
-    def encode_position_idx(self, idx):
-        """
-        Input:  [seq_len]
-        Output: [batch_size, seq_len, d_input]
-        """
-
-        result = idx.unsqueeze(-1) / self.position_vec
-        result[:, 0::2] = torch.sin(result[:, 0::2])
-        result[:, 1::2] = torch.cos(result[:, 1::2])
-        return result
-
-    def forward(self, history, time, non_pad_mask):
-        """
-        Encode event sequences via masked self-attention.
-        Args:
-        1. history:         shape: [batch_size, seq_len, num_events, d_intensity]
-        2. relative time:   shape: [batch_size, seq_len, num_events]
-        3. non_pad_mask     shape: [batch_size, seq_len, 1]
-        """
-
-        # prepare attention masks
-        # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        seq_idx = torch.arange(non_pad_mask.shape[1], device = self.device)
-        
-        self_attn_mask_subseq = get_subsequent_mask(non_pad_mask)
-        self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
-                                                                               # [batch_size, seq_len, 1]
-        self_attn_mask_keypad = self_attn_mask_keypad.repeat(1, 1, self_attn_mask_keypad.shape[1])
-                                                                               # [batch_size, seq_len, seq_len]
-        self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
-
-        idx_emb = self.encode_position_idx(seq_idx).unsqueeze(dim = 0)         # [seq_len, d_input]
-        
-        # Time embedding
-        absolute_time = torch.cumsum(time, dim = -1)                           # [batch_size, seq_len, num_events]
-        relative_time_vec = self.relative_time_emb(time.unsqueeze(dim = -1))   # [batch_size, seq_len, num_events, d_input]
-        absolute_time_vec = self.absolute_time_emb(absolute_time.unsqueeze(dim = -1))
-                                                                               # [batch_size, seq_len, num_events, d_input]
-
-        output, _ = self.mixer[0](relative_time_vec + absolute_time_vec, history, relative_time_vec + absolute_time_vec, \
-                                  self_attn_mask, non_pad_mask)
-                                                                               # [batch_size, seq_len, num_events, d_output]
-        for layer in self.mixer[1:]:
-            output = layer(output, output, output, self_attn_mask, non_pad_mask)
-        
-        return 0
-        

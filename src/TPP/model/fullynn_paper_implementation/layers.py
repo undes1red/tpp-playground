@@ -1,10 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange
-
 from .selfattn import SelfAttn
 from .nonneg import NonNegLinear
-
 
 class TransformerLayer(nn.Module):
     def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1):
@@ -19,16 +16,16 @@ class TransformerLayer(nn.Module):
     def forward(self, q, k, v, self_attn_mask, non_pad_mask):
         '''
         Args:
-        1. q, k, v: input tensor.                                  shape: [batch_size, seq_len, d_input]
-        2. self_attn_mask: mask tensor for used by self attention. shape: [batch_size, seq_len, seq_len]
-        3. non_pad_mask: mask out pad items' output values.        shape: [batch_size, seq_len]
+        1. x: input tensor. shape: [batch_size, seq_len, d_input]
+        2. self_attn_mask: mask tensor for used by self attention. shape: [seq_len, seq_len]
+        3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
         Outputs:
         '''
         output, attn = self.attn(q, k, v, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        output *= non_pad_mask                                                 # [batch_size, seq_len, d_input]
 
         output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        output *= non_pad_mask
 
         return output, attn
 
@@ -82,7 +79,7 @@ class MultiheadAttention(nn.Module):
         self.dropout = nn.Dropout(self.dropout)
 
         # layer normalization
-        self.layer_norm = nn.LayerNorm(self.d_output, eps = 1e-6, device = self.device)
+        self.layer_norm = nn.LayerNorm(self.d_input, eps = 1e-6, device = self.device)
 
 
     def forward(self, q, k, v, mask = None):
@@ -102,15 +99,12 @@ class MultiheadAttention(nn.Module):
         q = self.layer_norm(q)                                                 # [batch_size, seq_len, n_head, d_qk]
         
         # preparing for q, k, and v.
-        q = rearrange(self.w_q(q), 'b s (n_h d_q) -> b s n_h d_q', n_h = self.n_head)
-                                                                               # [batch_size, seq_len, n_head, d_qk]
-        k = rearrange(self.w_k(k), 'b s (n_h d_k) -> b s n_h d_k', n_h = self.n_head)
-                                                                               # [batch_size, seq_len, n_head, d_qk]
-        v = rearrange(self.w_v(v), 'b s (n_h d_v) -> b s n_h d_v', n_h = self.n_head)
-                                                                               # [batch_size, seq_len, n_head, d_v]
+        q = self.w_q(q).view(batch_size, -1, self.n_head, self.d_q)            # [batch_size, seq_len, n_head, d_qk]
+        k = self.w_k(k).view(batch_size, -1, self.n_head, self.d_k)            # [batch_size, seq_len, n_head, d_qk]
+        v = self.w_v(v).view(batch_size, -1, self.n_head, self.d_v)            # [batch_size, seq_len, n_head, d_qk]
 
-        output, attn = self.self_attn(q, k, v, mask = mask)                    # [batch_size, seq_len, n_head, d_v] & [batch_size, n_head, seq_len, seq_len]
-        output = rearrange(output, 'b s n_h d_v -> b s (n_h d_v)')             # [batch_size, seq_len, n_head * d_v]
+        output, attn = self.self_attn(q, k, v, mask = mask)                    # [batch_size, seq_len, n_head, d_output] & [batch_size, n_head, seq_len, seq_len]
+        output = output.reshape(batch_size, -1, self.n_head * self.d_v)        # [batch_size, seq_len, n_head * d_v]
         output = self.dropout(self.fc_attn_output(output))                     # [batch_size, seq_len, d_output]
         output += residual
 
