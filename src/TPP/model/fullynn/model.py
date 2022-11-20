@@ -9,12 +9,6 @@ import numpy as np
 def check_tensor(x):
     assert (x < 0).cpu().numpy().any() == False
 
-'''
-Q1: why without bottleneck, the intensity function for each type of event fails to learn?
-A: The reason might still be the activation, because we detect that although the norms of gradients are similar, the variances
-are significantly different, which is over 100 times larger when a bottleneck layer is applied.
-'''
-
 class FullyNNModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
@@ -240,6 +234,14 @@ class FullyNNModel(BasicModule):
                 )
                 top_k_acc.append(1.0)
 
+        predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_event]
+        event_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_event]
+        p_x_predicted = reduce(probability_integral * predict_index_one_hot, '... ne -> ...', 'sum')
+                                                                               # [batch_size, seq_len]
+        p_x_real = reduce(probability_integral * event_next_one_hot, '... ne -> ...', 'sum')
+                                                                               # [batch_size, seq_len]
         del expand_probability_per_event, timestamp, expand_intensity_to_inf, expand_integral_to_inf
 
         # step 2: get the time prediction for that kind of event
@@ -249,9 +251,9 @@ class FullyNNModel(BasicModule):
             resolution = max(min(int(mean // 0.005), 500), 1)
 
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
-                                                                               probability_integral, resolution, mask_next, mean, var, max_)
+                                                                               p_x_predicted, resolution, mask_next, mean, var, max_)
         mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
-                                                                  probability_integral, resolution, mask_next, mean, var, max_)
+                                                                  p_x_real, resolution, mask_next, mean, var, max_)
         
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict) / mask_next.sum()
         mae_per_event_avg = torch.sum(mae_per_event) / mask_next.sum()
@@ -283,7 +285,7 @@ class FullyNNModel(BasicModule):
         return probability
 
     def mean_absolute_error_per_event_worker(self, events_history, events_next,
-        time_history, time_next, probability_integral, resolution, mask, mean, var, max_val):
+        time_history, time_next, p_x, resolution, mask, mean, var, max_val):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -292,10 +294,6 @@ class FullyNNModel(BasicModule):
         def bisect_target(events_history, time_history, taus, mean, var):
             p_xt = self.evaluate_per_event(events_history, events_next, time_history, taus,
                                            resolution, mean, var, mask)        # [batch_size, seq_len]
-            event_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_event]
-            p_x = reduce(probability_integral * event_next_one_hot, 'b s ne -> b s', 'sum')
-                                                                               # [batch_size, seq_len]
             p_t_x = p_xt / p_x                                                 # [batch_size, seq_len]
             p_gap = p_t_x - (1 / self.mae_threshold)                           # [batch_size, seq_len]
 

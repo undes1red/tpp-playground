@@ -12,12 +12,6 @@ from einops import rearrange, repeat, reduce
 def check_tensor(x):
     assert (x < 0).any() == False
 
-'''
-Q1: why without bottleneck, the intensity function for each type of event fails to learn?
-A: The reason might still be the activation, because we detect that although the norms of gradients are similar, the variances
-are significantly different, which is over 100 times larger when a bottleneck layer is applied.
-'''
-
 class MultiFullyNNModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
@@ -333,8 +327,7 @@ class MultiFullyNNModel(BasicModule):
             p_gap = p_t_x - (1 / self.mae_threshold)                           # [batch_size, seq_len]
 
             return p_gap
-            
-            
+
         def median_prediction(events_history, time_history, l, r, mean, var):
             for _ in range(50):
                 c = (l + r)/2

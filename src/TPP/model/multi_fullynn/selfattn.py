@@ -31,7 +31,7 @@ class SelfAttn(nn.Module):
 
         q /= self.temperature                                                  # [batch_size, seq_len, n_head, d_qk]
 
-        attn = torch.einsum('ijkl, imkl -> ikjm', q, k)                        # [batch_size, n_head, seq_len, seq_len]
+        attn = torch.einsum('...jkl, ...mkl -> ...kjm', q, k)                  # [batch_size, n_head, seq_len, seq_len]
 
         if mask is not None:
             attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
@@ -44,6 +44,6 @@ class SelfAttn(nn.Module):
         if self.wv_nonneg and not self.wq_nonneg and not self.wk_nonneg:
             attn = F.softplus(attn)                                            # [batch_size, n_head, seq_len, seq_len]
 
-        output = torch.einsum('ijkl, iljn -> ikjn', attn, v)                   # [batch_size, seq_len, n_head, d_v]
+        output = torch.einsum('...jkl, ...ljn -> ...kjn', attn, v)             # [batch_size, seq_len, n_head, d_v]
 
         return output, attn

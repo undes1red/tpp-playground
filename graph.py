@@ -114,7 +114,7 @@ if __name__ == '__main__':
     logger.info('Model restore completed.')
     logger.info(print_args(opt))
 
-    graph = True
+    graph = False
 
     if not graph:
         for key, (value, value_size) in iterator_dict_mae.items():
