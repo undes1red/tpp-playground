@@ -3,6 +3,7 @@ import torch
 from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
+import pandas as pd
 
 from .nonneg import NonNegLinear
 from .activate import *
@@ -384,6 +385,31 @@ class FullyNN(nn.Module):
                 # L^1 metric
                 heatmap_data['L1'] = L1_distance(item, resolution = resolution, num_events = self.num_events, time_next = time_next[idx])
 
+                # Transfer the result matrices into DataFrames.
+                def matrix_to_pd(matrix, index_name, column_name, value_name):
+                    index, column = matrix.shape
+
+                    # The index and column list
+                    index_list = [ele for ele in range(index) for _ in range(column)]
+                    column_list = list(range(column)) * index
+
+                    df = pd.DataFrame.from_dict({
+                        index_name: index_list,
+                        column_name: column_list,
+                        value_name: matrix.flatten()
+                    })
+
+                    df = df.pivot(index = index_name, columns = column_name, values = value_name)
+
+                    return df
+                
+                heatmap_data['L1'] = \
+                    matrix_to_pd(heatmap_data['L1'], index_name = 'Event type', column_name = 'Event type ', value_name = 'L1')
+                heatmap_data['pearson'] = \
+                    matrix_to_pd(heatmap_data['pearson'], index_name = 'Event type', column_name = 'Event type ', value_name = 'pearson')
+                heatmap_data['spearman'] = \
+                    matrix_to_pd(heatmap_data['spearman'], index_name = 'Event type', column_name = 'Event type ', value_name = 'spearman')
+
                 # add plots
                 for key, value in heatmap_data.items():
                     idx = 0
@@ -394,7 +420,7 @@ class FullyNN(nn.Module):
                             'data': value,
                             'cmap': "YlGnBu",
                             'vmin': 0,
-                            'vmax': max(5, np.max(value)),
+                            'vmax': max(5, np.max(value.values)),
                             'annot': True
                         }
                     ])
@@ -467,7 +493,7 @@ def L1_distance(input, resolution, num_events, time_next):
 
     L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
                                                                                # [num_events, num_events]
-    # round up the value smaller than 1e-6
+    # round off the value smaller than 1e-6
     L1[L1 < 1e-6] = 0
 
     return L1

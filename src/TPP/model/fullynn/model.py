@@ -92,13 +92,14 @@ class FullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
                 intensity_for_each_event = self.inv_neck_2(intensity_for_each_event)
                                                                                # [batch_size, seq_len, num_events]
+                probability_for_each_event = intensity_for_each_event          # [batch_size, seq_len, num_events]
             else:
                 '''
                 Or, output the original intensity value directly.
                 '''
-                intensity_for_each_event = intensity_for_each_event
+                probability_for_each_event = torch.log(intensity_for_each_event)
                                                                                # [batch_size, seq_len, num_events]
-            event_probability = torch.nn.functional.softmax(intensity_for_each_event, dim = -1)
+            event_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
             event_loss = torch.nn.functional.cross_entropy(rearrange(event_probability, 'b s ne -> b ne s'), \
                                                                      events_next.long(), reduction = 'none')

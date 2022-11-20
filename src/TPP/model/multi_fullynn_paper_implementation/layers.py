@@ -1,17 +1,19 @@
 import torch.nn as nn
 import torch.nn.functional as F
 from .selfattn import SelfAttn
+from .nonneg import NonNegLinear
 
 class TransformerLayer(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, dropout = 0.1):
+    def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1):
         super(TransformerLayer, self).__init__()
         self.device = device
 
         self.attn = MultiheadAttention(n_head = n_head, d_input = d_input, d_qk = d_qk,
-                                       d_v = d_v, device = self.device, dropout = dropout)
+                                       d_v = d_v, device = self.device, dropout = dropout,
+                                       wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg)
         self.ffn = FFN(d_input = d_input, d_hidden = d_hidden, device = self.device, dropout = dropout)
 
-    def forward(self, x, self_attn_mask, non_pad_mask):
+    def forward(self, q, k, v, self_attn_mask, non_pad_mask):
         '''
         Args:
         1. x: input tensor. shape: [batch_size, seq_len, d_input]
@@ -19,7 +21,7 @@ class TransformerLayer(nn.Module):
         3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
         Outputs:
         '''
-        output, attn = self.attn(x, x, x, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+        output, attn = self.attn(q, k, v, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
         output *= non_pad_mask                                                 # [batch_size, seq_len, d_input]
 
         output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
@@ -29,7 +31,7 @@ class TransformerLayer(nn.Module):
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, dropout = 0.1):
+    def __init__(self, n_head, d_input, d_qk, d_v, device, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1, ):
         '''
         Template self-attention module with multihead-attention type 2: this module concatenates original outputs and
         compress high-dimensional vectors into d_output
@@ -45,16 +47,33 @@ class MultiheadAttention(nn.Module):
         self.d_v = d_v
         self.dropout = dropout
 
+        assert self.n_head > 0
+
         # Linear: d_input -> d_q, d_k, or d_v
-        self.w_q = nn.Linear(d_input, self.d_q * self.n_head, bias = False, device = self.device)
-        self.w_k = nn.Linear(d_input, self.d_k * self.n_head, bias = False, device = self.device)
-        self.w_v = nn.Linear(d_input, self.d_v * self.n_head, bias = False, device = self.device)
+        if wq_nonneg:
+            self.w_q = NonNegLinear(d_input, self.d_q * self.n_head, bias = False, device = self.device)
+        else:
+            self.w_q = nn.Linear(d_input, self.d_q * self.n_head, bias = False, device = self.device)
+        
+        if wk_nonneg:
+            self.w_k = NonNegLinear(d_input, self.d_k * self.n_head, bias = False, device = self.device)
+        else:
+            self.w_k = nn.Linear(d_input, self.d_k * self.n_head, bias = False, device = self.device)
+        
+        if wv_nonneg:
+            self.w_v = NonNegLinear(d_input, self.d_v * self.n_head, bias = False, device = self.device)
+        else:
+            self.w_v = nn.Linear(d_input, self.d_v * self.n_head, bias = False, device = self.device)
 
         # Self-attention module
-        self.self_attn = SelfAttn(temperature = d_qk ** 0.5, attn_dropout = self.dropout, device = self.device)
+        self.self_attn = SelfAttn(temperature = d_qk ** 0.5, attn_dropout = self.dropout, device = self.device, \
+                                  wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg)
 
         # Linear: n_head * d_q, d_k, or d_v -> d_output
-        self.fc_attn_output = nn.Linear(self.n_head * d_v, self.d_output, bias = True, device = self.device)
+        if wv_nonneg:
+            self.fc_attn_output = NonNegLinear(self.n_head * d_v, self.d_output, bias = True, device = self.device)
+        else:
+            self.fc_attn_output = nn.Linear(self.n_head * d_v, self.d_output, bias = True, device = self.device)
 
         # Dropout
         self.dropout = nn.Dropout(self.dropout)
@@ -82,7 +101,7 @@ class MultiheadAttention(nn.Module):
         # preparing for q, k, and v.
         q = self.w_q(q).view(batch_size, -1, self.n_head, self.d_q)            # [batch_size, seq_len, n_head, d_qk]
         k = self.w_k(k).view(batch_size, -1, self.n_head, self.d_k)            # [batch_size, seq_len, n_head, d_qk]
-        v = self.w_v(v).view(batch_size, -1, self.n_head, self.d_v)            # [batch_size, seq_len, n_head, d_qk]
+        v = self.w_q(v).view(batch_size, -1, self.n_head, self.d_v)            # [batch_size, seq_len, n_head, d_qk]
 
         output, attn = self.self_attn(q, k, v, mask = mask)                    # [batch_size, seq_len, n_head, d_output] & [batch_size, n_head, seq_len, seq_len]
         output = output.reshape(batch_size, -1, self.n_head * self.d_v)        # [batch_size, seq_len, n_head * d_v]

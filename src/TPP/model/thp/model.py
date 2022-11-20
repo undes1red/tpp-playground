@@ -17,7 +17,7 @@ class THP(BasicModule):
         self.mae_threshold = mae_threshold
 
         # parameter for the weight of time difference
-        self.alpha = nn.Parameter(torch.tensor(0, dtype = torch.float32, device = self.device, requires_grad = True))
+        self.alpha = nn.Parameter(torch.tensor(0., dtype = torch.float32, device = self.device, requires_grad = True))
 
         # parameter for the softplus function
         self.beta = beta

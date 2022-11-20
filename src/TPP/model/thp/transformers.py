@@ -76,25 +76,6 @@ class Encoder(nn.Module):
         return time_emb
 
 
-class Predictor(nn.Module):
-    """ Prediction of next event type. """
-
-    def __init__(self, dim, num_types, device):
-        super(Predictor, self).__init__()
-        self.device = device
-        self.num_types = num_types
-
-        self.linear = nn.Linear(dim, num_types, bias=False, device = self.device)
-
-    def forward(self, data, non_pad_mask):
-        out = self.linear(data)                                                # [batch_size, seq_len, num_types]
-        out.masked_fill(non_pad_mask != 1, 1e-9)                               # [batch_size, seq_len, num_types]
-
-        if self.num_types > 1:
-            out = F.softmax(out, dim = -1)                                     # [batch_size, seq_len, num_types]
-        return out
-
-
 class RNN_layers(nn.Module):
     """
     Optional recurrent layers. This is inspired by the fact that adding
@@ -143,15 +124,6 @@ class TransformerTPP(nn.Module):
         # OPTIONAL recurrent layer, this sometimes helps
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
 
-        # prediction of next time stamp
-        # self.time_predictor = Predictor(d_input, 1, device = self.device)
-
-        # prediction of next event type
-        # if num_types > 1:
-        #     self.type_predictor = Predictor(d_input, num_types, device = self.device)
-        # else:
-        #     self.type_predictor = None
-
     def forward(self, event_time, event_type, non_pad_mask):
         """
         Return intensity functions' values for all events and time and events, if possible, predictions.
@@ -164,12 +136,5 @@ class TransformerTPP(nn.Module):
         non_pad_mask = non_pad_mask.unsqueeze(-1)
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
-
-        # time_prediction = self.time_predictor(enc_output, non_pad_mask)      # [batch_size, seq_len, 1]
-
-        # if self.type_predictor:
-        #     type_prediction = self.type_predictor(enc_output, non_pad_mask)  # [batch_size, seq_len, num_types]
-        # else:
-        #     type_prediction = None
 
         return enc_output

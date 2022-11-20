@@ -55,17 +55,22 @@ class MultiFullyNNModel(BasicModule):
                     for _ in range(self.num_events)])
 
     def forward(self, input_time, input_events, mask, mean, var, evaluate = False):
-        time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # 2 * [batch_size, seq_len, 1]
+        events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
+        # mae_mean_of_all_event, mae_mean_of_ded_event = 0, 0
         mae_mean_of_all_event = 0
         if evaluate:
             mae_mean_of_all_event = \
-                        self.mean_absolute_error(events_history = events_history,
+                        self.mean_absolute_error(events_history = events_history, events_next = events_next, 
                                                  time_history = time_history, time_next = time_next, 
                                                  mask = mask_next, mean = mean, var = var)
+            # mae_mean_of_all_event = \
+            #             self.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
+            #                                                mask = mask_next, mean = mean, var = var)
 
         # preparing for multi-event training when needed
         time_next.requires_grad = True
@@ -82,9 +87,11 @@ class MultiFullyNNModel(BasicModule):
                 outputs = sub_integral,
                 inputs = time_next,
                 grad_outputs = torch.ones_like(sub_integral),
+                retain_graph = True,
                 create_graph = True
             )[0]
-            check_tensor(sub_intensity)                                        # [batch_size, seq_len]
+            sub_intensity = sub_intensity.squeeze(dim = -1)
+            check_tensor(sub_intensity)                                        # [batch_size, seq_len, 1]
             assert sub_intensity.shape == sub_integral.shape
 
             integral.append(sub_integral)
@@ -92,24 +99,24 @@ class MultiFullyNNModel(BasicModule):
         
         time_next.requires_grad = False
 
-        integral = rearrange(integral, 'ne b s -> b s ne')                     # [batch_size, seq_len, num_events]
-        intensity = rearrange(intensity, 'ne b s -> b s ne')                   # [batch_size, seq_len, num_events]
+        integral = torch.stack(integral, dim = -1)                             # [batch_size, seq_len, num_events]
+        intensity = torch.stack(intensity, dim = -1)                           # [batch_size, seq_len, num_events]
 
         '''
         This part is only available when evnet_toggle = True
+        TODO: fix the loss calculation error when self.reverse_bottleneck = False and evnet_toggle = True
         '''
         if self.event_toggle:
             log_intensity = torch.log(intensity + 1e-9)                        # [batch_size, seq_len, num_events]
             event_probability = torch.nn.functional.softmax(log_intensity, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
-            event_loss = torch.nn.functional.cross_entropy(rearrange(event_probability, 'b s ne -> b ne s'), \
-                                                                     events_next.long(), reduction = 'none')
-                                                                               # [batch_size, seq_len]
-            event_loss = event_loss * mask_next                                # [batch_size, seq_len]
+            event_loss = torch.nn.functional.cross_entropy(event_probability.reshape(-1, self.num_events), \
+                                                        events_next.flatten().long(), reduction = 'none')
+            event_loss *= mask_next.reshape(-1)
             event_loss = event_loss.sum()
 
-            event_pred_index = torch.argmax(event_probability, dim = -1)[mask_next == 1].detach().cpu().numpy()
-            event_true = events_next[mask_next == 1].detach().cpu().numpy()
+            event_pred_index = torch.argmax(event_probability.reshape(-1, self.num_events), dim = -1)[mask_next.reshape(-1) == 1].detach().cpu().numpy()
+            event_true = events_next.long().flatten()[mask_next.reshape(-1) == 1].detach().cpu().numpy()
             f1 = f1_score(y_true = event_true, y_pred = event_pred_index, average = 'macro')
         else:
             event_loss = torch.tensor(0., dtype = torch.float32)
@@ -127,17 +134,21 @@ class MultiFullyNNModel(BasicModule):
         for item in self.model:
             sub_integral = item(events_history, time_history, taus, mean = mean, var = var, mask = mask)
                                                                                # [batch_size, seq_len] * num_events
+
             integral.append(sub_integral)
         
-        integral = rearrange(integral, 'ne b s -> b s ne')                     # [batch_size, seq_len, num_events]
-        integral = reduce(integral, 'b s ne -> b s', 'sum')                    # [batch_size, seq_len, num_events]
+        integral = torch.stack(integral, dim = -1)                             # [batch_size, seq_len, num_events]
+        integral = integral.sum(dim = -1)                                      # [batch_size, seq_len]
         return integral
 
-    def divide_history_and_next(self, input):
-        input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
+    def divide_history_and_next(self, input, unsqueeze = False):
+        input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
+        if unsqueeze:
+            input_history = input_history.unsqueeze(-1)                        # [batch_size, seq_len, 1]
+            input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
+    def mean_absolute_error(self, events_history, events_next, time_history, time_next, mask, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -146,7 +157,7 @@ class MultiFullyNNModel(BasicModule):
         Add event-wise MAE support.
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
-            return self.evaluate(events_history, time_history, taus, mean, var, mask) - \
+            return self.evaluate(events_history, time_history, taus, mean, var, mask).unsqueeze(-1) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
@@ -158,11 +169,10 @@ class MultiFullyNNModel(BasicModule):
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
+        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
-                                                                               # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask
+        gap = (tau_pred - time_next).squeeze(-1) * mask
         mae_mean_of_all_event = torch.sum(torch.abs(gap)) / mask.sum()
 
         return mae_mean_of_all_event.item()
@@ -178,10 +188,11 @@ class MultiFullyNNModel(BasicModule):
 
         # might be a good idea to utilise function_prober.
         # Now we need to build the input_data by ourselves.
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # [batch_size, seq_len, 1]
+        events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
         memory_ceiling = 5e7
 
@@ -194,16 +205,17 @@ class MultiFullyNNModel(BasicModule):
             max_ = min(max_, 1e5)
 
             time_next_inf = torch.ones_like(time_history, device = self.device) * max_
-                                                                               # [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, 1]
         else:
             max_ = mean + 10 * var
             # max_ can not be too huge for precesion concerns.
             max_ = min(max_, 1e5)
 
             time_next_inf = torch.ones_like(time_history, device = self.device) * max_
-                                                                               # [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, 1]
 
         resolution = min(max(int(torch.max(time_next_inf).item() // 0.005), 100), 5000)
+        # resolution = max(int(torch.max(time_next_inf).item() // 0.01), 100)
         if seq_len * resolution * self.num_events > memory_ceiling:
             resolution = int(memory_ceiling // (seq_len * self.num_events))
                 
@@ -215,63 +227,50 @@ class MultiFullyNNModel(BasicModule):
             expand_integral_to_inf.append(expand_integral_item_to_inf)
             expand_intensity_to_inf.append(expand_intensity_item_to_inf)
         
-        expand_integral_to_inf = rearrange(expand_integral_to_inf, 'ne b (s r) -> b s r ne', r = resolution)
+        expand_integral_to_inf = torch.stack(expand_integral_to_inf, dim = -1)
+                                                                               # [batch_size, seq_len * resolution, num_event]
+        expand_intensity_to_inf = torch.stack(expand_intensity_to_inf, dim = -1)
+                                                                               # [batch_size, seq_len * resolution, num_event]
+        expand_integral_to_inf = rearrange(expand_integral_to_inf, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_event]
-        expand_intensity_to_inf = rearrange(expand_intensity_to_inf, 'ne b (s r) -> b s r ne', r = resolution)
+        expand_intensity_to_inf = rearrange(expand_intensity_to_inf, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_event]
-        timestamp = rearrange(timestamp, 'b (s r) -> b s r 1', r = resolution) # [batch_size, seq_len, resolution, 1]
+        timestamp = rearrange(timestamp, 'b (s r) -> b s r', r = resolution)   # [batch_size, seq_len, resolution]
 
         # step 1: find the event
-        expand_integral_to_inf_sum = reduce(expand_integral_to_inf, 'b s r ne -> b s r ()', 'sum')
-                                                                               # [batch_size, seq_len, resolution, 1]
-        expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf_sum)
+        expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_event]
-        probability_integral = expand_probability_per_event[:, :, :-1, :] * timestamp[:, :, 1:, :]
+        probability_integral = expand_probability_per_event[:, :, :-1, :] * (timestamp[:, :, 1:].unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, resolution, num_event]
-        probability_integral = reduce(probability_integral, 'b s r ne -> b s ne', 'sum')
-                                                                               # [batch_size, seq_len, num_event]
-        probability_integral_sum = reduce(probability_integral, 'b s ne -> b s', 'sum')
-                                                                               # [batch_size, seq_len]
+        probability_integral = probability_integral.sum(dim = -2)              # [batch_size, seq_len, num_event]
         predict_index = torch.argmax(probability_integral, dim = -1)           # [batch_size, seq_len]
+        probability_integral_sum = probability_integral.sum(dim = -1)          # [batch_size, seq_len]
 
-        f1 = []
+        # Only available when batch_size = 1
+        f1 = f1_score(y_true = events_next.squeeze().detach().cpu(),
+                      y_pred = predict_index.squeeze().detach().cpu(), average = 'macro')
+        
+        # Only available when batch_size = 1
         top_k_acc = []
-        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral):
-            f1.append(f1_score(y_true = ground_truth_per_seq.detach().cpu(),
-                               y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
-        
-            top_k_acc_single_event_seq = []
-            if not fast:
-                if self.num_events > 2:
-                    for k in range(1, self.num_events + 1):
-                        top_k_acc_single_event_seq.append(
-                            top_k_accuracy_score(y_true = ground_truth_per_seq.detach().cpu(),
-                                                 y_score = probability_integral_per_seq.detach().cpu(),
-                                                 k = k,
-                                                 labels = np.arange(self.num_events))
-                        )
-                else:
-                    top_k_acc_single_event_seq.append(
-                        accuracy_score(
-                            y_true = ground_truth_per_seq.detach().cpu(),
-                            y_pred = probability_integral_per_seq.detach().cpu()
-                        )
+        if not fast:
+            if self.num_events > 2:
+                for k in range(1, self.num_events + 1):
+                    top_k_acc.append(
+                        top_k_accuracy_score(y_true = events_next.squeeze().detach().cpu(),
+                                             y_score = probability_integral.reshape(-1, self.num_events).detach().cpu(),
+                                             k = k,
+                                             labels = np.arange(self.num_events))
                     )
-                    top_k_acc_single_event_seq.append(1.0)
-            top_k_acc.append(top_k_acc_single_event_seq)
+            else:
+                top_k_acc.append(
+                    accuracy_score(
+                        y_true = events_next.squeeze().detach().cpu(),
+                        y_pred = predict_index.squeeze().detach().cpu()
+                    )
+                )
+                top_k_acc.append(1.0)
         
-        f1 = np.mean(f1)
-        top_k_acc = np.mean(top_k_acc, axis = 0)
-        
-        predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_event]
-        event_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_event]
-        p_x_predicted = reduce(probability_integral * predict_index_one_hot, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
-        p_x_real = reduce(probability_integral * event_next_one_hot, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
-        del expand_probability_per_event, timestamp, expand_intensity_to_inf, expand_integral_to_inf, probability_integral
+        del expand_probability_per_event, timestamp, expand_intensity_to_inf, expand_integral_to_inf
 
         # step 2: get the time prediction for that kind of event
         if mean == 0:
@@ -280,9 +279,9 @@ class MultiFullyNNModel(BasicModule):
             resolution = max(min(int(mean // 0.005), 1000), 1)
         
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
-                                                                               p_x_predicted, resolution, mask_next, mean, var, max_)
+                                                                               probability_integral, resolution, mask_next, mean, var, max_)
         mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
-                                                                  p_x_real, resolution, mask_next, mean, var, max_)
+                                                                  probability_integral, resolution, mask_next, mean, var, max_)
         
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict) / mask_next.sum()
         mae_per_event_avg = torch.sum(mae_per_event) / mask_next.sum()
@@ -300,27 +299,28 @@ class MultiFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len * resolution] * n
             integral_all_event.append(sub_integral)
             intensity_all_event.append(sub_intensity)
+        
+        integral_all_event = torch.stack(integral_all_event, dim = -1)         # [batch_size, seq_len * resolution, num_events]
+        intensity_all_event = torch.stack(intensity_all_event, dim = -1)       # [batch_size, seq_len * resolution, num_events]
 
-        integral_all_event = rearrange(integral_all_event, 'ne b (s r) -> b s r ne', r = resolution)
+        intensity_all_event = rearrange(intensity_all_event, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_events]
-        intensity_all_event = rearrange(intensity_all_event, 'ne b (s r) -> b s r ne', r = resolution)
+        integral_all_event = rearrange(integral_all_event, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_events]
-        timestamp = rearrange(timestamp, 'b (s r) -> b s r', r = resolution)
+        timestamp = rearrange(timestamp, 'b (s r) -> b s r', r = resolution)   # [batch_size, seq_len, resolution, num_events]
 
-        event_next_index = torch.nn.functional.one_hot(event_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_events]
-        event_next_index = rearrange(event_next_index, '... ne -> ... 1 ne')   # [batch_size, seq_len, 1, num_events]
-        intensity_i = reduce(intensity_all_event * event_next_index, 'b s r ne -> b s r', 'sum')
-                                                                               # [batch_size, seq_len, resolution]
-        integral_all_event_sum = reduce(integral_all_event, 'b s r ne -> b s r', 'sum')
-                                                                               # [batch_size, seq_len, resolution]
-        p_dist = intensity_i * torch.exp(-integral_all_event_sum)              # [batch_size, seq_len, resolution]
-        probability = reduce(p_dist[:, :, :-1] * timestamp[:, :, 1:], '... r -> ...', 'sum')
+        event_next_index = torch.nn.functional.one_hot(event_next.long(), num_classes = self.num_events).unsqueeze(dim = -2)
+                                                                               # [batch_size, seq_len, 1, num_events]
+        intensity_i = (intensity_all_event * event_next_index).sum(dim = -1)   # [batch_size, seq_len, resolution]
+
+        p_dist = intensity_i * torch.exp(-integral_all_event.sum(dim = -1))    # [batch_size, seq_len, resolution]
+        probability = torch.sum(p_dist[:, :, :-1] * timestamp[:, :, 1:], dim = -1)
                                                                                # [batch_size, seq_len]
+
         return probability
 
     def mean_absolute_error_per_event_worker(self, events_history, events_next, 
-        time_history, time_next, p_x, resolution, mask, mean, var, max_val):
+        time_history, time_next, probability_integral, resolution, mask, mean, var, max_val):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -329,10 +329,14 @@ class MultiFullyNNModel(BasicModule):
         def bisect_target(events_history, time_history, taus, mean, var):
             p_xt = self.evaluate_per_event(events_history, events_next, time_history, taus,
                                            resolution, mean, var, mask)        # [batch_size, seq_len]
+            event_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_event]
+            p_x = torch.sum(probability_integral * event_next_one_hot, dim = -1)
+                                                                               # [batch_size, seq_len]
             p_t_x = p_xt / p_x                                                 # [batch_size, seq_len]
             p_gap = p_t_x - (1 / self.mae_threshold)                           # [batch_size, seq_len]
 
-            return p_gap
+            return p_gap.unsqueeze(dim = -1)
             
             
         def median_prediction(events_history, time_history, l, r, mean, var):
@@ -344,11 +348,10 @@ class MultiFullyNNModel(BasicModule):
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len]
+        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
+        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
-                                                                               # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask
+        gap = (tau_pred - time_next).squeeze(-1) * mask
         gap = torch.abs(gap)
 
         return gap
@@ -367,9 +370,11 @@ class MultiFullyNNModel(BasicModule):
         input_time, input_events, _, mask = input_data[0][:4]
         mean, var = input_data[1]
         
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len, 1]
-        events_history, _ = self.divide_history_and_next(input_events)         # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # [batch_size, seq_len, 1]
+        events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
         expand_integral = []
         expand_intensity = []
@@ -379,13 +384,14 @@ class MultiFullyNNModel(BasicModule):
             expand_integral.append(expand_integral_item)
             expand_intensity.append(expand_intensity_item)
         
-        expand_integral = rearrange(expand_integral, 'ne b sr -> b sr ne')     # [batch_size, seq_len * resolution, num_event]
-        expand_intensity = rearrange(expand_intensity, 'ne b sr -> b sr ne')   # [batch_size, seq_len * resolution, num_event]
         if sum:
-            expand_integral = reduce(expand_integral, 'b sr ne -> b sr', 'sum')
+            expand_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1)
                                                                                # [batch_size, seq_len * resolution]
-            expand_intensity = reduce(expand_intensity, 'b sr ne -> b sr', 'sum')
-                                                                               # [batch_size, seq_len * resolution]       
+            expand_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
+                                                                               # [batch_size, seq_len * resolution]
+        else:
+            expand_integral = torch.stack(expand_integral, dim = -1)           # [batch_size, seq_len * resolution, num_event]
+            expand_intensity = torch.stack(expand_intensity, dim = -1)         # [batch_size, seq_len * resolution, num_event]
 
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -403,10 +409,11 @@ class MultiFullyNNModel(BasicModule):
         input_time, input_events, _, mask,  = input_data[0][:4]
         mean, var = input_data[1]
 
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = True)
+                                                                               # [batch_size, seq_len, 1]
+        events_history, events_next = self.divide_history_and_next(input_events, unsqueeze = False)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
 
         probed_results = {}
         expand_integral = []
@@ -419,19 +426,15 @@ class MultiFullyNNModel(BasicModule):
             expand_integral.append(expand_integral_item)
             expand_intensity.append(expand_intensity_item)
 
-        expand_integral = rearrange(expand_integral, 'ne b sr -> b sr ne').cpu()
-                                                                               # [batch_size, seq_len * resolution, num_event]
-        expand_sum_integral = reduce(expand_integral, 'b sr ne -> b sr', 'sum')
+        expand_sum_integral = torch.stack(expand_integral, dim = -1).sum(dim = -1)
                                                                                # [batch_size, seq_len * resolution]
-
-        expand_intensity = rearrange(expand_intensity, 'ne b sr -> b sr ne').cpu()
-                                                                               # [batch_size, seq_len * resolution, num_event]
-        expand_sum_intensity = reduce(expand_intensity, 'b sr ne -> b sr', 'sum')
+        expand_sum_intensity = torch.stack(expand_intensity, dim = -1).sum(dim = -1)
                                                                                # [batch_size, seq_len * resolution]
         probed_results['intensity'] = expand_sum_integral
         probed_results['integral'] = expand_sum_intensity
 
         f1, top_k, probability_sum, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
+        # mae_per_event = self.mean_absolute_error(events_history, events_next, time_history, time_next, mask_next, mean, var)
         maes_avg = np.array(maes_avg)
 
         data_mae_avg = {
@@ -511,6 +514,9 @@ class MultiFullyNNModel(BasicModule):
             }
         ]]
 
+        expand_intensity = torch.stack(expand_intensity, dim = -1).detach().cpu().numpy()
+                                                                               # [batch_size, seq_len * resolution, num_event]
+
         for idx, item in enumerate(expand_intensity):
             heatmap_data = {}
             # rho: spearman coefficient
@@ -522,7 +528,9 @@ class MultiFullyNNModel(BasicModule):
             heatmap_data['pearson'] = np.corrcoef(item, rowvar = False)
             # L^1 metric
             heatmap_data['L1'] = L1_distance(item, resolution = resolution, num_events = self.num_events,
-                                             time_next = time_next[idx])
+                                             time_next = time_next[idx].detach().cpu().numpy())
+            
+            # Transfer the result matrices into DataFrames.
 
             # Transfer the result matrices into DataFrames.
             def matrix_to_pd(matrix, index_name, column_name, value_name):
@@ -559,7 +567,7 @@ class MultiFullyNNModel(BasicModule):
                         'data': value,
                         'cmap': "YlGnBu",
                         'vmin': 0,
-                        'vmax': max(1, np.max(value.values)),
+                        'vmax': max(5, np.max(value.values)),
                         'annot': True
                     }
                 ])
@@ -583,26 +591,23 @@ class MultiFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len, num_event]
             # elude the nan loss caused by 0 intensity.
             intensity += 1e-9                                                  # [batch_size, seq_len, num_event]
-            sum_of_intensity_and_neg = reduce(intensity, '... ne -> ... ()', 'sum')
-                                                                               # [batch_size, seq_len, 1]
+            sum_of_intensity_and_neg = intensity.sum(dim = -1, keepdim = True) # [batch_size, seq_len, 1]
             log_posterior = - torch.log(intensity / sum_of_intensity_and_neg)
                                                                                # [batch_size, seq_len, num_event]
-            log_posterior = log_posterior * intensity_mask                     # [batch_size, seq_len, num_event]
-            neg_loss = reduce(log_posterior, '... ne -> ...', 'sum')           # [batch_size, seq_len]
-            neg_loss = (neg_loss * mask).clamp(max = 15)                       # [batch_size, seq_len]
+            log_posterior *= intensity_mask                                    # [batch_size, seq_len, num_event]
+            neg_loss = (log_posterior.sum(dim = -1).clamp(max = 15)) * mask    # [batch_size, seq_len]
             neg_loss = torch.sum(neg_loss)
 
         intensity_mask = nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_event]
-        log_intensity = torch.log(intensity + 1e-9)
-        log_intensity = log_intensity * intensity_mask                         # [batch_size, seq_len]
-        log_intensity = reduce(log_intensity, '... ne -> ...', 'sum')          # [batch_size, seq_len]
-        time_loss = -log_intensity + reduce(intensity_integral, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
-        time_loss = (time_loss * mask).clamp(max = 15)                         # [batch_size, seq_len]
-        time_loss = torch.sum(time_loss)
 
-        loss = time_loss + neg_loss
+        log_intensity = torch.log(intensity + 1e-9)
+        log_intensity = (log_intensity * intensity_mask).sum(dim = -1)         # [batch_size, seq_len]
+        loss = -log_intensity + intensity_integral.sum(dim = -1)               # [batch_size, seq_len]
+    
+        loss = torch.clamp(loss, max = 15) * mask
+        loss = torch.sum(loss) + neg_loss
+
         return loss
 
     '''
@@ -724,7 +729,7 @@ class MultiFullyNNModel(BasicModule):
 
 def L1_distance(input, resolution, num_events, time_next):
     '''
-    This function calculates the L^1 distance between two functions in scattered form.
+    This function calculates the L^1 distance between two functions.
     Input:
     1. input:      function values
                    [seq_len * resolution, num_events]
@@ -736,16 +741,19 @@ def L1_distance(input, resolution, num_events, time_next):
                    the length of all intervals with interpolations.
     '''
 
-    input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
-    intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
+    input = input.reshape(-1, resolution, num_events)                          # [seq_len, resolution, num_events]
+    input = np.transpose(input, (2, 0, 1))                                     # [num_events, seq_len, resolution]
+    intensity_1 = np.expand_dims(input, axis = 1).repeat(num_events, axis = 1) # [num_events, num_events, seq_len, resolution]
+    intensity_2 = np.expand_dims(input, axis = 0).repeat(num_events, axis = 0) # [num_events, num_events, seq_len, resolution]
     delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
 
-    gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
-    gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
+    gap = np.expand_dims(time_next, axis = 1)                                  # [num_events, 1, seq_len]
+    gap = gap / (resolution - 1)
+    gap = np.transpose(gap, (2, 0, 1))                                         # [num_events, seq_len, 1]
+    gap = np.expand_dims(gap, axis = 1)                                        # [num_events, 1, seq_len, 1]
 
-    L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
-                                                                               # [num_events, num_events]
+    L1 = (delta_intensity * gap)[:, :, :, :-1].sum(axis = -1).sum(axis = -1)   # [num_events, num_events]
+
     # round off the value smaller than 1e-6
     L1[L1 < 1e-6] = 0
 
