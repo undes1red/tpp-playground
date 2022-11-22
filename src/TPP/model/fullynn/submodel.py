@@ -128,7 +128,7 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len, num_events, d_history]
         
         time = rearrange(time_next, '... -> ... 1') * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]  if we need events else [batch_size, seq_len, d_history]
+                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_history]
 
         hidden_history = self.hidden_p(history_output)                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
         time = self.hidden_time(time)                                          # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
@@ -144,7 +144,8 @@ class FullyNN(nn.Module):
             zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             if self.event_toggle:
-                zero_emb = rearrange(zero, '... -> ... 1') * self.non_neg(self.hidden_x)                                                                               # [batch_size, seq_len, num_events, d_intensity]
+                zero_emb = rearrange(zero, '... -> ... 1') * self.non_neg(self.hidden_x)
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
             else:
                 zero_emb = zero * self.non_neg(self.hidden_x)                  # [batch_size, seq_len, d_intensity]
             zero_emb = self.hidden_time(zero_emb)                              # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
@@ -325,14 +326,15 @@ class FullyNN(nn.Module):
         expand_integral = self.non_neg(accumulative_layer_output)              # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
 
         # Gradient 1: Integral -> time
-        event_gradient = torch.autograd.grad(
+        events_gradient = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
             retain_graph=True
         )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-        event_gradient = rearrange(event_gradient, 'b s r ... -> b (s r) ...') # [batch_size, seq_len * resolution, num_events] if we need events else [batch_size, seq_len * resolution]
-        accumulated_gradient = reduce(event_gradient.detach(), 'b sr ... -> b sr', 'sum')
+        events_gradient = rearrange(events_gradient, 'b s r ... -> b (s r) ...')
+                                                                               # [batch_size, seq_len * resolution, num_events] if we need events else [batch_size, seq_len * resolution]
+        accumulated_gradient = reduce(events_gradient.detach(), 'b sr ... -> b sr', 'sum')
                                                                                # [batch_size, seq_len * resolution]
 
         # Gradient 2: All layer output -> time
@@ -359,11 +361,11 @@ class FullyNN(nn.Module):
         timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
 
         if self.event_toggle:
-            intensity_for_each_event = event_gradient.chunk(self.num_events, dim = -1)
+            intensity_for_each_event = events_gradient.chunk(self.num_events, dim = -1)
                                                                                # [batch_size, seq_len * resolution] * num_events
-            event_intensity = {}
+            events_intensity = {}
             for idx, item in enumerate(intensity_for_each_event):
-                event_intensity[f'event_intensity_{idx}'] = rearrange(item.detach(), '... 1 -> ...')
+                events_intensity[f'event_intensity_{idx}'] = rearrange(item.detach(), '... 1 -> ...')
                                                                                # [batch_size, seq_len * resolution]
 
             # additional plot, measure the spearman correlation across available events.
@@ -371,7 +373,7 @@ class FullyNN(nn.Module):
                 'heatmap': []
             }
 
-            expand_intensity = event_gradient.detach().cpu().numpy()           # [batch_size, seq_len * resolution, num_event]
+            expand_intensity = events_gradient.detach().cpu().numpy()           # [batch_size, seq_len * resolution, num_event]
 
             for idx, item in enumerate(expand_intensity):
                 heatmap_data = {}
@@ -429,7 +431,7 @@ class FullyNN(nn.Module):
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
                 **output_storage_gradient,\
-                **event_intensity,\
+                **events_intensity,\
                 **{"final_output": reduce(expand_integral, 'b s r ... -> b (s r)', 'sum')},
                 }
         else:
@@ -477,7 +479,7 @@ def L1_distance(input, resolution, num_events, time_next):
                    [seq_len * resolution, num_events]
     2. resolution: int
                    the number of points from [t_{i - 1}, t_i]
-    3. num_event:  int
+    3. num_events: int
                    the number of event types
     4. time_next:  [seq_len, num_events]
                    the length of all intervals with interpolations.

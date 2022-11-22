@@ -1,8 +1,10 @@
-from .submodel import FullyNN_v3
+from .submodel import TransNN
 from ..utils import BasicModule
+
 import torch
 import torch.nn as nn
 from sklearn.metrics import f1_score
+from einops import rearrange, reduce, repeat, einsum, pack, unpack
 
 # Multi-head for multi-events?
 
@@ -15,7 +17,7 @@ A: The reason might still be the activation, because we detect that although the
 are significantly different, which is over 100 times larger when a bottleneck layer is applied.
 '''
 
-class FullyNN3Model(BasicModule):
+class TransNNModel(BasicModule):
     def __init__(self, d_history,
                  num_events,
                  d_intensity,
@@ -32,42 +34,39 @@ class FullyNN3Model(BasicModule):
                  event_toggle = False,
                  wq_nonneg = False, wk_nonneg = False, wv_nonneg = False,
                  negative_loss = False):
-        super(FullyNN3Model, self).__init__()
+        super(TransNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.negative_loss = negative_loss
 
-        self.model = FullyNN_v3(d_history = d_history, d_intensity = d_intensity, d_qk = d_qk, num_events = num_events, 
-                                integral_module_layers = integral_module_layers, dropout = dropout, history_module = history_module,
-                                history_module_layers = history_module_layers, mlp_layers = mlp_layers, nonlinear = nonlinear,
-                                event_toggle = event_toggle, n_head = n_head, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg,
-                                wv_nonneg = wv_nonneg, device = device)
+        self.model = TransNN(d_history = d_history, d_intensity = d_intensity, d_qk = d_qk, num_events = num_events, 
+                             integral_module_layers = integral_module_layers, dropout = dropout, history_module = history_module,
+                             history_module_layers = history_module_layers, mlp_layers = mlp_layers, nonlinear = nonlinear,
+                             event_toggle = event_toggle, n_head = n_head, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg,
+                             wv_nonneg = wv_nonneg, device = device)
         self.event_predictor = nn.Softmax(dim = -1)
 
-    def forward(self, history_time, history_event, result, event, mask, mean, var, evaluate = False):
+    def forward(self, time_seqence, events_seqence, mask, mean, var evaluate = False):
         '''
         Inputs:
-        1. history_time: [batch_size, seq_len, history_length]
-           history time sequences for history encoder
-        2. history_event:[batch_size, seq_len, history_length]
-           history event sequences for history encoder (model can decide if it should use it by event_toggle)
-        3. result:       [batch_size, seq_len]
-           the value of t-t_l
-        4. score:        [batch_size, seq_len]
-           ideal loss value
-        5. event:        [batch_size, seq_len]
-           target event
-        6. mask:         [batch_size, seq_len, history_length]
-           mask matrix to filter out padding events from the original sequences. 0 means should be masked.
+        1. time_seqence: [batch_size, seq_len]
+           Event time sequences t_i.
+        2. event_seqence:[batch_size, seq_len]
+           The marker sequences m_i.
+        3. mask:         [batch_size, seq_len]
+           Mask vectors to filter out padding events from the original sequences. 0 means should be masked.
         7. mean:         int
         8. var:          int
            For data normalization.
 
-        First, this model doesn't use intensity function to predict the event. Maybe I could find a better way to do this, but not now.
         '''
         number_of_event = (mask.sum(dim = -1) > 0).int().sum()
+
+        time_history, time_next = self.divide_history_and_next(time_seqence)
+        events_history, events_next = self.divide_history_and_next(events_seqence)
+        mask_history, mask_next = self.divide_history_and_next(mask)
 
         mae = 0
         if evaluate:
@@ -108,11 +107,8 @@ class FullyNN3Model(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
         return integral.sum(dim = -1)
 
-    def divide_history_and_next(self, input, unsqueeze = False):
+    def divide_history_and_next(self, input):
         input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
-        if unsqueeze:
-            input_history = input_history.unsqueeze(-1)                        # [batch_size, seq_len, 1]
-            input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
         return input_history, input_next
 
     def mean_absolute_error(self, history_time, history_event, result, mean, var, mask):
@@ -251,10 +247,9 @@ class FullyNN3Model(BasicModule):
         '''
     
         model.train()
-        [history_time, history_event, result, score, event, mask], (mean, var) = minibatch
+        (time_seq, event, score, mask), (mean, var) = minibatch
         time_loss, events_loss, mae, f1, the_number_of_events = model(         
-                history_time = history_time, history_event = history_event, result = result, 
-                event = event, mask = mask, mean = mean, var = var
+                time_seqence = time_seq, event_seqence = event, mask = mask, mean = mean, var = var
         )
 
         # loss = time_loss + events_loss

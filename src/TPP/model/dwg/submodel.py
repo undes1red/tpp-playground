@@ -67,7 +67,7 @@ class DynamicMLP(nn.Module):
             self.activate_time_factor = nn.Parameter(torch.tensor([0.], device = self.device))
             self.activate_factor = nn.Parameter(torch.zeros(mlp_layers, device = self.device))
 
-    def forward(self, event_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var):
         '''
         So the timeline should be divided into several parts.
         First, a fixed number of previous time points are choosed and feeded into LSTM, then the histiory embedding is used to generate
@@ -79,9 +79,9 @@ class DynamicMLP(nn.Module):
         pure TPP problems.
 
         Args:
-            event_history: [batch_size, seq_len]
-            time_history:  [batch_size, seq_len]
-            time_next:     [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+            events_history: [batch_size, seq_len]
+            time_history:   [batch_size, seq_len]
+            time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         '''
         time_history = time_history / var
         time_next = time_next / var
@@ -91,9 +91,9 @@ class DynamicMLP(nn.Module):
 
         # history encoder
         if self.event_toggle:
-            event_history_embedding = self.events(event_history)               # [batch_size, seq_len, d_history]
+            events_history_embedding = self.events(events_history)             # [batch_size, seq_len, d_history]
             history, history_ps = pack([
-                event_history_embedding, time_history
+                events_history_embedding, time_history
             ], 'b s *')                                                        # [batch_size, seq_len, d_history + 1]
         else:
             history = rearrange(time_history, 'b s -> b s 1')                  # [batch_size, seq_len, 1]
@@ -135,14 +135,14 @@ class DynamicMLP(nn.Module):
     def show_activate_factor(self):
         return F.softplus(self.activate_factor)
 
-    def intensity_integral(self, event_history, time_history, time_next, resolution, mean, var):
+    def intensity_integral(self, events_history, time_history, time_next, resolution, mean, var):
         '''
         Model intensity prober. Perhaps, we can support intensity integral as well.
         Args:
-        event_history:[batch_size, seq_len]
-        time_history: [batch_size, seq_len]
-        time_next:    [batch_size, seq_len]
-        resolution:   int
+        events_history:[batch_size, seq_len]
+        time_history:  [batch_size, seq_len]
+        time_next:     [batch_size, seq_len]
+        resolution:    int
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
@@ -155,9 +155,9 @@ class DynamicMLP(nn.Module):
         time_next = time_next / var
 
         if self.event_toggle:
-            event_history_embedding = self.events(event_history)               # [batch_size, seq_len, d_history]
+            events_history_embedding = self.events(events_history)             # [batch_size, seq_len, d_history]
             history, history_ps = pack([
-                event_history_embedding, time_history
+                events_history_embedding, time_history
             ], 'b s *')
         else:
             history = time_history                                             # [batch_size, seq_len, d_history + 1]
@@ -218,14 +218,14 @@ class DynamicMLP(nn.Module):
 
         return integral, intensity, timestamp
 
-    def model_probe_function(self, event_history, time_history, time_next, resolution, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var):
         '''
         Model intensity prober. Perhaps, we can support intensity integral as well.
         Args:
-        event_history:[batch_size, seq_len]
-        time_history: [batch_size, seq_len]
-        time_next:    [batch_size, seq_len]
-        resolution:   int
+        events_history:[batch_size, seq_len]
+        time_history:  [batch_size, seq_len]
+        time_next:     [batch_size, seq_len]
+        resolution:    int
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device=self.device) # [resolution]
         original_time_expand = time_multiplier * rearrange(time_next, '... -> ... 1')
@@ -238,9 +238,9 @@ class DynamicMLP(nn.Module):
 
         # Part 1: forward propagation.
         if self.event_toggle:
-            event_history_embedding = self.events(event_history)               # [batch_size, seq_len, d_history]
+            events_history_embedding = self.events(events_history)             # [batch_size, seq_len, d_history]
             history, history_ps = pack([
-                event_history_embedding, time_history
+                events_history_embedding, time_history
             ], 'b s *')                                                        # [batch_size, seq_len, d_history + 1]
         else:
             history = time_history                                             # [batch_size, seq_len, 1]
@@ -271,14 +271,14 @@ class DynamicMLP(nn.Module):
         # Mingle history and relative time embedding.
         output = einsum(time_outside, time_weight, '... dh, ... dh di -> ... di')
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output_after_dwg_layer = output.clone()                                # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        output_after_dwg_layer = output                                        # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
 
         mlp_output = []
         for layer_idx, layer in enumerate(self.mlp):
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             # Imitate a weaker ReLU activation
             output = F.softplus(self.activate_factor[layer_idx]) * output
-            mlp_output.append(output.clone())                                  # [batch_size, seq_len, resolution, num_events, d_intensity] * layer if we need events else [batch_size, seq_len, resolution, d_intensity] * layer
+            mlp_output.append(output)                                          # [batch_size, seq_len, resolution, num_events, d_intensity] * layer if we need events else [batch_size, seq_len, resolution, d_intensity] * layer
 
         integral = self.accu(output)                                           # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
 

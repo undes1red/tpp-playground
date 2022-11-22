@@ -37,11 +37,9 @@ class TemporalModel(BasicModule):
                                 no_time_weight = no_time_weight, no_scale = no_scale, num_events = num_events, event_toggle = event_toggle, device = device)
 
     def forward(self, time, events, mask, mean, var, evaluate = False):
-        time_history, time_next = self.divide_history_and_next(time, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(events, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask, unsqueeze = False)   # [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(time)           # 2 * [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(events)     # 2 * [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         mae = 0
         if evaluate:
@@ -68,36 +66,32 @@ class TemporalModel(BasicModule):
             log_intensity = torch.log(intensity)                               # [batch_size, seq_len, num_events]
             events_probability = torch.nn.functional.softmax(log_intensity, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
-            event_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
+            events_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
                                                            events_next.long(), reduction = 'none')
                                                                                # [batch_size, seq_len]
-            event_loss = event_loss * mask_next
-            event_loss = event_loss.sum()
+            events_loss = events_loss * mask_next
+            events_loss = events_loss.sum()
 
             time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, 
                                          events_next = events_next, mask = mask_next)
         else:
-            event_loss = torch.tensor(0., dtype = torch.float32, device = self.device)
+            events_loss = torch.tensor(0., dtype = torch.float32, device = self.device)
             time_loss = self.time_loss_f(intensity = intensity, intensity_integral = integral, mask = mask_next)
 
         the_number_of_events = mask_next.sum()
-        return time_loss, mae, event_loss, the_number_of_events
+        return time_loss, mae, events_loss, the_number_of_events
 
-    def evaluate(self, event_history, time_history, timestamp, mean, var):
+    def evaluate(self, events_history, time_history, timestamp, mean, var):
         if self.event_toggle:
             timestamp = repeat(timestamp, ' ... -> ... ne', ne = self.num_events)
-        integral = self.model(event_history, time_history, timestamp, mean, var)
+        integral = self.model(events_history, time_history, timestamp, mean, var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         if self.event_toggle:
             integral = reduce(integral, 'b s ne -> b s', 'sum')                # [batch_size, seq_len]
         return integral
     
-    def divide_history_and_next(self, input, unsqueeze = False):
-        input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
-        if unsqueeze:
-            input_history = input_history.unsqueeze(-1)                        # [batch_size, seq_len, 1]
-            input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
-
+    def divide_history_and_next(self, input):
+        input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
     
     def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
@@ -105,8 +99,8 @@ class TemporalModel(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        def bisect_target(event_history, time_history, taus, mean, var):
-            return self.evaluate(event_history, time_history, taus, mean, var) - \
+        def bisect_target(events_history, time_history, taus, mean, var):
+            return self.evaluate(events_history, time_history, taus, mean, var) - \
                    torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
                                                                                # [batch_size, seq_len]
         
@@ -138,14 +132,12 @@ class TemporalModel(BasicModule):
         '''
         self.model.eval()
         [input_time, input_events, _, _, _] , (mean, var) = input_data
-        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
-        event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
+        events_history, _ = self.divide_history_and_next(input_events)         # 2 * [batch_size, seq_len]
 
         integral, intensity, timestamp = self.model.intensity_integral(
                                                 time_history = time_history,\
-                                                time_next = time_next, event_history = event_history,\
+                                                time_next = time_next, events_history = events_history,\
                                                 resolution = resolution, mean = mean, var = var
                                         )                                      # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution] if we need events else 3 * [batch_size, seq_len * resolution]
         check_tensor(intensity)
@@ -171,13 +163,11 @@ class TemporalModel(BasicModule):
         '''
         self.model.eval()
         [input_time, input_events, _, _, _], (mean, var) = input_data
-        time_history, time_next = self.divide_history_and_next(input_time, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
-        event_history, event_next = self.divide_history_and_next(input_events, unsqueeze = False)
-                                                                               # 2 * [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
+        events_history, _ = self.divide_history_and_next(input_events)         # 2 * [batch_size, seq_len]
 
         probed_results, timestamp = self.model.model_probe_function(time_history = time_history,\
-                                                                    time_next = time_next, event_history = event_history,\
+                                                                    time_next = time_next, events_history = events_history,\
                                                                     resolution = resolution, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution] if we need events else 3 * [batch_size, seq_len * resolution]
 
@@ -192,8 +182,8 @@ class TemporalModel(BasicModule):
             self.event_toggle = True
             '''
             event_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_event]
-            intensity = intensity * event_mask                                 # [batch_size, seq_len, num_event]
+                                                                               # [batch_size, seq_len, num_events]
+            intensity = intensity * event_mask                                 # [batch_size, seq_len, num_events]
             intensity = reduce(intensity, 'b s ne -> b s', 'sum')              # [batch_size, seq_len]
             intensity_integral = reduce(intensity_integral, 'b s ne -> b s', 'sum')
                                                                                # [batch_size, seq_len]
@@ -270,30 +260,30 @@ class TemporalModel(BasicModule):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
-            format_dict['event_loss'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'event_loss': ':6.5f'}
+            format_dict['events_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f'}
             return format_dict
 
         def test_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
-            format_dict['event_loss'] = input[2]
+            format_dict['events_loss'] = input[2]
             format_dict['mae'] = input[3]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'event_loss': ':6.5f', 'mae': ':2.8f'}
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', 'events_loss': ':6.5f', 'mae': ':2.8f'}
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
     format_dict_length = 4
     
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'event loss': ':6.5f'}
+    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f'}
 
     def logfile_print_format(input):
         format_dict = {}
         format_dict['absolute loss'] = input[0]
         format_dict['relative loss'] = input[1]
-        format_dict['event loss'] = input[2]
+        format_dict['events loss'] = input[2]
         return format_dict
     
     def choose_metric(evaluation_report, test_report):

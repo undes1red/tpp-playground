@@ -297,7 +297,7 @@ class FullyNN(nn.Module):
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         # Gradient 1: Integral -> time
-        event_gradient = torch.autograd.grad(
+        events_gradient = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
@@ -318,7 +318,7 @@ class FullyNN(nn.Module):
                 
         time_expand.requires_grad = False
 
-        accumulated_gradient = event_gradient.squeeze(dim = -1).reshape(batch_size, -1)
+        accumulated_gradient = events_gradient.squeeze(dim = -1).reshape(batch_size, -1)
                                                                                # [batch_size, seq_len * resolution]
         if self.event_toggle:
             result = {

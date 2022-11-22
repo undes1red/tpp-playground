@@ -86,8 +86,8 @@ class SynDataset(utils.data.Dataset):
         '''
         The structure of data:
         [
-            (time_seq, event, score, intensity if self.plot else it doesn't exist at all.)
-        ]
+            (time_seq, event, score, mask, intensity if self.plot else it doesn't exist at all.)
+        ], (mean, var)
         '''
         max_length_of_this_batch = max([item[0].size for item in data])
         mask = []

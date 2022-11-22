@@ -42,7 +42,7 @@ class RMTPPModule(nn.Module):
             self.base_intensity = nn.Linear(output_size, self.num_events, device = self.device)
 
 
-    def forward(self, event_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var):
         '''
         This implementation is in fact an advanced RMTPP with history-event-related time scaler and base intensity.
         '''
@@ -51,8 +51,8 @@ class RMTPPModule(nn.Module):
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:
-            event_vec = self.event_embedding(event_history)                    # [batch_size, seq_len, input_size]
-            input_vec = time_vec + event_vec
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, input_size]
+            input_vec = time_vec + events_vec
         else:
             input_vec = time_vec                                               # [batch_size, seq_len, input_size]
 
@@ -90,7 +90,7 @@ class RMTPPModule(nn.Module):
                 mark = None
             return intensity, integral, mark, history_part
         else:
-            mark = intensity_events / intensity.event.sum(dim = -1, keepdim = True)
+            mark = intensity_events / intensity_events.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, num_events]
             return intensity_events, integral_events, mark, history_part
         
@@ -100,7 +100,7 @@ class RMTPPModule(nn.Module):
         # expectation = expectation * var                                      # [batch_size, seq_len, num_events]
 
     
-    def probability(self, event_history, time_history, time_next, mean, var):
+    def probability(self, events_history, time_history, time_next, mean, var):
         '''
         Return the probability distribution of RMTPP
         '''
@@ -110,8 +110,8 @@ class RMTPPModule(nn.Module):
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:
-            event_vec = self.event_embedding(event_history)                    # [batch_size, seq_len, input_size]
-            input_vec = time_vec + event_vec
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, input_size]
+            input_vec = time_vec + events_vec
         else:
             input_vec = time_vec                                               # [batch_size, seq_len, input_size]
 
@@ -136,7 +136,7 @@ class RMTPPModule(nn.Module):
 
         return probability
 
-    def intensity_integral(self, event_history, time_history, time_next, resolution, mean, var, sum = True):
+    def intensity_integral(self, events_history, time_history, time_next, resolution, mean, var, sum = True):
         time_history = time_history / var
         time_next = time_next / var
 
@@ -145,8 +145,8 @@ class RMTPPModule(nn.Module):
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:
-            event_vec = self.event_embedding(event_history)                    # [batch_size, seq_len, input_size]
-            input_vec = time_vec + event_vec
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, input_size]
+            input_vec = time_vec + events_vec
         else:
             input_vec = time_vec                                               # [batch_size, seq_len, input_size]
 

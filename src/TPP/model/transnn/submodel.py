@@ -26,7 +26,7 @@ TA = {
     'ploy': sym_Polynomial
 }
 
-class FullyNN_v3(nn.Module):
+class TransNN(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -39,7 +39,7 @@ class FullyNN_v3(nn.Module):
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers, d_qk, 
                  integral_module_layers, mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, device):
-        super(FullyNN_v3, self).__init__()
+        super(TransNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
