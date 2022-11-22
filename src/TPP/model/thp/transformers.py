@@ -1,5 +1,6 @@
 import math, torch
 import torch.nn as nn
+from einops import repeat
 
 from .layers import TransformerLayer
 from .utils import *
@@ -48,15 +49,16 @@ class Encoder(nn.Module):
         Args:
         1. event_type: 
         2. event_time: input time intervals. shape: [batch_size, seq_len]
-        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len, 1]
+        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
         """
 
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
+        batch_size, seq_len = self_attn_mask_keypad.shape
         self_attn_mask_subseq = get_subsequent_mask(event_time)
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
-                                                                               # [batch_size, seq_len, 1]
-        self_attn_mask_keypad = self_attn_mask_keypad.repeat(1, 1, self_attn_mask_keypad.shape[1])
+                                                                               # [batch_size, seq_len]
+        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s s_1', s_1 = seq_len)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
@@ -133,7 +135,6 @@ class TransformerTPP(nn.Module):
         3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
         """
 
-        non_pad_mask = non_pad_mask.unsqueeze(-1)
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
 

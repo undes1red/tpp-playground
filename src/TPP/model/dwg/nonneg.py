@@ -7,7 +7,7 @@ from torch import nn
 
 class NonNegLinear(nn.Linear):
     def __init__(self, in_features, out_features, device, bias=True, eps=0., embedding_like = False):
-        super(NonNegLinear, self).__init__(in_features, out_features, bias, device = device)
+        super(NonNegLinear, self).__init__(1 if embedding_like else in_features, out_features, bias, device = device)
         self.eps = eps
         self.device = device
         self.positivify_weights()
@@ -23,45 +23,9 @@ class NonNegLinear(nn.Linear):
         weight = self.weight * weight.float()
         self.weight.data = torch.clamp(weight, min=self.eps)
         if self.embedding_like:
-            return inputs.unsqueeze(-1) * self.weight.T                        # [..., original_tensor_last_dimention, out_features]
+            return F.linear(inputs.unsqueeze(dim = -1), self.weight, self.bias)# [..., original_tensor_last_dimention, out_features]
         else:
             return F.linear(inputs, self.weight, self.bias)                    # [..., out_features]
-
-
-class SigmoidLinear(nn.Linear):
-    def __init__(self, in_features, out_features, device, bias=True):
-        super(SigmoidLinear, self).__init__(in_features, out_features, bias, device = device)
-        self.device = device
-        self.positivify_weights()
-
-    def positivify_weights(self):
-        mask = (self.weight < 0).float() * - 1
-        mask = mask + (self.weight >= 0).float()
-        self.weight.data = self.weight.data * mask
-
-    def forward(self, inputs):
-        weight = F.sigmoid(self.weight)
-        return F.linear(inputs, weight, self.bias)
-
-
-class SoftPlusLinear(nn.Linear):
-    def __init__(self, in_features, out_features, device, bias=True,
-                 beta=1., threshold=20):
-        super(SoftPlusLinear, self).__init__(in_features, out_features, bias, device = device)
-        self.device = device
-        self.beta = beta
-        self.threshold = threshold
-        self.positivify_weights()
-
-    def positivify_weights(self):
-        mask = (self.weight < 0).float() * - 1
-        mask = mask + (self.weight >= 0).float()
-        self.weight.data = self.weight.data * mask
-
-    def forward(self, inputs):
-        weight = F.softplus(
-            self.weight, beta=self.beta, threshold=self.threshold)
-        return F.linear(inputs, weight, self.bias)
 
 class ClampLinear(nn.Linear):
     '''
@@ -69,7 +33,7 @@ class ClampLinear(nn.Linear):
     Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
     '''
     def __init__(self, in_features, out_features, device, clamp_min = None, bias=True, clamp_max = None, embedding_like = False):
-        super(ClampLinear, self).__init__(in_features, out_features, bias, device = device)
+        super(ClampLinear, self).__init__(1 if embedding_like else in_features, out_features, bias, device = device)
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
         self.embedding_like = embedding_like
@@ -83,33 +47,9 @@ class ClampLinear(nn.Linear):
 
     def forward(self, inputs):
         if self.clamp_min or self.clamp_max:
-            self.weight.data = torch.clamp(self.weight.data, min=self.clamp_min, max = self.clamp_max)
+            self.weight.data = self.clamp_weights()
         
         if self.embedding_like:
-            return inputs.unsqueeze(-1) * self.weight.T                        # [..., original_tensor_last_dimention, out_features]
+            return F.linear(inputs.unsqueeze(dim = -1), self.weight, self.bias)# [..., original_tensor_last_dimention, out_features]
         else:
             return F.linear(inputs, self.weight, self.bias)                    # [..., out_feature]
-
-class NonNegNormLinear(nn.Linear):
-    '''
-    Alleviate the negative gradient issue.
-    Normal datasets do not require this trick except the intensity is too steep(always come with negative loss).
-    '''
-    def __init__(self, in_features, out_features, norm_min, device, bias = None):
-        super(NonNegNormLinear, self).__init__(in_features, out_features, bias, device = device)
-        self.norm_min = norm_min
-        self.device = device
-
-        if self.norm_min:
-            self.clamp_weights()
-
-    def regularization(self, x, norm_min):
-        return x if torch.sum(x) >= norm_min else x + (norm_min - torch.sum(x))/(x.numel())
-
-    def clamp_weights(self):
-        self.weight.data = self.regularization(self.weight.data, norm_min = self.norm_min)
-
-    def forward(self, inputs):
-        if self.norm_min:
-            self.weight.data = self.regularization(self.weight.data, norm_min=self.norm_min)
-        return F.linear(inputs, self.weight, self.bias)

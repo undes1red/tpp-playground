@@ -72,11 +72,8 @@ class THP(BasicModule):
         history = self.model(time_history, events_history, mask_history)       # [batch_size, seq_len, num_types]
         return history.detach()
 
-    def divide_history_and_next(self, input, unsqueeze = False):
-        input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
-        if unsqueeze:
-            input_history = input_history.unsqueeze(-1)                        # [batch_size, seq_len, 1]
-            input_next = input_next.unsqueeze(-1)                              # [batch_size, seq_len, 1]
+    def divide_history_and_next(self, input):
+        input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
 
     '''
@@ -357,6 +354,8 @@ class THP(BasicModule):
         '''
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
+
+        Unimplemented
         '''
         self.model.eval()
 
