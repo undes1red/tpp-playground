@@ -7,7 +7,7 @@ import numpy as np
 
 
 def check_tensor(x):
-    assert (x < 0).cpu().numpy().any() == False
+    assert (x < 0).any() == False
 
 class FullyNNModel(BasicModule):
     def __init__(self, d_history,

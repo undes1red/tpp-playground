@@ -31,11 +31,6 @@ class RMTPP(BasicModule):
 
         intensity, integral, mark, constant = self.submodel(events_history, time_history, time_next, mean, var)
 
-        if torch.isnan(intensity).any():
-            print(intensity)
-        if torch.isnan(integral).any():
-            print(integral)
-
         loss, time_loss, events_loss, the_number_of_events =\
                     self.loss_f(intensity, integral, mark, events_next, mask_next)
         

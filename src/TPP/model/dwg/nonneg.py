@@ -4,7 +4,6 @@ from torch import nn
 
 # From Babylon's neuralTPPs: https://github.com/babylonhealth/neuralTPPs
 
-
 class NonNegLinear(nn.Linear):
     def __init__(self, in_features, out_features, device, bias=True, eps=0., embedding_like = False):
         super(NonNegLinear, self).__init__(1 if embedding_like else in_features, out_features, bias, device = device)
