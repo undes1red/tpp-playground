@@ -332,10 +332,6 @@ class FullyNN(nn.Module):
             grad_outputs=torch.ones_like(expand_integral),
             retain_graph=True
         )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-        events_gradient = rearrange(events_gradient, 'b s r ... -> b (s r) ...')
-                                                                               # [batch_size, seq_len * resolution, num_events] if we need events else [batch_size, seq_len * resolution]
-        accumulated_gradient = reduce(events_gradient.detach(), 'b sr ... -> b sr', 'sum')
-                                                                               # [batch_size, seq_len * resolution]
 
         # Gradient 2: All layer output -> time
         output_storage_gradient = {}
@@ -352,6 +348,11 @@ class FullyNN(nn.Module):
                 
         time_expand.requires_grad = False
 
+        accumulated_integral = reduce(expand_integral, 'b s r ... -> b (s r)', 'sum')
+                                                                               # [batch_size, seq_len * resolution]
+        accumulated_gradient = reduce(events_gradient, 'b s r ... -> b (s r)', 'sum')
+                                                                               # [batch_size, seq_len * resolution]
+
         # Timestamp part
         batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
         zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
@@ -362,30 +363,41 @@ class FullyNN(nn.Module):
 
         if self.event_toggle:
             intensity_for_each_event = events_gradient.chunk(self.num_events, dim = -1)
-                                                                               # [batch_size, seq_len * resolution] * num_events
+                                                                               # [batch_size, seq_len, resolution] * num_events
+            integral_for_each_event = expand_integral.chunk(self.num_events, dim = -1)
+                                                                               # [batch_size, seq_len, resolution] * num_events
+
             events_intensity = {}
-            for idx, item in enumerate(intensity_for_each_event):
-                events_intensity[f'event_intensity_{idx}'] = rearrange(item.detach(), '... 1 -> ...')
+            events_integral = {}
+            for idx, (intensity, integral) in enumerate(zip(intensity_for_each_event, integral_for_each_event)):
+                events_intensity[f'event_intensity_{idx}'] = rearrange(intensity, 'b s r 1 -> b (s r)')
                                                                                # [batch_size, seq_len * resolution]
+                events_integral[f'event_integral_{idx}'] = rearrange(integral, 'b s r 1 -> b (s r)')
+
 
             # additional plot, measure the spearman correlation across available events.
-            additional_plot = {
-                'heatmap': []
-            }
+            expand_intensity = rearrange(events_gradient.cpu(), 'b s r ne -> b (s r) ne')
+                                                                               # [batch_size, seq_len * resolution, num_event]
+            
+            additional_plot = []
+            for idx, (expand_intensity_per_seq, mask_per_seq, time_next_per_seq) in enumerate(zip(expand_intensity, mask, time_next)):
+                additional_plot_per_seq = {
+                    'heatmap': []
+                }
 
-            expand_intensity = events_gradient.detach().cpu().numpy()           # [batch_size, seq_len * resolution, num_event]
-
-            for idx, item in enumerate(expand_intensity):
+                seq_len = mask_per_seq.sum()
                 heatmap_data = {}
                 # rho: spearman coefficient
-                heatmap_data['spearman'] = spearmanr(item)[0]
+                heatmap_data['spearman'] = spearmanr(expand_intensity_per_seq[:seq_len * resolution])[0]
                 if self.num_events == 2:
                     heatmap_data['spearman'] = np.array([[1, heatmap_data['spearman']], [heatmap_data['spearman'], 1]])
 
                 # r: pearson coefficient
-                heatmap_data['pearson'] = np.corrcoef(item, rowvar = False)
+                heatmap_data['pearson'] = np.corrcoef(expand_intensity_per_seq[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                heatmap_data['L1'] = L1_distance(item, resolution = resolution, num_events = self.num_events, time_next = time_next[idx])
+                heatmap_data['L1'] = L1_distance(expand_intensity_per_seq[:seq_len * resolution], 
+                                                 resolution = resolution, num_events = self.num_events,
+                                                 time_next = time_next_per_seq[:seq_len])
 
                 # Transfer the result matrices into DataFrames.
                 def matrix_to_pd(matrix, index_name, column_name, value_name):
@@ -415,7 +427,7 @@ class FullyNN(nn.Module):
                 # add plots
                 for key, value in heatmap_data.items():
                     idx = 0
-                    additional_plot['heatmap'].append(
+                    additional_plot_per_seq['heatmap'].append(
                     [
                         f'{key}_{idx}',
                         {
@@ -427,18 +439,21 @@ class FullyNN(nn.Module):
                         }
                     ])
                     idx += 1
+                
+                additional_plot.append(additional_plot_per_seq)
     
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
                 **output_storage_gradient,\
                 **events_intensity,\
-                **{"final_output": reduce(expand_integral, 'b s r ... -> b (s r)', 'sum')},
+                **events_integral,\
+                **{"final_output": accumulated_integral},
                 }
         else:
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
                 **output_storage_gradient,\
-                **{"final_output": rearrange(expand_integral.detach(), 'b s r -> b (s r)')},
+                **{"final_output": accumulated_integral},
                 }
 
         return result, additional_plot, timestamp

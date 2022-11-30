@@ -24,7 +24,7 @@ def find_dataset(name, rank):
             logger.exception(f"Dataloader named {name} is not found! Please register your dataset in src/data/__init__.py and try again.")
 
 
-def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = True):
+def prepare_dataloaders(opt, rank = 0):
     file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + '/*.json') + glob.glob(opt.data_path + '/*.csv')]
     if len(file_names) == 0:
         logger.exception(f'No appropriate data file in {opt.data_path}! Please check the training script.')
@@ -46,12 +46,12 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
         opt.num_events = 1
 
     #========= Preparing dataloaders =========#
-    train = dataset(data_raw['train'], device = opt.device, num_events = opt.num_events, **dataloader_config_dict)
-    evaluate = dataset(data_raw['evaluate'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
-    test = dataset(data_raw['test'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
+    train_dataset = dataset(data_raw['train'], device = opt.device, num_events = opt.num_events, **dataloader_config_dict)
+    evaluate_dataset = dataset(data_raw['evaluate'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
+    test_dataset = dataset(data_raw['test'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
 
     try:
-        data_collator = getattr(train, '__call__')
+        data_collator = getattr(train_dataset, '__call__')
     except:
         '''
         This data collator is for data evaluation.
@@ -63,16 +63,16 @@ def prepare_dataloaders(opt, rank = 0, train = True, test = True, evaluate = Tru
     g = torch.Generator()
     g.manual_seed(opt.seed + rank)
 
-    if train:
-        train_iterator = DataLoader(train, shuffle = True, batch_size=opt.batch_size, \
+    if hasattr(opt, 'train') and opt.train:
+        train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
-    if evaluate:
-        evaluation_iterator = DataLoader(evaluate, batch_size=opt.batch_size, \
+    if hasattr(opt, 'evaluation') and opt.evaluation:
+        evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
-    if test:
-        test_iterator = DataLoader(test, batch_size=opt.batch_size, \
+    if hasattr(opt, 'test') and opt.test:
+        test_iterator = DataLoader(test_dataset, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
 

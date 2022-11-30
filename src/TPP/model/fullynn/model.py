@@ -210,29 +210,31 @@ class FullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         predict_index = torch.argmax(probability_integral, dim = -1)           # [batch_size, seq_len]
 
-        # Only available when batch_size = 1
-        f1 = f1_score(y_true = events_next.squeeze().detach().cpu(),
-                      y_pred = predict_index.squeeze().detach().cpu(), average = 'macro')
-
-        # Only available when batch_size = 1
+        
+        f1 = []
         top_k_acc = []
-        if not fast:
-            if self.num_events > 2:
-                for k in range(1, self.num_events + 1):
-                    top_k_acc.append(
-                        top_k_accuracy_score(y_true = events_next.squeeze().detach().cpu(),
-                                             y_score = probability_integral.reshape(-1, self.num_events).detach().cpu(),
-                                             k = k,
-                                             labels = np.arange(self.num_events))
+        for (events_next_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral):
+            f1.append(f1_score(y_true = events_next_per_seq.detach().cpu(),
+                          y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
+            top_k_acc_single_event_seq = []
+            if not fast:
+                if self.num_events > 2:
+                    for k in range(1, self.num_events + 1):
+                        top_k_acc_single_event_seq.append(
+                            top_k_accuracy_score(y_true = events_next_per_seq.detach().cpu(),
+                                                 y_score = probability_integral_per_seq.detach().cpu(),
+                                                 k = k,
+                                                 labels = np.arange(self.num_events))
+                        )
+                else:
+                    top_k_acc_single_event_seq.append(
+                        accuracy_score(
+                            y_true = events_next_per_seq.detach().cpu(),
+                            y_pred = probability_integral_per_seq.detach().cpu()
+                        )
                     )
-            else:
-                top_k_acc.append(
-                    accuracy_score(
-                        y_true = events_next.squeeze().detach().cpu(),
-                        y_pred = predict_index.squeeze().detach().cpu()
-                    )
-                )
-                top_k_acc.append(1.0)
+                    top_k_acc_single_event_seq.append(1.0)
+                top_k_acc.append(top_k_acc_single_event_seq)
 
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
@@ -255,10 +257,10 @@ class FullyNNModel(BasicModule):
         mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
                                                                   p_x_real, resolution, mask_next, mean, var, max_)
         
-        mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict) / mask_next.sum()
-        mae_per_event_avg = torch.sum(mae_per_event) / mask_next.sum()
+        mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / mask_next.sum(dim = -1)
+        mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / mask_next.sum(dim = -1)
 
-        return f1, top_k_acc, probability_integral_sum, (mae_per_event_pure_predict_avg.item(), mae_per_event_avg.item()), \
+        return f1, top_k_acc, probability_integral_sum, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
                (mae_per_event_pure_predict, mae_per_event)
 
     def evaluate_per_event(self, events_history, events_next, time_history, taus, resolution, mean, var, mask):
@@ -364,80 +366,108 @@ class FullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len * resolution] * n
 
         f1, top_k, probability_sum, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
-        maes_avg = np.array(maes_avg)
+        mae_per_event_pure_predict_avg, mae_per_event_avg = maes_avg
+        mae_per_event_pure_predict, mae_per_event = maes
 
-        data_mae_avg = {
-            'x': np.ones_like(maes_avg) * f1,
-            'y': maes_avg,
-            'marks': ['Predicted labels', 'True labels']
-        }
+        probability_sum = probability_sum.detach().cpu().numpy()               # [batch_size, seq_len]
+        mae_per_event_pure_predict_avg = mae_per_event_pure_predict_avg.detach().cpu().numpy()
+                                                                               # [batch_size]
+        mae_per_event_avg = mae_per_event_avg.detach().cpu().numpy()           # [batch_size]
+        mae_per_event_pure_predict = mae_per_event_pure_predict.detach().cpu().numpy()
+                                                                               # [batch_size, seq_len]
+        mae_per_event = mae_per_event.detach().cpu().numpy()                   # [batch_size, seq_len]
+        
+        packed_values = zip(f1, top_k, probability_sum, mae_per_event_pure_predict, mae_per_event_pure_predict_avg, \
+                            mae_per_event, mae_per_event_avg, time_next, mask_next)
 
-        data_top_k = {
-            'x': np.arange(1, self.num_events + 1),
-            'y': top_k,
-            'marks': 'Top-K accuracy'
-        }
-
-        data_maes = {
-            'x': list(range(len(maes[0][0]))) * 2,
-            'y': np.concatenate(
-                (torch.log(1 + maes[0]).detach().cpu().numpy().squeeze(), torch.log(1 + maes[1]).detach().cpu().numpy().squeeze())
-            ),
-            'marks': ['MAE_k against prediction'] *len(maes[0][0]) +  ['MAE_k against real events'] * len(maes[0][0])
-        }
-
-        data_probability_sum = {
-            'x': torch.arange(probability_sum.shape[-1]),
-            'y': probability_sum.detach().squeeze().cpu().numpy()
-        }
-
-        # Point plot
-        additional_plot['pointplot'] = [[
-            'mae_per_event',
-            {
-                'x': 'x',
-                'y': 'y',
-                'data': data_mae_avg,
-                'hue': 'marks'
-            },
-            {
-                'horizontalalignment': 'center',
-                'color': 'black',
-                'weight': 'light'
+        for idx, (f1_per_seq, top_k_per_seq, probability_sum_per_seq, 
+                  mae_per_event_pure_predict_per_seq, mae_per_event_pure_predict_avg_per_seq,
+                  mae_per_event_per_seq, mae_per_event_avg_per_seq,
+                  time_next_per_seq, mask_per_seq) \
+            in enumerate(packed_values):
+            '''
+            the mean of pe-MAE of each event sequence against predicted events and real events
+            '''
+            data_mae_avg_per_seq = {
+                'x': np.ones(2) * f1_per_seq,
+                'y': [mae_per_event_pure_predict_avg_per_seq, mae_per_event_avg_per_seq],
+                'marks': ['Predicted labels', 'True labels']
             }
-        ],
-        ]
 
-        # Line plot
-        additional_plot['lineplot'] = [[
-            'top_k_accuracy',
-            {
-                'x': 'x',
-                'y': 'y',
-                'hue': 'marks',
-                'data': data_top_k,
-                'markers': True
+            '''
+            Top-K accuracy
+            '''
+            data_top_k_per_seq = {
+                'x': np.arange(1, self.num_events + 1),
+                'y': top_k_per_seq,
+                'marks': 'Top-K accuracy'
             }
-        ],
-        [
-            'log_mae_k',
-            {
-                'x': 'x',
-                'y': 'y',
-                'hue': 'marks',
-                'data': data_maes,
-                'markers': True
+
+            '''
+            Logarithm of pe-MAEs at each event
+            '''
+            seq_len = mask_per_seq.sum()
+            data_maes_per_seq = {
+                'x': list(range(seq_len)) * 2,
+                'y': np.concatenate(
+                    (np.log(1 + mae_per_event_pure_predict_per_seq[:seq_len]),
+                    np.log(1 + mae_per_event_per_seq[:seq_len]))
+                ),
+                'marks': ['MAE_k against prediction'] * seq_len +  ['MAE_k against real events'] * seq_len
             }
-        ],
-        [
-            'probability_sum',
-            {
-                'x': 'x',
-                'y': 'y',
-                'data': data_probability_sum,
-                'markers': True
+
+            data_probability_sum_per_seq = {
+                'x': torch.arange(seq_len),
+                'y': probability_sum_per_seq[:seq_len]
             }
-        ]]
+
+            # Point plot
+            additional_plot[idx]['pointplot'] = [[
+                'mae_per_event',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'data': data_mae_avg_per_seq,
+                    'hue': 'marks'
+                },
+                {
+                    'horizontalalignment': 'center',
+                    'color': 'black',
+                    'weight': 'light'
+                }
+                ],
+            ]
+
+            # Line plot
+            additional_plot[idx]['lineplot'] = [[
+                'top_k_accuracy',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'hue': 'marks',
+                    'data': data_top_k_per_seq,
+                    'markers': True
+                }
+            ],
+            [
+                'log_mae_k',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'hue': 'marks',
+                    'data': data_maes_per_seq,
+                    'markers': True
+                }
+            ],
+            [
+                'probability_sum',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'data': data_probability_sum_per_seq,
+                    'markers': True
+                }
+            ]]
 
         return (probed_results, additional_plot), timestamp
     

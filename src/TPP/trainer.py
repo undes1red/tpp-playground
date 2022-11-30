@@ -210,10 +210,11 @@ class TPPTrainer:
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
-        if self.opt.save_model and current_step > self.opt.n_warmup_steps:
+        # if self.opt.save_model and current_step > self.opt.n_warmup_steps:
+        if self.opt.save_model:
             if self.opt.save_mode == 'all':
                 model_name = os.path.join(
-                        self.opt.save_model, (f'_training_step_{current_step}' + '.chkpt'))
+                        self.opt.save_model, 'output_' + self.folder_suffix, (f'checkpoint_training_step_{current_step}' + '.chkpt'))
                 torch.save(checkpoint, model_name)
             elif self.opt.save_mode == 'best':
                 model_name = os.path.join(self.opt.save_model, 'output_' + self.folder_suffix, 'checkpoint.chkpt')
