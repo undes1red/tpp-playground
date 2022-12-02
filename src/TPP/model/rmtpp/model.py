@@ -66,8 +66,8 @@ class RMTPP(BasicModule):
         time_loss, events_loss = 0, 0
         if self.num_events > 1:
             events_loss = torch.nn.functional.cross_entropy(input = mark.transpose(1, 2), \
-                                                    target = events_next.to(self.device).long(), \
-                                                    reduction = 'none')
+                                                            target = events_next.long(), \
+                                                            reduction = 'none')
             events_loss = events_loss.clamp(max = 15) * mask_next
             events_loss = events_loss.sum()
         else:
@@ -99,7 +99,7 @@ class RMTPP(BasicModule):
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
             return self.evaluate(events_history, time_history, taus, mean, var) - \
-                   torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
+                   torch.log(torch.tensor(self.mae_threshold, device = self.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
             for _ in range(50):
@@ -171,7 +171,7 @@ class RMTPP(BasicModule):
         # Use a relatively large number as the positive infinity.
         max_ = min(1e5, mean + 10 * var)
         resolution = min(int(max_ * 100), 5000)
-        time_infinite = torch.ones_like(time_next, device = time_next.device) * max_
+        time_infinite = torch.ones_like(time_next, device = self.device) * max_
                                                                                # [batch_size, seq_len, 1]
 
         # First, we find the integral and intensity function that RMTPP estimates.

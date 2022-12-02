@@ -375,7 +375,6 @@ class SAHP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        # self.model.eval()
 
         time, events, _, mask, _ = input_data[0]                               # 3 * [batch_size, seq_len + 1]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
@@ -422,7 +421,6 @@ class SAHP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        self.model.eval()
 
         time, events, _, mask, _ = input_data[0]                               # 3 * [batch_size, seq_len + 1]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
@@ -434,6 +432,10 @@ class SAHP(BasicModule):
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        eta = rearrange(eta, 'b s di -> b s 1 di')                             # [batch_size, seq_len, 1, d_input]
+        mu = rearrange(mu, 'b s di -> b s 1 di')                               # [batch_size, seq_len, 1, d_input]
+        gamma = rearrange(gamma, 'b s di -> b s 1 di')                         # [batch_size, seq_len, 1, d_input]
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time = rearrange(time_next, '... -> ... 1') * time_multiplier # [batch_size, seq_len, resolution]
@@ -448,20 +450,21 @@ class SAHP(BasicModule):
                                                                                # [batch_size, seq_len, resolution, num_events]
         
         intensity_and_integral_plot = {}
-
         expanded_intensity = rearrange(expanded_intensity_all_events, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_events]
         expanded_integral = rearrange(expanded_integral_all_events, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_events]
-        expanded_intensity = torch.chunk(expanded_intensity, dim = -1)         # [batch_size, seq_len * resolution] * num_events
-        expanded_integral = torch.chunk(expanded_integral, dim = -1)           # [batch_size, seq_len * resolution] * num_events
+        expanded_intensity = torch.chunk(expanded_intensity, chunks = self.num_events, dim = -1)
+                                                                               # [batch_size, seq_len * resolution] * num_events
+        expanded_integral = torch.chunk(expanded_integral, chunks = self.num_events, dim = -1)
+                                                                               # [batch_size, seq_len * resolution] * num_events
 
         for idx, (intensity, integral) in enumerate(zip(expanded_intensity, expanded_integral)):
-            intensity_and_integral_plot[f'event_intensity_{idx}'] = intensity
-            intensity_and_integral_plot[f'event_integral_{idx}'] = integral
+            intensity_and_integral_plot[f'event_intensity_{idx}'] = rearrange(intensity, '... 1 -> ...')
+            intensity_and_integral_plot[f'event_integral_{idx}'] = rearrange(integral, '... 1 -> ...')
 
         # aggregated timestamp
-        batch_size, seq_len = time.shape
+        batch_size, seq_len = time_history.shape
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_time.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]

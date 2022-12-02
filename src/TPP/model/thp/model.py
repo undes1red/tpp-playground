@@ -89,7 +89,7 @@ class THP(BasicModule):
             type_mask = F.one_hot(events.long(), num_classes = self.num_events)# [batch_size, seq_len, num_events]
         else:
             type_mask_shape = (*history.shape, self.num_events)
-            type_mask = torch.ones(type_mask_shape, device = history.device)   # [batch_size, seq_len, num_events]
+            type_mask = torch.ones(type_mask_shape, device = self.device)      # [batch_size, seq_len, num_events]
 
         '''
         MTPP loss function
@@ -135,7 +135,7 @@ class THP(BasicModule):
         aggregate_time = rearrange(diff_time.cumsum(dim = -1), '... -> ... 1 1')
                                                                                # [batch_size, seq_len, 1, 1]
         temp_time = rearrange(diff_time, '... -> ... 1') * \
-                    torch.rand([*diff_time.size(), resolution], device=history.device)
+                    torch.rand([*diff_time.size(), resolution], device = self.device)
                                                                                # [batch_size, seq_len, resolution]
         temp_time = rearrange(temp_time, '... ns -> ... ns 1')                 # [batch_size, seq_len, resolution, 1]
         temp_time = self.alpha * temp_time / aggregate_time                    # [batch_size, seq_len, resolution, num_events]
@@ -181,7 +181,7 @@ class THP(BasicModule):
         
         # Intensity and integral estimation
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-        expanded_time = torch.ones_like(time_next, device = time_next.device) * max_
+        expanded_time = torch.ones_like(time_next, device = self.device) * max_
                                                                                # [batch_size, seq_len]
         expanded_time = expanded_time.unsqueeze(dim = -1) * time_multiplier    # [batch_size, seq_len, resolution]
         expanded_time_gap = torch.diff(expanded_time, dim = -1).mean(dim = -1, keepdim = True)

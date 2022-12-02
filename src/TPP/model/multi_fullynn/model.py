@@ -141,7 +141,7 @@ class MultiFullyNNModel(BasicModule):
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
             return self.evaluate(events_history, time_history, taus, mean, var, mask) - \
-                   torch.log(torch.tensor(self.mae_threshold, device = time_history.device))
+                   torch.log(torch.tensor(self.mae_threshold, device = self.device))
             
         def median_prediction(events_history, time_history, l, r, mean, var):
             for _ in range(50):

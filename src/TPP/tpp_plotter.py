@@ -64,6 +64,7 @@ def expand_true_intensity(time, intensity, opt):
 
 def expand_model_intensity_and_integral(model, data, opt):
     if opt.model_name in intensity_probe_qualified_models:
+        model.eval()
         return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution] * 3
     else:
         raise Exception('This model is incompatible with intensity prober!')
@@ -185,6 +186,7 @@ probability_probe_qualified_models = [
 
 def expand_model_probability(model, data, opt):
     if opt.model_name in probability_probe_qualified_models:
+        model.eval()
         probed_intensity_integral, probed_intensity, timestamp = \
             model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
         probed_probability = probed_intensity * torch.exp(-probed_intensity_integral)
@@ -282,6 +284,7 @@ def draw_features(model, data, desc, opt):
     Update 2022-08-21: now you can use additional_plot to draw plots like attention heatmap.
     '''
 
+    model.eval()
     time, event, _ = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu()                # [batch_size, seq_len]
     data, timestamp  = model.model_prober(data, opt.resolution)
