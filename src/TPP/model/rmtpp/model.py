@@ -80,7 +80,7 @@ class RMTPP(BasicModule):
 
             loss = time_loss + events_loss
         else:
-            events_mask = torch.nn.functional.one_hot(events_next.long(), num_class = self.num_events)
+            events_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
             intensity = (intensity * events_mask).sum(dim = -1)                # [batch_size, seq_len]
             integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
@@ -127,6 +127,27 @@ class RMTPP(BasicModule):
                                                                                # 3 * [batch_size, seq_len * resolution]
         
         return integral, intensity, timestamp
+
+    def model_prober(self, data, resolution):
+        (time, events, _, _, _), (mean, var) = data                               # 2 * [batch_size, seq_len + 1]
+        events_history, _ = self.divide_history_and_next(events, unsqueeze = False)
+                                                                               # [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(time, unsqueeze = True)
+                                                                               # [batch_size, seq_len, 1]
+        expand_intensity, expand_integral, timestamp = \
+            self.submodel.intensity_integral(events_history, time_history,
+                                             time_next, resolution, mean, var,
+                                             sum = False)                      # 3 * [batch_size, seq_len * resolution, num_events]
+        
+        intensity_and_integral_plot = {}
+        additional_plot = []
+        expand_intensity = torch.chunk(expand_intensity, self.num_events, dim = -1)
+        expand_integral = torch.chunk(expand_integral, self.num_events, dim = -1)
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq) in enumerate(zip(expand_intensity, expand_integral)):
+            intensity_and_integral_plot[f'event_intensity_{idx}'] = expand_intensity_per_seq.squeeze(dim = -1)
+            intensity_and_integral_plot[f'event_integral_{idx}'] = expand_integral_per_seq.squeeze(dim = -1)
+
+        return (intensity_and_integral_plot, additional_plot), timestamp
 
 
     def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var, fast):

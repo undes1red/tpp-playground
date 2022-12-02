@@ -9,7 +9,7 @@ from einops import rearrange, reduce, repeat, einsum, pack, unpack
 # Multi-head for multi-events?
 
 def check_tensor(x):
-    assert (x < 0).cpu().numpy().any() == False
+    assert (x < 0).any() == False
 
 '''
 Q1: why without bottleneck, the intensity function for each type of event fails to learn?
@@ -28,7 +28,6 @@ class TransNNModel(BasicModule):
                  nonlinear,
                  d_qk,
                  device,
-                 history_module = 'LSTM',
                  n_head = 0,
                  mae_threshold = 2,
                  event_toggle = False,
@@ -42,23 +41,25 @@ class TransNNModel(BasicModule):
         self.negative_loss = negative_loss
 
         self.model = TransNN(d_history = d_history, d_intensity = d_intensity, d_qk = d_qk, num_events = num_events, 
-                             integral_module_layers = integral_module_layers, dropout = dropout, history_module = history_module,
+                             integral_module_layers = integral_module_layers, dropout = dropout,
                              history_module_layers = history_module_layers, mlp_layers = mlp_layers, nonlinear = nonlinear,
                              event_toggle = event_toggle, n_head = n_head, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg,
                              wv_nonneg = wv_nonneg, device = device)
+        
+        # softmax with log-intensity = needed probability distribution
         self.event_predictor = nn.Softmax(dim = -1)
 
-    def forward(self, time_seqence, events_seqence, mask, mean, var evaluate = False):
+    def forward(self, time_seqence, events_seqence, mask, mean, var, evaluate = False):
         '''
         Inputs:
-        1. time_seqence: [batch_size, seq_len]
+        1. time_seqence:  [batch_size, seq_len]
            Event time sequences t_i.
-        2. event_seqence:[batch_size, seq_len]
+        2. events_seqence:[batch_size, seq_len]
            The marker sequences m_i.
-        3. mask:         [batch_size, seq_len]
+        3. mask:          [batch_size, seq_len]
            Mask vectors to filter out padding events from the original sequences. 0 means should be masked.
-        7. mean:         int
-        8. var:          int
+        7. mean:          int
+        8. var:           int
            For data normalization.
 
         '''
@@ -70,10 +71,13 @@ class TransNNModel(BasicModule):
 
         mae = 0
         if evaluate:
-            mae = self.mean_absolute_error(history_time = history_time, history_event = history_event,
+            mae = self.mean_absolute_error(time_history = time_history, event_history = events_history,
                                            result = result, mask = mask, mean = mean, var = var)
         
-        integral, intensity = self.model(history_time, history_event, result, mean = mean, var = var, mask = mask)
+        integral, intensity = self.model(time_history = time_history, time_next = time_next,
+                                         events_history = events_history,
+                                         mask_history = mask_history, mask_next = mask_next,
+                                         mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] * 2
 
         check_tensor(intensity)
@@ -108,10 +112,10 @@ class TransNNModel(BasicModule):
         return integral.sum(dim = -1)
 
     def divide_history_and_next(self, input):
-        input_history, input_next = input.clone()[:, :-1], input.clone()[:, 1:]
+        input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
 
-    def mean_absolute_error(self, history_time, history_event, result, mean, var, mask):
+    def mean_absolute_error(self, time_history, event_history, result, mean, var, mask):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -146,7 +150,7 @@ class TransNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         r = 1e6*torch.ones_like(result, dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len]
-        tau_pred = median_prediction(history_time, history_event, l, r, mean, var)
+        tau_pred = median_prediction(time_history, event_history, l, r, mean, var)
         gap_mask = (mask.sum(dim = -1) > 0).int()                              # [batch_size, seq_len]
         gap = (tau_pred - result) * gap_mask
         gap_mean = torch.sum(torch.abs(gap)) / torch.sum(gap_mask)
@@ -247,12 +251,12 @@ class TransNNModel(BasicModule):
         '''
     
         model.train()
-        (time_seq, event, score, mask), (mean, var) = minibatch
-        time_loss, events_loss, mae, f1, the_number_of_events = model(         
-                time_seqence = time_seq, event_seqence = event, mask = mask, mean = mean, var = var
+        (time_sequence, events_sequence, score, mask), (mean, var) = minibatch
+        time_loss, events_loss, mae, f1, the_number_of_events = model(
+                time_seqence = time_sequence, events_seqence = events_sequence,\
+                mask = mask, mean = mean, var = var,
         )
 
-        # loss = time_loss + events_loss
         loss = time_loss
         loss.backward()
     

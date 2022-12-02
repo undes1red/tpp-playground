@@ -4,34 +4,54 @@ from einops import rearrange, repeat, reduce
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 import numpy as np
 
-from .transformers import TransformerTPP
+from .transformers import TransformerEncoder
 from ..utils import BasicModule
 from .utils import *
 
-class THP(BasicModule):
+class SAHP(BasicModule):
     def __init__(self, num_events, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 0, mae_threshold = 2):
-        super(THP, self).__init__()
+                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, mae_threshold = 2):
+        super(SAHP, self).__init__()
         self.device = device
         self.num_events = num_events if num_events > 0 else 1
         self.mae_threshold = mae_threshold
+        self.gelu = nn.GELU()
 
-        # parameter for the weight of time difference
-        self.alpha = nn.Parameter(torch.ones((self.num_events), dtype = torch.float32, \
-                                  device = self.device, requires_grad = True))
+        # The original paper makes people believe SAHP is a RMTPP-like model.
+        # However, this model in fact decays the hidden embedding so it is akin to CTLSTM.
+        # The following three layers find the \eta_{u, i+1}, \mu_{u, i+1}, and \gamma_{u i+1}
+        self.start_layer = nn.Sequential(
+            nn.Linear(d_input, d_input, bias = True, device = self.device),
+            self.gelu
+        )
 
-        # parameter for the softplus function
-        self.beta = nn.Parameter(torch.ones((self.num_events), dtype = torch.float32, \
-                                  device = self.device, requires_grad = True) * beta)
-        # self.beta =  beta
+        self.converge_layer = nn.Sequential(
+            nn.Linear(d_input, d_input, bias = True, device = self.device),
+            self.gelu
+        )
 
-        self.model = TransformerTPP(num_events, device = self.device, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden,\
-                                    n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout)
+        self.decay_layer = nn.Sequential(
+            nn.Linear(d_input, d_input, bias = True, device = self.device)
+            ,nn.Softplus(beta = 10.0)
+        )
+
+        # This layer translates decayed hidden states into intensity function values.
+        self.intensity_layer = nn.Sequential(
+            nn.Linear(d_input, self.num_events, bias = True, device = self.device)
+            ,nn.Softplus(beta = 1.)
+        )
+
+        # History encoder. SAHP employs a plain transformer to encode marked temporal history
+        self.history_encoder = TransformerEncoder(num_events, device = self.device, \
+                                                  d_input = d_input, d_rnn = d_rnn, \
+                                                  d_hidden = d_hidden, n_layers = n_layers, \
+                                                  n_head = n_head, d_qk = d_qk, d_v = d_v, \
+                                                  dropout = dropout)
     
     '''
     Functions for model propagation and evaluation
     '''
-    def forward(self, time, events, mask):
+    def forward(self, time, events, mask, evaluate = False):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
@@ -45,35 +65,84 @@ class THP(BasicModule):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        history = self.model(time_history, events_history, mask_history)       # [batch_size, seq_len, d_input]
+        history = self.history_encoder(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
         # temporal point process loss
-        log_likeli_loss, marker_loss = self.log_likelihood(
-             history = history, time = time_next, events = events_next, mask = mask_next
+        log_likeli_loss, marker_loss, events_prediction_probability = self.log_likelihood(
+             eta = eta, mu = mu, gamma = gamma, time = time_next, \
+             events = events_next, mask = mask_next
         )
-        
+
+        mae_mean_of_all_event = 0
+        f1 = 0
+        if evaluate:
+            mae_mean_of_all_event = \
+                        self.mean_absolute_error(eta = eta, mu = mu, gamma = gamma,
+                                                 time_history = time_history, time_next = time_next, 
+                                                 mask = mask_next)
+            predicted_events = torch.argmax(events_prediction_probability, dim = -1)[mask_next == 1].detach().cpu().numpy()
+            events_true = events_next[mask_next == 1].detach().cpu().numpy()
+            f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
         '''
         Event loss. This loss should not be counted into the backward loss
         '''
 
         the_number_of_events = mask_next.sum()
 
-        return log_likeli_loss, marker_loss, the_number_of_events
-    
-    def evaluate(self, time, events, mask):
+        return log_likeli_loss, marker_loss, f1, mae_mean_of_all_event, the_number_of_events
+
+    def state_decay(self, mu, eta, gamma, duration_t):
+        '''
+        mu, eta, gamma: shape: [batch_size, seq_len, d_hidden, (resolution)]
+        dutation_t:     shape: [batch_size, seq_len, (resolution)]
+        '''
+        duration_t = rearrange(duration_t, '... -> ... 1')                     # [batch_size, seq_len, (resolution), 1]
+        cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [batch_size, seq_len, (resolution), d_input]
+        return cell_t
+
+    def mean_absolute_error(self, eta, mu, gamma, time_history, time_next, mask):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+
+        Update: 2022-09-23
+        Add event-wise MAE support.
+        '''
+        def bisect_target(taus):
+            return self.evaluate(eta, mu, gamma, taus, mask) - \
+                   torch.log(torch.tensor(self.mae_threshold, device = self.device))
+            
+        def median_prediction(l, r):
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target(c)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
+        tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
+        gap = (tau_pred - time_next) * mask
+        mae_mean_of_all_events = torch.sum(torch.abs(gap)) / mask.sum()
+
+        return mae_mean_of_all_events.item()
+
+    def evaluate(self, eta, mu, gamma, time, mask):
         '''
         Args:
         1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         '''
-
-        time_history, _ = self.divide_history_and_next(time)                   # [batch_size, seq_len]
-        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len]
-        mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
-
-        history = self.model(time_history, events_history, mask_history)       # [batch_size, seq_len, num_events]
-        return history.detach()
+        intensity_integral = self.compute_integral_unbiased(eta, mu, gamma, time, mask)
+                                                                               # [batch_size, seq_len]
+        return intensity_integral
 
     def divide_history_and_next(self, input):
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
@@ -82,32 +151,29 @@ class THP(BasicModule):
     '''
     Loss functions
     '''
-    def log_likelihood(self, history, time, events, mask):
+    def log_likelihood(self, eta, mu, gamma, time, events, mask):
         """ Log-likelihood of sequence. """
             
         if events is not None:
             type_mask = F.one_hot(events.long(), num_classes = self.num_events)# [batch_size, seq_len, num_events]
         else:
-            type_mask_shape = (*history.shape, self.num_events)
-            type_mask = torch.ones(type_mask_shape, device = history.device)   # [batch_size, seq_len, num_events]
+            type_mask_shape = (*eta.shape[:2], self.num_events)
+            type_mask = torch.ones(type_mask_shape, device = self.device)      # [batch_size, seq_len, num_events]
 
         '''
         MTPP loss function
         '''
-        aggregate_time = time.cumsum(dim = -1)                                 # [batch_size, seq_len]
-        scaled_time = rearrange((time / aggregate_time), '... -> ... 1')       # [batch_size, seq_len, 1]
-        intensity_all_events = softplus_ext(self.model.linear(history) + self.alpha * scaled_time, beta = F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, num_events]
-        # intensity_all_events = F.softplus(self.model.linear(history) + self.alpha * scaled_time, beta = self.beta)
-                                                                               # [batch_size, seq_len, num_events]
-
-        intensity = torch.sum(intensity_all_events * type_mask, dim = -1)      # [batch_size, seq_len]
+        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time)
+                                                                               # [batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [batch_size, seq_len, num_events]
+        intensity = reduce(intensity_all_events * type_mask, '... ne -> ...', 'sum')
+                                                                               # [batch_size, seq_len]
 
         # event log-likelihood
         log_intensity = compute_event(intensity, mask)                         # [batch_size, seq_len]
     
         # non-event log-likelihood, either numerical integration or MC integration
-        intensity_integral = self.compute_integral_unbiased(history, time, mask)
+        intensity_integral = self.compute_integral_unbiased(eta, mu, gamma, time, mask)
                                                                                # [batch_size, seq_len]
         ll = (-log_intensity + intensity_integral).clamp(max = 15)             # [batch_size, seq_len]
     
@@ -118,42 +184,35 @@ class THP(BasicModule):
         '''
         events_prediction_probability = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, num_events]
-        events_prediction_probability = rearrange(events_prediction_probability, 'b s n -> (b s) n')
-                                                                               # [batch_size * seq_len, num_events]
-        events = rearrange(events, 'b s -> (b s)')                             # [batch_size * seq_len]
-        mask = rearrange(mask, 'b s -> (b s)')                                 # [batch_size * seq_len]
+        events_prediction_probability = rearrange(events_prediction_probability, 'b s ne -> b ne s')
+                                                                               # [batch_size, num_events, seq_len]
         events_loss = F.cross_entropy(input = events_prediction_probability, target = events.long(), reduction = 'none')
                                                                                # [batch_size, seq_len]
         events_loss = (events_loss * mask).sum()
 
-        return mtpp_loss, events_loss
+        return mtpp_loss, events_loss, events_prediction_probability
     
-    def compute_integral_unbiased(self, history, time, non_pad_mask, resolution = 100):
+    def compute_integral_unbiased(self, eta, mu, gamma, time, non_pad_mask, resolution = 100):
         """ Log-likelihood of non-events, using Monte Carlo integration. """
     
         diff_time = time * non_pad_mask
-        aggregate_time = rearrange(diff_time.cumsum(dim = -1), '... -> ... 1 1')
-                                                                               # [batch_size, seq_len, 1, 1]
         temp_time = rearrange(diff_time, '... -> ... 1') * \
-                    torch.rand([*diff_time.size(), resolution], device=history.device)
+                    torch.rand([*diff_time.size(), resolution], device = self.device)
                                                                                # [batch_size, seq_len, resolution]
-        temp_time = rearrange(temp_time, '... ns -> ... ns 1')                 # [batch_size, seq_len, resolution, 1]
-        temp_time = self.alpha * temp_time / aggregate_time                    # [batch_size, seq_len, resolution, num_events]
-
-        intensity_all_events_pre_softplus = self.model.linear(history)         # [batch_size, seq_len, num_events]
-        intensity_all_events_pre_softplus = repeat(intensity_all_events_pre_softplus, '... ne -> ... r ne', r = resolution)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        all_lambda = softplus_ext(intensity_all_events_pre_softplus + temp_time, F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        # all_lambda = F.softplus(intensity_all_events_pre_softplus + temp_time, beta = self.beta)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        lambda_mean = torch.mean(all_lambda, dim = -2)                         # [batch_size, seq_len, num_events]
-    
-        unbiased_integral_per_event = lambda_mean * rearrange(diff_time, '... -> ... 1')
+        
+        mu = rearrange(mu, 'b s d_i -> b s 1 d_i')                             # [batch_size, seq_len, 1, d_input]
+        eta = rearrange(eta, 'b s d_i -> b s 1 d_i')                           # [batch_size, seq_len, 1, d_input]
+        gamma = rearrange(gamma, 'b s d_i -> b s 1 d_i')                       # [batch_size, seq_len, 1, d_input]
+        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = temp_time)
+                                                                               # [batch_size, seq_len, resolution, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [batch_size, seq_len, resolution, num_events]
+        intensity_all_events_mean = reduce(intensity_all_events, 'b s r ne -> b s ne', 'mean')
                                                                                # [batch_size, seq_len, num_events]
-        unbiased_integral = unbiased_integral_per_event.sum(dim = -1)          # [batch_size, seq_len]
+        integral_all_events = intensity_all_events_mean * rearrange(time, '... -> ... 1')
+                                                                               # [batch_size, seq_len, num_events]
+        integral = reduce(integral_all_events, 'b s ne -> b s', 'sum')         # [batch_size, seq_len]
 
-        return unbiased_integral
+        return integral
 
     def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var, fast):
         '''
@@ -181,7 +240,7 @@ class THP(BasicModule):
         
         # Intensity and integral estimation
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-        expanded_time = torch.ones_like(time_next, device = time_next.device) * max_
+        expanded_time = torch.ones_like(time_next, device = self.device) * max_
                                                                                # [batch_size, seq_len]
         expanded_time = expanded_time.unsqueeze(dim = -1) * time_multiplier    # [batch_size, seq_len, resolution]
         expanded_time_gap = torch.diff(expanded_time, dim = -1).mean(dim = -1, keepdim = True)
@@ -316,46 +375,47 @@ class THP(BasicModule):
         Probe the learned intensity function from the model.
         This task should be pretty easy for the explicit form of intensity functions.
         '''
-        self.model.eval()
+        # self.model.eval()
 
         time, events, _, mask, _ = input_data[0]                               # 3 * [batch_size, seq_len + 1]
-        _, time_next = self.divide_history_and_next(time)                      # [batch_size, seq_len]
-        _, events_next = self.divide_history_and_next(events)                  # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
-        aggregate_time_next = time_next.cumsum(dim = -1).unsqueeze(-1)         # [batch_size, seq_len, 1]
+        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len] * 2
+        mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
 
-        batch_size, seq_len = time.shape
-        seq_len -= 1
-        history = self.evaluate(time, events, mask)                            # [batch_size, seq_len, d_input]
+        history = self.history_encoder(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        eta = rearrange(eta, 'b s di -> b s 1 di')                             # [batch_size, seq_len, 1, d_input]
+        mu = rearrange(mu, 'b s di -> b s 1 di')                               # [batch_size, seq_len, 1, d_input]
+        gamma = rearrange(gamma, 'b s di -> b s 1 di')                         # [batch_size, seq_len, 1, d_input]
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-        expanded_time = time_next.unsqueeze(-1) * time_multiplier              # [batch_size, seq_len, resolution]
-        expanded_time_gap = torch.diff(expanded_time, dim = -1).mean(dim = -1, keepdim = True)  
+        expanded_time = rearrange(time_next, '... -> ... 1') * time_multiplier # [batch_size, seq_len, resolution]
+        expanded_time_gap = reduce(torch.diff(expanded_time, dim = -1), 'b s r -> b s ()', 'mean')
                                                                                # [batch_size, seq_len, 1]
+        hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, d_input]
+        expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events]
 
-        scaled_expanded_time = (expanded_time / aggregate_time_next).unsqueeze(-1)
-                                                                               # [batch_size, seq_len, resolution, 1]
-        intensity_for_each_event = self.model.linear(history)                  # [batch_size, seq_len, num_events]
-        intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_events]
+        expanded_integral_all_events = expanded_intensity_all_events * rearrange(expanded_time_gap, '... -> ... 1')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        expanded_integral_all_events = expanded_integral_all_events.cumsum(dim = -2)
+                                                                               # [batch_size, seq_len, resolution, num_events]
         
-        expanded_intensity = torch.sum(softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta)), dim =-1)
-                                                                               # [batch_size, seq_len, resolution]
-        
-        # Only works when expanded_time_gap is tiny.
-        expanded_integral_unbiased = (expanded_intensity * expanded_time_gap).cumsum(dim = -1)
-                                                                               # [batch_size, seq_len, resolution]
-
-        expanded_intensity = expanded_intensity.reshape(batch_size, -1)        # [batch_size, seq_len * resolution]
-        expanded_integral_unbiased = expanded_integral_unbiased.reshape(batch_size, -1)
+        expanded_intensity = reduce(expanded_intensity_all_events, 'b s r ne -> b (s r)', 'sum')
                                                                                # [batch_size, seq_len * resolution]
-
+        expanded_integral = reduce(expanded_integral_all_events, 'b s r ne -> b (s r)', 'sum')
+                                                                               # [batch_size, seq_len * resolution]
         # aggregated timestamp
+        batch_size, seq_len = time_history.shape
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_time.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
         timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
         
-        return expanded_integral_unbiased, expanded_intensity, timestamp
+        return expanded_integral, expanded_intensity, timestamp
     
     def model_prober(self, input_data, resolution):
         '''
@@ -365,45 +425,43 @@ class THP(BasicModule):
         self.model.eval()
 
         time, events, _, mask, _ = input_data[0]                               # 3 * [batch_size, seq_len + 1]
-        _, time_next = self.divide_history_and_next(time)                      # [batch_size, seq_len]
-        _, events_next = self.divide_history_and_next(events)                  # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
-        aggregate_time_next = time_next.cumsum(dim = -1).unsqueeze(-1)         # [batch_size, seq_len, 1]
+        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len] * 2
+        mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
 
-        batch_size, seq_len = time.shape
-        seq_len -= 1
-        history = self.evaluate(time, events, mask)                            # [batch_size, seq_len, d_input]
+        history = self.history_encoder(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-        expanded_time = time_next.unsqueeze(-1) * time_multiplier              # [batch_size, seq_len, resolution]
-        expanded_time_gap = torch.diff(expanded_time, dim = -1).mean(dim = -1, keepdim = True)
-        expanded_time_gap = rearrange(expanded_time_gap, '... -> ... 1')
-                                                                               # [batch_size, seq_len, 1, 1]
+        expanded_time = rearrange(time_next, '... -> ... 1') * time_multiplier # [batch_size, seq_len, resolution]
+        expanded_time_gap = reduce(torch.diff(expanded_time, dim = -1), 'b s r -> b s ()', 'mean')
+                                                                               # [batch_size, seq_len, 1]
+        hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, d_input]
+        expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events]
 
-        scaled_expanded_time = (expanded_time / aggregate_time_next).unsqueeze(-1)
-                                                                               # [batch_size, seq_len, resolution, 1]
-        intensity_for_each_event = self.model.linear(history)                  # [batch_size, seq_len, num_events]
-        intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_events]
-        
-        expanded_intensity = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
+        expanded_integral_all_events = expanded_intensity_all_events * rearrange(expanded_time_gap, '... -> ... 1')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        expanded_integral_all_events = expanded_integral_all_events.cumsum(dim = -2)
                                                                                # [batch_size, seq_len, resolution, num_events]
         
-        # Only works when expanded_time_gap is tiny.
-        expanded_integral_unbiased = (expanded_intensity * expanded_time_gap).cumsum(dim = -1)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-
         intensity_and_integral_plot = {}
-        expanded_intensity = torch.chunk(rearrange(expanded_intensity, 'b s r ne -> b (s r) ne'), self.num_events, dim = -1)
-                                                                               # [batch_size, seq_len * resolution, 1] * num_events
-        expanded_integral_unbiased = torch.chunk(rearrange(expanded_integral_unbiased, 'b s r ne -> b (s r) ne'), self.num_events, dim = -1)
-                                                                               # [batch_size, seq_len * resolution, 1] * num_events
-        for idx, (intensity_per_event, integral_per_event) in enumerate(zip(expanded_intensity, expanded_integral_unbiased)):
-            intensity_and_integral_plot[f'event_intensity_{idx}'] = rearrange(intensity_per_event, '... 1 -> ...')
-                                                                               # [batch_size, seq_len * resolution]
-            intensity_and_integral_plot[f'event_integral_{idx}'] = rearrange(integral_per_event, '... 1 -> ...')
-                                                                               # [batch_size, seq_len * resolution]
+
+        expanded_intensity = rearrange(expanded_intensity_all_events, 'b s r ne -> b (s r) ne')
+                                                                               # [batch_size, seq_len * resolution, num_events]
+        expanded_integral = rearrange(expanded_integral_all_events, 'b s r ne -> b (s r) ne')
+                                                                               # [batch_size, seq_len * resolution, num_events]
+        expanded_intensity = torch.chunk(expanded_intensity, dim = -1)         # [batch_size, seq_len * resolution] * num_events
+        expanded_integral = torch.chunk(expanded_integral, dim = -1)           # [batch_size, seq_len * resolution] * num_events
+
+        for idx, (intensity, integral) in enumerate(zip(expanded_intensity, expanded_integral)):
+            intensity_and_integral_plot[f'event_intensity_{idx}'] = intensity
+            intensity_and_integral_plot[f'event_integral_{idx}'] = integral
 
         # aggregated timestamp
+        batch_size, seq_len = time.shape
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_time.diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
@@ -425,7 +483,7 @@ class THP(BasicModule):
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
         time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss, the_number_of_events = model(time, events, mask)
+        tpp_loss, mark_loss, f1, mae, the_number_of_events = model(time, events, mask)
         loss = tpp_loss
         loss.backward()
 
@@ -440,28 +498,42 @@ class THP(BasicModule):
         model.eval()
 
         time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss, the_number_of_events = model(time, events, mask)
+        tpp_loss, mark_loss, f1, mae, the_number_of_events = model(time, events, mask, evaluate = True)
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
         fact = fact.sum()
 
-        return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, fact / the_number_of_events
+        return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, fact / the_number_of_events, \
+               f1, mae
 
     def postprocess(input, procedure):
-        return [input[0], input[0] - input[2], input[1]]
-
+        def train():
+            return [input[0], input[0] - input[2], input[1]]
+        def evaluate():
+            return [input[0], input[0] - input[2], input[1], input[3], input[4]]
+        return train() if procedure == 'Training' else evaluate()
 
     def log_print_format(input, procedure):
-        format_dict = {}
-        format_dict['absolute_loss'] = input[0]
-        format_dict['relative_loss'] = input[1]
-        format_dict['events_loss'] = input[2]
-        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f'}
-        return format_dict
-        
-    format_dict_length = 3
-    
+        def train():
+            format_dict = {}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['events_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f'}
+            return format_dict
+        def evaluate():
+            format_dict = {}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['events_loss'] = input[2]
+            format_dict['f1'] = input[3]
+            format_dict['MAE'] = input[4]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f', 'f1': ':8.5f', 'MAE': ':2.8f'}
+            return format_dict    
+        return train() if procedure == 'Training' else evaluate()
 
+    format_dict_length = 5
+    
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'events loss': ':8.5f'}
 
     def logfile_print_format(input):

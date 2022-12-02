@@ -6,7 +6,7 @@ from .selfattn import SelfAttn
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1, ):
+    def __init__(self, n_head, d_input, d_qk, d_v, device, wq_nonneg, wk_nonneg, wv_nonneg, dropout = 0.1):
         '''
         Template self-attention module with multihead-attention type 2: this modu`le concatenates original outputs and
         compress high-dimensional vectors into d_output

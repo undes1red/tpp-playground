@@ -19,21 +19,22 @@ def get_model(name, rank = 0):
 
 modelpath = {
     # [file name, Model wrapper name]
+    # Actively maintained models
     'dwg': ['dwg.model', 'TemporalModel'],
     'fullynn': ['fullynn.model', 'FullyNNModel'],
     'multi_fullynn': ['multi_fullynn.model', 'MultiFullyNNModel'],
-    'multi_fullynn_arg': ['multi_fullynn_arg.model', 'MultiFullyNNModel'],
-    'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
-    'cnf': ['cnf.model', 'CNFWrapper'],
     'ifl': ['ifl.model', 'IFL'],
     'rmtpp': ['rmtpp.model', 'RMTPP'],
     'thp': ['thp.model', 'THP'],
+    'sahp': ['sahp.model', 'SAHP'],
+    
+    # Temporarily abandoned models
+    'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
+    'cnf': ['cnf.model', 'CNFWrapper'],
     'fullynn_v2': ['fullynn_v2.model', 'FullyNN2Model'],
     'attn_cm': ['attn_cm.model', 'AttnCMWrapper'],
     'transnn': ['transnn.model', 'TransNNModel'],
-
-    # 2021-10-14 update: all legacy models are deprecated and out of maintenance.
-    # Please take your own risk when you read and use them. 
+    'multi_fullynn_arg': ['multi_fullynn_arg.model', 'MultiFullyNNModel'],
 }
 
 def model_zoo(name):

@@ -23,7 +23,7 @@ class RMTPPModule(nn.Module):
         self.project = nn.Linear(hidden_size, output_size, device = self.device)
         
         # Mark related
-        if self.num_events > 1 and self.original_mark_generation:
+        if self.num_events > 1:
             self.event_embedding = nn.Embedding(num_embeddings = num_events + 1, embedding_dim = input_size,\
                                                 padding_idx = num_events, device = self.device)
             self.event_mapper = nn.Linear(output_size, self.num_events, device = self.device)
@@ -182,8 +182,8 @@ class RMTPPModule(nn.Module):
             intensity = rearrange(intensity, 'b s r -> b (s r)')               # [batch_size, seq_len * resolution]
             integral = rearrange(integral, 'b s r -> b (s r)')                 # [batch_size, seq_len * resolution]
         else:
-            intensity = rearrange(intensity, 'b s r ne -> b (s r) ne')         # [batch_size, seq_len * resolution, num_events]
-            integral = rearrange(integral, 'b s r ne -> b (s r) ne')           # [batch_size, seq_len * resolution, num_events]
+            intensity = rearrange(intensity_events, 'b s ne r -> b (s r) ne')  # [batch_size, seq_len * resolution, num_events]
+            integral = rearrange(integral_events, 'b s ne r -> b (s r) ne')    # [batch_size, seq_len * resolution, num_events]
 
         # aggregated timestamp
         batch_size, seq_len, _, = original_time_expand.shape

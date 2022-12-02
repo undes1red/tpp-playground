@@ -63,15 +63,15 @@ def prepare_dataloaders(opt, rank = 0):
     g = torch.Generator()
     g.manual_seed(opt.seed + rank)
 
-    if hasattr(opt, 'train') and opt.train:
+    if not hasattr(opt, 'train') or (hasattr(opt, 'train') and opt.train):
         train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
-    if hasattr(opt, 'evaluation') and opt.evaluation:
+    if not hasattr(opt, 'evaluation') or (hasattr(opt, 'evaluation') and opt.evaluation):
         evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
-    if hasattr(opt, 'test') and opt.test:
+    if not hasattr(opt, 'test') or (hasattr(opt, 'test') and opt.test):
         test_iterator = DataLoader(test_dataset, batch_size=opt.batch_size, \
             collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)

@@ -46,9 +46,10 @@ intensity_probe_qualified_models = [
     'fullynn',        # proposed by Omi et al., the first II-TPP model.
     'ctlstm',         # proposed by Mei et al., a MTPP model based on LSTM.
     'thp',            # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
-    'rmtpp',          # proposed by Bu et al., might be the first NN-based TPP algorithm.
+    'rmtpp',          # proposed by Du et al., might be the first NN-based TPP algorithm.
     'fullynn_v2',     # ...
-    'multi_fullynn'   # MFullyNN, another multi-mark FullyNN adaptation.
+    'multi_fullynn',  # MFullyNN, another multi-mark FullyNN adaptation.
+    'sahp',           # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
     ]
 
 '''
@@ -176,9 +177,10 @@ probability_probe_qualified_models = [
     'fullynn',        # proposed by Omi et al., the first II-TPP model.
     'ctlstm',         # proposed by Mei et al., a MTPP model based on LSTM.
     'thp',            # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
-    'rmtpp',          # proposed by Bu et al., might be the first NN-based TPP algorithm.
+    'rmtpp',          # proposed by Du et al., might be the first NN-based TPP algorithm.
     'fullynn_v2',     # ...
-    'multi_fullynn'   # MFullyNN, another multi-mark FullyNN adaptation.
+    'multi_fullynn',  # MFullyNN, another multi-mark FullyNN adaptation.
+    'sahp',           # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
     ]
 
 def expand_model_probability(model, data, opt):
@@ -189,7 +191,7 @@ def expand_model_probability(model, data, opt):
                                                                                # [batch_size, seq_len * resolution]
         return probed_probability, timestamp
     else:
-        raise Exception('This model is incompatible with intensity prober!')
+        raise Exception('This model is incompatible with probability prober!')
 
 def draw_probability(model, data, desc, opt):
     '''

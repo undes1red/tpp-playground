@@ -1,9 +1,10 @@
 import torch.nn as nn
 import torch
+from einops import rearrange, reduce, repeat
 
 from .nonneg import NonNegLinear
 from .activate import *
-from .transformers import TransEncoder, TransDecoder
+from .transformers import TransHisEncoder, TransTPPDecoder
 
 
 TA = {
@@ -37,89 +38,65 @@ class TransNN(nn.Module):
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers, d_qk, 
+    def __init__(self, d_history, d_intensity, num_events, dropout, history_module_layers, d_qk, 
                  integral_module_layers, mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, device):
         super(TransNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
-        self.history_module = history_module.lower()
 
         # For some reasons, we force that d_qk = d_v in TransDecoder
         self.d_qk = d_qk
         self.d_v = self.d_qk
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
-        if self.event_toggle:
-            if self.history_module == 'lstm':
-                self.events = nn.Embedding(num_events + 2, d_history, padding_idx = num_events, device = device)
-                self.his_encoder = nn.LSTM(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
-                            batch_first = True, dropout = dropout, device = device)
-            elif self.history_module == 'transformers':
-                self.his_encoder = TransEncoder(num_types = num_events, d_input = d_history, d_hidden = 4 * d_history, \
-                            n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
-                            event_toggle = event_toggle, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
-            else:
-                raise Exception(f'Unknown history module name {history_module}.')
-            self.hidden_x = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
-        else:
-            self.events = None
-            if self.history_module == 'lstm':
-                self.his_encoder = nn.LSTM(input_size = 1, hidden_size = d_history, num_layers = history_module_layers,\
-                            batch_first = True, dropout = dropout, device = device)
-            elif self.history_module == 'transformers':
-                self.his_encoder = TransEncoder(num_types = num_events, d_input = d_history, d_hidden = 4 * d_history, \
-                            n_layers = history_module_layers, n_head = n_head, d_qk = d_history, d_v = d_history, dropout = dropout, \
-                            event_toggle = event_toggle, wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
-            else:
-                raise Exception(f'Unknown history module name {history_module}.')
-            self.hidden_x = nn.Parameter(torch.zeros((1, d_intensity), device = self.device, requires_grad = True))
+        self.hidden_x = nn.Parameter(
+            torch.zeros((self.num_events if self.event_toggle else 1, d_intensity), \
+                        device = self.device, \
+                        requires_grad = True)
+        )
 
-        self.intensity_integral_solver = TransDecoder(num_types = num_events, d_input = d_history, n_head = n_head, d_hidden = 4 * d_history,  
-                                                      d_qk = self.d_qk, d_v = self.d_v, integral_module_layers = integral_module_layers,
+        self.history_encoder = TransHisEncoder(num_events = num_events, d_input = d_history, d_hidden = 4 * d_history, \
+                                            n_layers = history_module_layers, n_head = n_head, d_qk = d_history, \
+                                            d_v = d_history, dropout = dropout, event_toggle = event_toggle, \
+                                            wq_nonneg = wq_nonneg, wk_nonneg = wk_nonneg, wv_nonneg = wv_nonneg, device = device)
+
+        self.intensity_integral_solver = TransTPPDecoder(num_events = num_events, d_input = d_history, \
+                                                      d_hidden = 4 * d_history, d_qk = self.d_qk, d_v = self.d_v, \
                                                       dropout = dropout, event_toggle = event_toggle, device = device)
 
-
-    def forward(self, history_time, history_event, result, mask, mean, var):
+    def forward(self, time_history, events_history, mask_history, mask_next, time_next, mean, var):
         '''
         Args:
-        1. history_time: [batch_size, seq_len, history_length]
+        1. time_history: [batch_size, seq_len]
            history time sequences for history encoder
-        2. history_event:[batch_size, seq_len, history_length]
+        2. event_history:[batch_size, seq_len]
            history event sequences for history encoder (model can decide if it should use it by event_toggle)
-        3. result:       [batch_size, seq_len]
+        3. time_next:    [batch_size, seq_len]
            the value of t-t_l
-        4. mask:         [batch_size, seq_len, history_length]
-           mask matrix to filter out padding events from the original sequences. 0 means should be masked.
-        5. mean:         int
-        6. var:          int
+        4. mask_history: [batch_size, seq_len]
+           mask matrix to filter out padding events from history event sequences. 0 means the corresponding event should be masked.
+        5. mask_next:    [batch_size, seq_len]
+           mask matrix to filter out padding events from calculating the loss of padded sequences. 0 means
+           the corresponding event should be masked.
+        6. mean:         int
+        7. var:          int
            For data normalization.
         '''
         # Input data normalization
-        history_time_norm = (history_time - mean) / var                        # [batch_size, seq_len, history_length]
-        history_time = history_time / var                                      # [batch_size, seq_len, history_length]
-        result = result / var                                                  # [batch_size, seq_len]
+        time_history_normed = (time_history - mean) / var                      # [batch_size, seq_len]
+        time_history = time_history / var                                      # [batch_size, seq_len]
+        time_next = time_next / var                                            # [batch_size, seq_len]
 
-        zero = torch.zeros_like(result, device = self.device, dtype = torch.float32)
+        zero = torch.zeros_like(time_next, device = self.device, dtype = torch.float32)
 
-
-        if self.event_toggle and self.history_module == 'lstm':
-            events_embeddings = self.events(history_event)                     # [batch_size, seq_len, history_length, d_history]
-            history = torch.cat(
-                (events_embeddings, history_time_norm.unsqueeze(dim = -1)), dim = -1
-            )                                                                  # [batch_size, seq_len, history_length, d_history + 1]
-        else:
-            history = history_time_norm                                        # [batch_size, seq_len, history_length, 1]
-        
-        # Reshape hidden output for full connection layers.
-        if self.history_module == 'lstm':
-            output, (_, _) = self.his_encoder(history)                         # [batch_size, seq_len, history_length, d_history]
-        elif self.history_module == 'transformers':
-            output = self.his_encoder(history_event, history_time_norm.unsqueeze(dim = -1), mask.unsqueeze(dim = -1))
-                                                                               # [batch_size, seq_len, history_length, d_history]
+        history_output = self.history_encoder(events_history, time_history_normed, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         
         # Integral shift ported from Attn-CM
-        integral_original, intensity = self.intensity_integral_solver(history = output, history_time = history_time, result = result, mask = mask, mean = mean, var = var)
+        integral_original, intensity \
+            = self.intensity_integral_solver(history = history_output, time_history = time_history,\
+                                             time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_event] * 2
         integral_zero, _ = self.intensity_integral_solver(history = output, history_time = history_time, result = zero, mask = mask, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_event]
