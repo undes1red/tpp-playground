@@ -69,7 +69,7 @@ def expand_model_intensity_and_integral(model, data, opt):
     else:
         raise Exception('This model is incompatible with intensity prober!')
 
-def draw_intensity(model, data, desc, opt):
+def draw_intensity(model, data, desc, batch_idx, opt):
     '''
     Now you should investigate your own model implementations and modify this function.
     Because of the design of training_step() and evaluation_step(), intensity and integral outputs can not be handled automatically.
@@ -84,7 +84,7 @@ def draw_intensity(model, data, desc, opt):
     true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
     
     timestamp = timestamp.cumsum(dim = -1).detach().cpu().numpy()
-    event = event.cpu().detach().cpu().numpy()
+    event = event.detach().cpu().numpy()
     model_intensity = model_intensity.detach().cpu().numpy()                   # [batch_size, seq_len * resolution]
 
     if np.isnan(model_intensity).any():
@@ -138,10 +138,10 @@ def draw_intensity(model, data, desc, opt):
             fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
         if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
             os.makedirs(os.path.join(opt.store_dir, 'intensity'))
-        plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(idx) + '.png'), dpi = 1000)
+        plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
         plt.close(fig = fig)
 
-        logger.info(f'Figure {desc}_{idx} finished drawing.')
+        logger.info(f'Figure {desc}_{idx} in batch {batch_idx} finished drawing.')
 
 
 '''
@@ -173,29 +173,44 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-probability_probe_qualified_models = [
-    'dwg',            # an II-TPP model with \Lambda^*(0) = 0 in mind.
-    'fullynn',        # proposed by Omi et al., the first II-TPP model.
-    'ctlstm',         # proposed by Mei et al., a MTPP model based on LSTM.
-    'thp',            # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
-    'rmtpp',          # proposed by Du et al., might be the first NN-based TPP algorithm.
-    'fullynn_v2',     # ...
-    'multi_fullynn',  # MFullyNN, another multi-mark FullyNN adaptation.
-    'sahp',           # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
+probability_probe_qualified_models = {
+    # The following models do not directly provide the probability distribution.
+    # You should manually find the distribution by its definition: p(m, t|mathcal{H}) = \lambda^*_i(t)\exp(-\int^{t}_{t_l}{\lambda^*(\tau)d\tau})
+    'intensity_and_integral': [
+    'dwg',                # an II-TPP model with \Lambda^*(0) = 0 in mind.
+    'fullynn',            # proposed by Omi et al., the first II-TPP model.
+    'ctlstm',             # proposed by Mei et al., a MTPP model based on LSTM.
+    'thp',                # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
+    'rmtpp',              # proposed by Du et al., might be the first NN-based TPP algorithm.
+    'fullynn_v2',         # ...
+    'multi_fullynn',      # MFullyNN, another multi-mark FullyNN adaptation.
+    'sahp',               # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
+    ],
+    # The following models directly estimate TPP or MTPP's probability distribution.
+    # No intensity function is involved.
+    'probability': [
+    "ifl",                # proposed by Shchur et al., an intensity-free model which directly estimate p(t|\mathcal{H})
+    'fullynn_probability',# Yet another II-TPP model but the output is the general integral of p(m, t|\mathcal{H}) in interval [t, +\infty)
     ]
+}
 
 def expand_model_probability(model, data, opt):
-    if opt.model_name in probability_probe_qualified_models:
+    if opt.model_name in probability_probe_qualified_models['intensity_and_integral']:
         model.eval()
         probed_intensity_integral, probed_intensity, timestamp = \
             model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
         probed_probability = probed_intensity * torch.exp(-probed_intensity_integral)
                                                                                # [batch_size, seq_len * resolution]
         return probed_probability, timestamp
+    elif opt.model_name in probability_probe_qualified_models['probability']:
+        model.eval()
+        probed_probability, timestamp = \
+            model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
+        return probed_probability, timestamp
     else:
         raise Exception('This model is incompatible with probability prober!')
 
-def draw_probability(model, data, desc, opt):
+def draw_probability(model, data, desc, batch_idx, opt):
     '''
     Now you should investigate your own model implementations and modify this function. If your algorithm is listed in 'intensity_available', its
     model_probe() should return model-learned intensity function values and integral values at all timestamp samples, otherwise model_probe() should output
@@ -208,11 +223,10 @@ def draw_probability(model, data, desc, opt):
 
     time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
     aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().numpy()         # [batch_size, seq_len]
-    true_probability = expand_true_probability(time, intensity, opt).detach().cpu().numpy()
-                                                                               # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(time, intensity, opt)           # [batch_size, seq_len * resolution]
 
     timestamp = timestamp.cumsum(dim = -1).detach().cpu().numpy()              # [batch_size, seq_len * resolution]
-    event = event.squeeze().cpu().numpy()
+    event = event.cpu().numpy()
     model_probability = model_probability.detach().cpu().numpy()               # [batch_size, seq_len * resolution]
 
     if np.isnan(model_probability).any():
@@ -266,16 +280,16 @@ def draw_probability(model, data, desc, opt):
             fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
         if not os.path.exists(os.path.join(opt.store_dir, 'probability')):
             os.makedirs(os.path.join(opt.store_dir, 'probability'))
-        plt.savefig(os.path.join(opt.store_dir, 'probability', desc + '_' + str(idx) + '.png'), dpi = 1000)
+        plt.savefig(os.path.join(opt.store_dir, 'probability', desc + '_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
         plt.close(fig = fig)
 
-        logger.info(f'Figure {desc}_{idx} finished drawing.')
+        logger.info(f'Figure {desc}_{idx} in batch {batch_idx} finished drawing.')
 
 
 '''
 Probe various model features.
 '''
-def draw_features(model, data, desc, opt):
+def draw_features(model, data, desc, batch_idx, opt):
     '''
     This function is for model probing. It can be super useful when you need to dig into a model and see
     what really happens.
@@ -326,11 +340,11 @@ def draw_features(model, data, desc, opt):
                 sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = 'pastel', hue = 'Event')
                 fig.set_size_inches(length,height)
 
-                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(idx))):
-                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(idx)))
+                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx))):
+                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx)))
 
-                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(idx), key + '.png'), dpi = 1000)
-                logger.info(f'Debug plot {key} with data index {idx} in dataset {desc} finished drawing.')
+                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx), key + '.png'), dpi = 1000)
+                logger.info(f'Debug plot {key} with data index {idx} for batch {batch_idx} in dataset {desc} finished drawing.')
                 plt.close(fig = fig)
     
     '''
@@ -359,22 +373,22 @@ def draw_features(model, data, desc, opt):
                     for x_, y_ in zip(x, y):
                         ax.text(x_ - 0.15, y_, f'{y_:.2f}', **annotation)
 
-                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(seq_idx))):
-                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(seq_idx)))
+                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx))):
+                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx)))
 
-                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(seq_idx),
+                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx),
                             key + '_' + map_name + '_' + str(plot_idx) + '.png'), dpi = 1000)
                 plt.close(fig = fig)
-                logger.info(f'Debug {key}_{map_name}_{plot_idx} for sequence {seq_idx} in dataset {desc} finished drawing.')
+                logger.info(f'Debug {key}_{map_name}_{plot_idx} for sequence {seq_idx} for batch {batch_idx} in dataset {desc} finished drawing.')
 
 
-def draw(model, data, desc, opt):
+def draw(model, data, desc, idx, opt):
     if opt.plot_type == 'intensity':
-        draw_intensity(model, data, desc, opt)
+        draw_intensity(model, data, desc, idx, opt)
     elif opt.plot_type == 'probability':
-        draw_probability(model, data, desc, opt)
+        draw_probability(model, data, desc, idx, opt)
     elif opt.plot_type == 'debug' or opt.plot_type == 'debug_addition_only':
-        draw_features(model, data, desc, opt)
+        draw_features(model, data, desc, idx, opt)
     else:
         raise Exception('Unknown plot type detected!')
 
@@ -436,13 +450,13 @@ extract_data_from_rawdata = {
 }
 
 def spearman_and_l1(model, data, opt):
-    _, model_intensity, timestamp = expand_model_intensity(model, data, opt)   # [batch_size, seq_len * resolution]
+    model_probability, timestamp = expand_model_probability(model, data, opt)  # [batch_size, seq_len * resolution]
     time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
+    true_probability = expand_true_probability(time, intensity, opt = opt)     # [batch_size, seq_len * resolution]
 
     # torch.tensor to numpy.array
-    model_intensity = model_intensity.squeeze().detach().cpu().numpy()
-    if np.isnan(model_intensity).any():
+    model_probability = model_probability.squeeze().detach().cpu().numpy()
+    if np.isnan(model_probability).any():
         '''
         Model intensity prediction has failed!
         '''
@@ -453,16 +467,16 @@ def spearman_and_l1(model, data, opt):
     event = event.squeeze().cpu().numpy()
 
     rho, r, L1 = 0, 0, 0
-    if true_intensity is not None:
-        true_intensity = true_intensity.squeeze().detach().cpu().numpy()
+    if true_probability is not None:
+        true_probability = true_probability.squeeze().detach().cpu().numpy()
         # Calculate pearson, spearman corrilation and L^1 distance here.
         # Then, print these values directly on the plots.
         
         # Spearman correlation
-        rho = spearmanr(a = true_intensity, b = model_intensity)[0]
+        rho = spearmanr(a = true_probability, b = model_probability)[0]
         # Pearson correlation
-        r = np.corrcoef(x = true_intensity, y = model_intensity)[0, 1]
+        r = np.corrcoef(x = true_probability, y = model_probability)[0, 1]
         # L1 distance
-        L1 = L1_distance(x = true_intensity, y = model_intensity, timestamp = timestamp, resolution = opt.resolution)
+        L1 = L1_distance(x = true_probability, y = model_probability, timestamp = timestamp, resolution = opt.resolution)
     
     return rho, r, L1

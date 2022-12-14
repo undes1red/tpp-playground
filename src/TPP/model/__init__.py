@@ -27,6 +27,7 @@ modelpath = {
     'rmtpp': ['rmtpp.model', 'RMTPP'],
     'thp': ['thp.model', 'THP'],
     'sahp': ['sahp.model', 'SAHP'],
+    'fullynn_probability': ['fullynn_probability.model', 'FullyNNModel'],
     
     # Temporarily abandoned models
     'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],

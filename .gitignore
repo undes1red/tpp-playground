@@ -110,7 +110,7 @@ ENV/
 
 # The data, config files, and outputs
 data/
-output/
+output*/
 raw_input/
 output/
 config/

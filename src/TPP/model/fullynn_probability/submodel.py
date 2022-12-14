@@ -43,14 +43,13 @@ class FullyNN(nn.Module):
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, split_comp_graph, 
-                 zero_shift, device):
+                 device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.history_module = history_module.lower()
         self.split_comp_graph = split_comp_graph
-        self.zero_shift = zero_shift
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
@@ -95,7 +94,9 @@ class FullyNN(nn.Module):
 
         self.agg = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.activate = TA[nonlinear]()
+
         self.non_neg = nn.Softplus()
+        self.non_neg_integral = nn.Sigmoid()
 
     def forward(self, events_history, time_history, time_next, mean, var, mask):
         '''
@@ -110,7 +111,8 @@ class FullyNN(nn.Module):
         # mean = 0
 
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
+        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
         if self.event_toggle:
             events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
@@ -131,42 +133,36 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len, num_events, d_history]
         
         time = rearrange(time_next, '... -> ... 1') * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_history]
+                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        time_zero = rearrange(time_next_zero, '... -> ... 1') * self.non_neg(self.hidden_x)
+                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
 
         hidden_history = self.hidden_p(history_output)                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        
         time = self.hidden_time(time)                                          # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        time_zero = self.hidden_time(time_zero)                                # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        
         output = self.activate(time + hidden_history)                          # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        output_zero = self.activate(time_zero + hidden_history)                # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+
 
         for layer in self.mlp:
             output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-
-        integral = self.non_neg(self.agg(output))                              # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
-
-        if self.zero_shift:
-            zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
-                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-            if self.event_toggle:
-                zero_emb = rearrange(zero, '... -> ... 1') * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
-            else:
-                zero_emb = zero * self.non_neg(self.hidden_x)                  # [batch_size, seq_len, d_intensity]
-            zero_emb = self.hidden_time(zero_emb)                              # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            zero_output = self.activate(zero_emb + hidden_history)             # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            for layer in self.mlp:
-                zero_output = layer(zero_output)                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-                zero_output = self.activate(zero_output)                       # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             
-            zero_integral = self.non_neg(self.agg(zero_output))                # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
+            output_zero = layer(output_zero)                                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+            output_zero = self.activate(output_zero)                           # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
 
-        if self.zero_shift:
-            integral = integral - zero_integral.detach()                       # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
+
+        integral = self.non_neg_integral(-self.agg(output))                    # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
+        integral_zero = self.non_neg_integral(-self.agg(output_zero))          # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
 
         integral = rearrange(integral, '... 1 -> ...')                         # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
+        integral_zero = reduce(integral_zero, '... ne 1 -> ... ()', 'sum')     # [batch_size, seq_len, 1]
 
-        return integral
+        return integral / integral_zero
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True):
+    def probability(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -223,38 +219,38 @@ class FullyNN(nn.Module):
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
 
-        expand_integral = self.non_neg(self.agg(output))                       # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
+        expand_integral = self.non_neg_integral(-self.agg(output))             # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
+        
+        if self.event_toggle:
+            integral_from_zero_to_inf = expand_integral[:, :, 0, :, :].detach()# [batch_size, seq_len, num_events, 1]
+            integral_sum = reduce(integral_from_zero_to_inf, 'b s ne 1 -> b s ()', 'sum')
+                                                                               # [batch_size, seq_len, 1]
+            integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1 1')       # [batch_size, seq_len, 1, 1, 1]
+            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, num_events, 1]
+        else:
+            integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, 1]
+            integral_sum = rearrange(integral_from_zero_to_inf, 'b s 1 -> b s 1 1', 'sum')
+                                                                               # [batch_size, seq_len, 1, 1]
+            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, 1]
 
-        if self.zero_shift:
-            if self.event_toggle:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, resolution, num_events, 1]
-            else:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :].detach(), 'b s 1 -> b s 1 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, resolution, 1]
-
-        expand_intensity = torch.autograd.grad(
+        expand_probability = - torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
         )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
         time_expand.requires_grad = False
 
-        expand_integral = expand_integral.detach()                             # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
-        expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        expand_probability = expand_probability.detach()                       # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
 
         if self.event_toggle:
-            expand_integral = rearrange(expand_integral, 'b s r ne 1 -> b (s r) ne')
-                                                                               # [batch_size, seq_len * resolution, num_events]
-            expand_intensity = rearrange(expand_intensity, 'b s r ne -> b (s r) ne')
+            expand_probability = rearrange(expand_probability, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_events]
 
             if sum:
-                expand_integral = expand_integral.sum(dim = -1)                # [batch_size, seq_len * resolution]
-                expand_intensity = expand_intensity.sum(dim = -1)              # [batch_size, seq_len * resolution]
+                expand_probability = expand_probability.sum(dim = -1)          # [batch_size, seq_len * resolution]
         else:
-            expand_integral = rearrange(expand_integral, 'b s r -> b (s r)')   # [batch_size, seq_len * resolution]
-            expand_intensity = rearrange(expand_intensity, 'b s r -> b (s r)') # [batch_size, seq_len * resolution]
+            expand_probability = rearrange(expand_probability, 'b s r -> b (s r)')
+                                                                               # [batch_size, seq_len * resolution]
 
         '''
         Restore the original timestamp
@@ -266,7 +262,7 @@ class FullyNN(nn.Module):
             'b s *')                                                           # [batch_size, seq_len, resolution]
         timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
 
-        return expand_integral, expand_intensity, timestamp
+        return expand_probability, timestamp
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
         '''
@@ -332,10 +328,10 @@ class FullyNN(nn.Module):
             output_storage.append(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] * (self.mlp_size + 1) if we need events else [batch_size, seq_len, resolution, d_intensity] * (self.mlp_size + 1)
         
         accumulative_layer_output = rearrange(self.agg(output), '... 1 -> ...')# [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-        expand_integral = self.non_neg(accumulative_layer_output)              # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        expand_integral = self.non_neg_integral(-accumulative_layer_output)    # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
 
         # Gradient 1: Integral -> time
-        events_gradient = torch.autograd.grad(
+        events_gradient = - torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
@@ -371,25 +367,26 @@ class FullyNN(nn.Module):
         timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
 
         if self.event_toggle:
-            intensity_for_each_event = events_gradient.chunk(self.num_events, dim = -1)
+            probability_for_each_event = events_gradient.chunk(self.num_events, dim = -1)
                                                                                # [batch_size, seq_len, resolution] * num_events
-            integral_for_each_event = expand_integral.chunk(self.num_events, dim = -1)
+            probability_integral_for_each_event = expand_integral.chunk(self.num_events, dim = -1)
                                                                                # [batch_size, seq_len, resolution] * num_events
 
-            events_intensity = {}
-            events_integral = {}
-            for idx, (intensity, integral) in enumerate(zip(intensity_for_each_event, integral_for_each_event)):
-                events_intensity[f'event_intensity_{idx}'] = rearrange(intensity, 'b s r 1 -> b (s r)')
+            events_probability = {}
+            events_probability_integral = {}
+            for idx, (probability, probability_integral) in enumerate(zip(probability_for_each_event, probability_integral_for_each_event)):
+                events_probability[f'event_probability_{idx}'] = rearrange(probability, 'b s r 1 -> b (s r)')
                                                                                # [batch_size, seq_len * resolution]
-                events_integral[f'event_integral_{idx}'] = rearrange(integral, 'b s r 1 -> b (s r)')
+                events_probability_integral[f'event_probability_integral_{idx}'] = rearrange(probability_integral, 'b s r 1 -> b (s r)')
+                                                                               # [batch_size, seq_len * resolution]
 
 
             # additional plot, measure the spearman correlation across available events.
-            expand_intensity = rearrange(events_gradient.cpu(), 'b s r ne -> b (s r) ne')
+            expand_probability = rearrange(events_gradient.cpu(), 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_event]
             
             additional_plot = []
-            for idx, (expand_intensity_per_seq, mask_per_seq, time_next_per_seq) in enumerate(zip(expand_intensity, mask, time_next)):
+            for idx, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in enumerate(zip(expand_probability, mask, time_next)):
                 additional_plot_per_seq = {
                     'heatmap': []
                 }
@@ -397,14 +394,14 @@ class FullyNN(nn.Module):
                 seq_len = mask_per_seq.sum()
                 heatmap_data = {}
                 # rho: spearman coefficient
-                heatmap_data['spearman'] = spearmanr(expand_intensity_per_seq[:seq_len * resolution])[0]
+                heatmap_data['spearman'] = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
                 if self.num_events == 2:
                     heatmap_data['spearman'] = np.array([[1, heatmap_data['spearman']], [heatmap_data['spearman'], 1]])
 
                 # r: pearson coefficient
-                heatmap_data['pearson'] = np.corrcoef(expand_intensity_per_seq[:seq_len * resolution], rowvar = False)
+                heatmap_data['pearson'] = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                heatmap_data['L1'] = L1_distance(expand_intensity_per_seq[:seq_len * resolution], 
+                heatmap_data['L1'] = L1_distance(expand_probability_per_seq[:seq_len * resolution], 
                                                  resolution = resolution, num_events = self.num_events,
                                                  time_next = time_next_per_seq[:seq_len])
 
@@ -454,8 +451,8 @@ class FullyNN(nn.Module):
             result = {
                 **{'accumulated_gradient': accumulated_gradient},\
                 **output_storage_gradient,\
-                **events_intensity,\
-                **events_integral,\
+                **events_probability,\
+                **events_probability_integral,\
                 **{"final_output": accumulated_integral},
                 }
         else:

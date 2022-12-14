@@ -73,7 +73,7 @@ if __name__ == '__main__':
     model_setting = model_raw['settings']
 
     # we don't need large batch for figure evaluation, so we minimize the batch size to 1.
-    opt.batch_size = 10
+    opt.batch_size = 1
 
     # Read in original dataset and create corresponding dataset loader.
     torch.manual_seed(model_setting.seed)
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     logger.info('Model restore completed.')
     logger.info(print_args(opt))
 
-    graph = True
+    graph = False
 
     if not graph:
         for key, (value, value_size) in data_dict.items():
@@ -159,15 +159,21 @@ if __name__ == '__main__':
     if graph:
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if opt.train:
-            train_data = data_dict['train'][0][0]
-            draw(model, train_data, 'train', opt = opt)
+            for idx, train_data in enumerate(data_dict['train'][0]):
+                draw(model, train_data, 'train', idx = idx, opt = opt)
+                if idx >= opt.figure_count - 1:
+                    break
 
         if opt.evaluation:
-            evaluation_data = data_dict['evaluation'][0][0]
-            draw(model, evaluation_data, 'evaluation', opt = opt)
+            for idx, evaluation_data in enumerate(data_dict['evaluation'][0]):
+                draw(model, evaluation_data, 'evaluation', idx = idx, opt = opt)
+                if idx >= opt.figure_count - 1:
+                    break
 
         if opt.test:
-            test_data = data_dict['test'][0][0]
-            draw(model, test_data, 'test', opt = opt)
+            for idx, test_data in enumerate(data_dict['test'][0]):
+                draw(model, test_data, 'test', idx = idx, opt = opt)
+                if idx >= opt.figure_count - 1:
+                    break
 
     logger.info('Task finished')

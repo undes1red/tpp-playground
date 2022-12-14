@@ -117,11 +117,14 @@ def softplus_ext(input, beta, threshold = 20):
         return F.softplus(input = input, beta = beta, threshold = threshold)
 
     assert input.shape[-1] == beta.shape[-1]
-    threshold_mask = (input * beta > threshold).int()
 
     output_part_1 = (1 / beta) * torch.log(1 + torch.exp(input * beta))
-    output_part_2 = input * threshold_mask
+    output_part_2 = input
 
-    output = output_part_1 * (1 - threshold_mask) + output_part_2
+    threshold_mask = (input * beta > threshold).int()
+    infinity_mask = torch.isinf(output_part_1).int()
+    final_mask = (threshold_mask + infinity_mask).gt(0)
+
+    output = output_part_1.masked_fill(final_mask, 0) + output_part_2.masked_fill(~final_mask, 0)
 
     return output
