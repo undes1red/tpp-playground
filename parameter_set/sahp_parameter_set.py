@@ -11,8 +11,8 @@ stackoverflow_training_hyperparameter_list = [
     "--n_report_steps", "50", \
     "--b", "64", \
     "--n_warmup_steps", "1200", \
-    "--model_name", "thp", \
-    "--model_config", ["stackoverflow/thp.json"],
+    "--model_name", "sahp", \
+    "--model_config", ["stackoverflow/sahp.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -32,8 +32,8 @@ retweet_training_hyperparameter_list = [
     "--n_report_steps", "50", \
     "--b", "128", \
     "--n_warmup_steps", "1200", \
-    "--model_name", "thp", \
-    "--model_config", ["retweet/thp.json"],
+    "--model_name", "sahp", \
+    "--model_config", ["retweet/sahp.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -48,13 +48,13 @@ mimic_training_hyperparameter_list = [
     "--dataloader_name", "syn", \
     "--dataloader_config", "mimic/shift.json",
     "--dataset_name", ["mimic"], \
-    "--n_training_steps", "5000", \
+    "--n_training_steps", "10000", \
     "--n_evaluation_steps", "100", \
     "--n_report_steps", "100", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "thp", \
-    "--model_config", ["mimic/thp.json"],
+    "--model_name", "sahp", \
+    "--model_config", ["mimic/sahp.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -74,8 +74,8 @@ bookorder_training_hyperparameter_list = [
     "--n_report_steps", "100", \
     "--b", "8", \
     "--n_warmup_steps", "2000", \
-    "--model_name", "thp", \
-    "--model_config", ["bookorder/thp.json"],
+    "--model_name", "sahp", \
+    "--model_config", ["bookorder/sahp.json"],
     "--lr", "0.001", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -94,8 +94,8 @@ syn_training_hyperparameter_list = [
     "--n_report_steps", "100", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "thp", \
-    "--model_config", ["syn/thp.json"],
+    "--model_name", "sahp", \
+    "--model_config", ["syn/sahp.json"],
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -107,8 +107,8 @@ syn_training_hyperparameter_list = [
 retweet_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "thp", \
-    "--model_config", ["retweet/thp.json"], \
+    "--model_name", "sahp", \
+    "--model_config", ["retweet/sahp.json"], \
     "--lr", "0.001", \
     "--batch_size", "128", \
     "--n_training_steps", "6000", \
@@ -128,8 +128,8 @@ retweet_plot_hyperparameter_list = [
 stackoverflow_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "thp", \
-    "--model_config", ["stackoverflow/thp.json"], \
+    "--model_name", "sahp", \
+    "--model_config", ["stackoverflow/sahp.json"], \
     # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
     "--lr", "0.001", \
     "--batch_size", "64", \
@@ -150,12 +150,12 @@ stackoverflow_plot_hyperparameter_list = [
 mimic_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "thp", \
-    "--model_config", ["mimic/thp.json"], \
+    "--model_name", "sahp", \
+    "--model_config", ["mimic/sahp.json"], \
     # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
     "--lr", "0.001", \
     "--batch_size", "128", \
-    "--n_training_steps", "5000", \
+    "--n_training_steps", "10000", \
     "--dataset_name", "mimic", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
@@ -173,8 +173,8 @@ mimic_plot_hyperparameter_list = [
 bookorder_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "thp", \
-    "--model_config", ["bookorder/thp.json"], \
+    "--model_name", "sahp", \
+    "--model_config", ["bookorder/sahp.json"], \
     # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
     "--lr", "0.001", \
     "--batch_size", "8", \
@@ -195,8 +195,8 @@ bookorder_plot_hyperparameter_list = [
 syn_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
-    "--model_name", "thp", \
-    "--model_config", ["syn/thp.json"], \
+    "--model_name", "sahp", \
+    "--model_config", ["syn/sahp.json"], \
     "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \

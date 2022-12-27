@@ -8,7 +8,6 @@ from src.TPP.dataloader import prepare_dataloaders
 from src.TPP.tpp_plotter import draw, spearman_and_l1
 import os, argparse, torch
 from tqdm import tqdm
-from itertools import tee
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -104,6 +103,7 @@ if __name__ == '__main__':
     logger.info(print_args(opt))
 
     graph = False
+    MAE_E = True
 
     if not graph:
         for key, (value, value_size) in data_dict.items():
@@ -114,16 +114,30 @@ if __name__ == '__main__':
             if opt.synthetic_evaluation:
                 rho, r, L1 = 0, 0, 0
             else:
-                f1 = 0
-                mae_per_event_pred = 0
-                mae_per_event_real = 0
+                if MAE_E:
+                    f1 = 0
+                    mae_per_event_pred = 0
+                    mae_per_event_real = 0
+                    probability_integral_sum = 0
+                    all_event_pred_mean = 0
+                    all_event_pred_var = 0
+                else:
+                    mae = 0
 
             for data in tqdm(value, desc = f'{key}', leave = False, total = value_size):
-                input_time = data[0][0]
-                input_events = data[0][1]
-                mask = data[0][-2]
-                mean = data[1][0]
-                var = data[1][1]
+                if opt.dataloader_name == 'syn':
+                    input_time = data[0][0]
+                    input_events = data[0][1]
+                    mask = data[0][-2]
+                    mean = data[1][0]
+                    var = data[1][1]
+                elif opt.dataloader_name == 'ifl':
+                    input_events, input_time, mask = data[0]
+                    if data[2] == None:
+                        mean, var = 0, 1
+                    else:
+                        mean, var = data[2]
+
                 # filter out the event sequences with single event.
                 if input_time.shape[-1] == 1:
                     continue
@@ -134,12 +148,53 @@ if __name__ == '__main__':
                     r += r_
                     L1 += L1_
                 else:
-                    f1_, _, _, (mae_per_event_predict, mae_per_event_avg), for_debug = \
-                        model.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
-                                                            mask = mask, mean = mean, var = var, fast = True)
-                    f1 += f1_
-                    mae_per_event_pred += mae_per_event_predict
-                    mae_per_event_real += mae_per_event_avg
+                    if MAE_E:
+                        # MAE-E
+                        f1_, _, probability_integral_sum_, all_event_pred_, \
+                            (mae_per_event_predict_, mae_per_event_avg_), \
+                            (mae_perdict_each_event, mae_event_next_each_event) = \
+                            model.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
+                                                                mask = mask, mean = mean, var = var, fast = True)
+                        probability_integral_sum_ = probability_integral_sum_.detach().mean(dim = -1)
+
+                        # For RMTPP
+                        if opt.model_name == 'rmtpp':
+                            f1 += f1_
+                            mae_per_event_pred += mae_per_event_predict_
+                            mae_per_event_real += mae_per_event_avg_
+                            probability_integral_sum += probability_integral_sum_
+                        else:
+                        # For MTPP models except RMTPP
+                            results = zip(f1_, mae_per_event_predict_, mae_per_event_avg_, probability_integral_sum_, all_event_pred_)
+                            for f1_per_seq, mae_per_event_predict_per_seq, mae_per_event_avg_per_seq, probability_integral_sum_per_seq, all_event_pred_per_seq in results:
+                                f1 += f1_per_seq
+                                mae_per_event_pred += mae_per_event_predict_per_seq
+                                mae_per_event_real += mae_per_event_avg_per_seq
+                                probability_integral_sum += probability_integral_sum_per_seq
+                                all_event_pred_mean += all_event_pred_per_seq.mean()
+                                all_event_pred_var += all_event_pred_per_seq.var()
+
+                        
+                            f1 /= len(f1_)
+                            mae_per_event_pred /= len(mae_per_event_predict_)
+                            mae_per_event_real /= len(mae_per_event_avg_)
+                            probability_integral_sum /= len(mae_per_event_avg_)
+                            all_event_pred_mean /= len(mae_per_event_avg_)
+                            all_event_pred_var /= len(mae_per_event_avg_)
+                    else:
+                        # For RMTPP
+                        if opt.model_name == 'rmtpp':
+                            events_history, events_next = model.divide_history_and_next(input_events, unsqueeze = False)
+                            time_history, time_next = model.divide_history_and_next(input_time, unsqueeze = True)
+                            mask_history, mask_next = model.divide_history_and_next(mask, unsqueeze = False)
+                        else:
+                        # For MTPP models except RMTPP
+                            events_history, events_next = model.divide_history_and_next(input_events)
+                            time_history, time_next = model.divide_history_and_next(input_time)
+                            mask_history, mask_next = model.divide_history_and_next(mask)
+                        
+                        mae_ = model.mean_absolute_error_static(events_history, time_history, time_next, mask_history, mask_next, mean, var)
+                        mae += mae_
             
             if opt.synthetic_evaluation:
                 rho = rho / value_size
@@ -147,11 +202,18 @@ if __name__ == '__main__':
                 L1 = L1 / value_size
                 report = f'For dataset {key}, the average pearson coefficient is {rho}. The average spearman coefficient is {r}, and the mean of L1 distance is {L1}.'
             else:
-                f1 = f1 / value_size
-                mae_per_event_pred = mae_per_event_pred / value_size
-                mae_per_event_real = mae_per_event_real / value_size
-                report = f'For dataset {key}, the average f1 is {f1}. The average of mae_per_event against predictions is {mae_per_event_pred}, while the mean of mae_per_event against real events is {mae_per_event_real}.'
-        
+                if MAE_E:
+                    f1 = f1 / value_size
+                    mae_per_event_pred = mae_per_event_pred / value_size
+                    mae_per_event_real = mae_per_event_real / value_size
+                    probability_integral_sum = probability_integral_sum / value_size
+                    all_event_pred_mean = all_event_pred_mean / value_size
+                    all_event_pred_var = all_event_pred_var / value_size
+                    report = f'For dataset {key}, the average f1 is {f1}. The average of mae_per_event against predictions is {mae_per_event_pred}, while the mean of mae_per_event against real events is {mae_per_event_real}, the sum of p(m|H) is {probability_integral_sum}, the mean of all predicted times is {all_event_pred_mean}, and the variance is {all_event_pred_var}.'
+                else:
+                    mae = mae / value_size
+                    report = f'For dataset {key}, the average mae is {mae}.'
+
             print(report)
             with open(os.path.join(opt.store_dir, f'result_{key}.log'), 'w') as f:
                 f.write(report)

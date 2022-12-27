@@ -90,7 +90,7 @@ class RMTPPModule(nn.Module):
                 mark = None
             return intensity, integral, mark, history_part
         else:
-            mark = intensity_events / intensity_events.sum(dim = -1, keepdim = True)
+            mark = intensity_events / (intensity_events.sum(dim = -1, keepdim = True) + 1e-6)
                                                                                # [batch_size, seq_len, num_events]
             return intensity_events, integral_events, mark, history_part
         
@@ -99,49 +99,21 @@ class RMTPPModule(nn.Module):
                                                                                # [batch_size, seq_len, num_events]
         # expectation = expectation * var                                      # [batch_size, seq_len, num_events]
 
-    
-    def probability(self, events_history, time_history, time_next, mean, var):
-        '''
-        Return the probability distribution of RMTPP
-        '''
-
-        time_history = (time_history) / var
-        time_next = (time_next) / var
-
-        time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
-        if self.num_events > 1:
-            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, input_size]
-            input_vec = time_vec + events_vec
-        else:
-            input_vec = time_vec                                               # [batch_size, seq_len, input_size]
-
-        output, (_, _) = self.rnn(input_vec)                                   # [batch_size, seq_len, hidden_size]
-        history_output = self.project(output)                                  # [batch_size, seq_len, output_size]
-        history_output = torch.relu(history_output)                            # [batch_size, seq_len, output_size]
-
-        history_part = self.intensity(history_output)                          # [batch_size, seq_len, num_events]
-
-        if self.limited_history_norm:
-            history_part = torch.tanh(history_part)                            # [batch_size, seq_len, num_events]
-
-        history_part = torch.exp(history_part)                                 # [batch_size, seq_len, num_events]
-
-        time_scalar = self.time_scalar(history_output)                         # [batch_size, seq_len, num_events]
-        constant = history_part * torch.exp(self.base_intensity(history_output))
-                                                                               # [batch_size, seq_len, num_events]
-        
-        factor = 1 - torch.exp(time_scalar * time_next)                        # [batch_size, seq_len, num_events]
-        factor = constant * factor / time_scalar                               # [batch_size, seq_len, num_events]
-        probability = 1 - torch.exp(factor)                                    # [batch_size, seq_len, num_events]
-
-        return probability
-
     def intensity_integral(self, events_history, time_history, time_next, resolution, mean, var, sum = True):
         time_history = time_history / var
-        time_next = time_next / var
+
+        if len(time_next.shape) == 3:
+            '''
+            Normal Mode
+            '''
+            async_time = False
+        else:
+            async_time = True
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+
         original_time_expand = time_next * time_multiplier                     # [batch_size, seq_len, resolution]
+        original_time_expand_normed = original_time_expand / var               # [batch_size, seq_len, resolution]
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:
@@ -160,18 +132,23 @@ class RMTPPModule(nn.Module):
 
         history_part = torch.exp(history_part)                                 # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
 
-        time_scalar = self.time_scalar(history_output).unsqueeze(dim = -1)     # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1, 1]
-
-        # time_scalar can not be zero.
-        time_scalar_sign = (time_scalar >= 0).int() - (time_scalar < 0).int()  # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
-        shifted_time_scalar_abs_value = torch.abs(time_scalar).clamp(min = 1e-4)
-                                                                               # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
-        time_scalar = shifted_time_scalar_abs_value * time_scalar_sign         # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
-
         constant = (history_part * torch.exp(self.base_intensity(history_output))).unsqueeze(-1)
                                                                                # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1, 1]
 
-        expanded_time = original_time_expand.unsqueeze(-2)                     # [batch_size, seq_len, 1, resolution]
+        time_scalar = self.time_scalar(history_output).unsqueeze(dim = -1)     # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1, 1]
+
+        # time_scalar can not be zero.
+        time_scalar_sign = (time_scalar >= 0).int() - (time_scalar < 0).int()  # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1]
+        shifted_time_scalar_abs_value = torch.abs(time_scalar).clamp(min = 1e-4)
+                                                                               # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1]
+        time_scalar = shifted_time_scalar_abs_value * time_scalar_sign         # [batch_size, seq_len, num_events, 1] if self.original_mark_generation == False else [batch_size, seq_len, 1]
+
+        if async_time:
+            sum = False
+            expanded_time = original_time_expand_normed                        # [batch_size, seq_len, num_events, resolution]
+        else:
+            expanded_time = original_time_expand_normed.unsqueeze(-2)          # [batch_size, seq_len, 1, resolution]
+        
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, num_events, resolution] if self.original_mark_generation == False else [batch_size, seq_len, 1, resolution]
         integral_events = (intensity_events - constant) / time_scalar          # [batch_size, seq_len, num_events, resolution] if self.original_mark_generation == False else [batch_size, seq_len, 1, resolution]
 
@@ -186,10 +163,17 @@ class RMTPPModule(nn.Module):
             integral = rearrange(integral_events, 'b s ne r -> b (s r) ne')    # [batch_size, seq_len * resolution, num_events]
 
         # aggregated timestamp
-        batch_size, seq_len, _, = original_time_expand.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
-        timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
+        if async_time:
+            batch_size, seq_len, _, _ = original_time_expand.shape
+            timestamp = torch.cat(
+                (torch.zeros((batch_size, seq_len, self.num_events, 1), device = self.device), original_time_expand.diff(dim = -1)),
+                dim = -1)                                                      # [batch_size, seq_len, resolution]
+            timestamp = rearrange(timestamp, 'b s ne r -> b (s r) ne')         # [batch_size, seq_len * resolution]
+        else:
+            batch_size, seq_len, _ = original_time_expand.shape
+            timestamp = torch.cat(
+                (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
+                dim = -1)                                                      # [batch_size, seq_len, resolution]
+            timestamp = rearrange(timestamp, 'b s r -> b (s r)')               # [batch_size, seq_len * resolution]
 
         return intensity, integral, timestamp

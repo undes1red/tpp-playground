@@ -10,10 +10,25 @@ from .fullynn_parameter_set import plot_hyperparameter as fps_p
 from .thp_parameter_set import training_hyperparameter as thp_t
 from .thp_parameter_set import plot_hyperparameter as thp_p
 
+# Recurrent Marked Hawkes Process(RMTPP) parameter set
+from .rmtpp_parameter_set import training_hyperparameter as rmtpp_t
+from .rmtpp_parameter_set import plot_hyperparameter as rmtpp_p
+
+# Self-attentive Hawkes Process(SAHP) parameter set
+from .sahp_parameter_set import training_hyperparameter as sahp_t
+from .sahp_parameter_set import plot_hyperparameter as sahp_p
+
+# fullynn_probability(IBIF) parameter set
+from .fullynn_p_parameter_set import training_hyperparameter as fpps_t
+from .fullynn_p_parameter_set import plot_hyperparameter as fpps_p
+
 plot_parameter_set = {
     'multi_fullynn': {'train': mfps_t, 'plot': mfps_p},
     'fullynn': {'train': fps_t, 'plot': fps_p},
-    'thp': {'train': thp_t, 'plot': thp_p}
+    'thp': {'train': thp_t, 'plot': thp_p},
+    'rmtpp': {'train': rmtpp_t, 'plot': rmtpp_p},
+    'sahp': {'train': sahp_t, 'plot': sahp_p},
+    'fullynn_p': {'train': fpps_t, 'plot': fpps_p},
 }
 
 def parameter_retriver(opt):

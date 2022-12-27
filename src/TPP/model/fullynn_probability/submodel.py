@@ -229,7 +229,7 @@ class FullyNN(nn.Module):
             expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, num_events, 1]
         else:
             integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, 1]
-            integral_sum = rearrange(integral_from_zero_to_inf, 'b s 1 -> b s 1 1', 'sum')
+            integral_sum = rearrange(integral_from_zero_to_inf, 'b s 1 -> b s 1 1')
                                                                                # [batch_size, seq_len, 1, 1]
             expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, 1]
 
@@ -283,7 +283,7 @@ class FullyNN(nn.Module):
 
         time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
         if self.event_toggle:
-            time_expand = repeat(time_expand, 'b s r -> b s r ne', ne = self.num_events)
+            time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         if self.event_toggle:
@@ -312,11 +312,8 @@ class FullyNN(nn.Module):
         time_expand.requires_grad = True      
         time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
 
-        if self.event_toggle:
-            emb_time_expand = rearrange(time_expand_norm, '... -> ... 1') * self.non_neg(self.hidden_x)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            emb_time_expand = time_expand_norm * self.non_neg(self.hidden_x)   # [batch_size, seq_len, resolution, d_intensity]
+        emb_time_expand = rearrange(time_expand_norm, '... -> ... 1') * self.non_neg(self.hidden_x)
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] is we need events else [batch_size, seq_len, resolution, d_intensity]
 
         emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
         output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
@@ -329,6 +326,17 @@ class FullyNN(nn.Module):
         
         accumulative_layer_output = rearrange(self.agg(output), '... 1 -> ...')# [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
         expand_integral = self.non_neg_integral(-accumulative_layer_output)    # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+
+        if self.event_toggle:
+            integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, num_events]
+            integral_sum = reduce(integral_from_zero_to_inf, 'b s ne -> b s ()', 'sum')
+                                                                               # [batch_size, seq_len, 1]
+            integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1')         # [batch_size, seq_len, 1, 1]
+            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, num_events]
+        else:
+            integral_from_zero_to_inf = expand_integral[:, :, 0].detach()      # [batch_size, seq_len]
+            integral_sum = rearrange(integral_from_zero_to_inf, 'b s -> b s 1')# [batch_size, seq_len, 1, 1]
+            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution]
 
         # Gradient 1: Integral -> time
         events_gradient = - torch.autograd.grad(

@@ -218,7 +218,7 @@ class TPPTrainer:
                 torch.save(checkpoint, model_name)
             elif self.opt.save_mode == 'best':
                 model_name = os.path.join(self.opt.save_model, 'output_' + self.folder_suffix, 'checkpoint.chkpt')
-                if self.metric_checker.compare(self.model_class.choose_metric(eva_report, test_report)) and current_step > self.opt.n_warmup_steps:
+                if current_step > self.opt.n_warmup_steps and self.metric_checker.compare(self.model_class.choose_metric(eva_report, test_report)):
                     torch.save(checkpoint, model_name)
                     logger.info('  The checkpoint file has been updated.')
                     best_model_dict = dict(zip(

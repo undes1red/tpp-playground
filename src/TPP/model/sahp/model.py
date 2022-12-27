@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from einops import rearrange, repeat, reduce
+from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 import numpy as np
 import pandas as pd
@@ -99,14 +99,28 @@ class SAHP(BasicModule):
 
     def state_decay(self, mu, eta, gamma, duration_t):
         '''
-        mu, eta, gamma: shape: [batch_size, seq_len, d_hidden, (resolution)]
+        mu, eta, gamma: shape: [batch_size, seq_len, (resolution), d_hidden]
         dutation_t:     shape: [batch_size, seq_len, (resolution)]
         '''
         duration_t = rearrange(duration_t, '... -> ... 1')                     # [batch_size, seq_len, (resolution), 1]
         cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [batch_size, seq_len, (resolution), d_input]
         return cell_t
+    
+    def mean_absolute_error_static(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+        history = self.history_encoder(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
-    def mean_absolute_error(self, eta, mu, gamma, time_history, time_next, mask):
+        mae_mean_of_all_event = \
+                    self.mean_absolute_error(eta = eta, mu = mu, gamma = gamma,
+                                             time_history = time_history, time_next = time_next, 
+                                             mask = mask_next)
+        
+        return mae_mean_of_all_event
+
+    def mean_absolute_error(self, eta, mu, gamma, time_history, time_next, mask, sum = True):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -131,9 +145,13 @@ class SAHP(BasicModule):
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
         gap = (tau_pred - time_next) * mask
-        mae_mean_of_all_events = torch.sum(torch.abs(gap)) / mask.sum()
 
-        return mae_mean_of_all_events.item()
+        if sum:
+            gap_mean = torch.sum(torch.abs(gap)) / mask.sum()
+            return gap_mean.item()
+        else:
+            return torch.abs(gap)
+
 
     def evaluate(self, eta, mu, gamma, time, mask):
         '''
@@ -251,21 +269,29 @@ class SAHP(BasicModule):
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time_inf = rearrange(time_inf, '... -> ... 1') * time_multiplier
                                                                                # [batch_size, seq_len, resolution]
-        expanded_time_gap_inf = reduce(torch.diff(expanded_time_inf, dim = -1), 'b s r -> b s ()', 'mean')
-                                                                               # [batch_size, seq_len, 1]
+        zero_gap = torch.zeros_like(expanded_time_inf[:, :, 0], device = self.device)
+                                                                               # [batch_size, seq_len]
+        expanded_time_gap_inf = torch.diff(expanded_time_inf, dim = -1)        # [batch_size, seq_len, resolution - 1]
+        expanded_time_gap_inf, expanded_time_gap_inf_ps = pack(
+            (zero_gap, expanded_time_gap_inf), 'b s *'
+        )                                                                      # [batch_size, seq_len, resolution]
+
         hidden_state_inf = self.state_decay(mu, eta, gamma, expanded_time_inf) # [batch_size, seq_len, resolution, d_input]
         expanded_intensity_all_events_inf = self.intensity_layer(hidden_state_inf)
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         expanded_integral_all_events_inf = expanded_intensity_all_events_inf * rearrange(expanded_time_gap_inf, '... -> ... 1')
                                                                                # [batch_size, seq_len, resolution, num_events]
         expanded_integral_all_events_inf = expanded_integral_all_events_inf.cumsum(dim = -2)
                                                                                # [batch_size, seq_len, resolution, num_events]
+
         expanded_integral_inf = reduce(expanded_integral_all_events_inf, 'b s r ne -> b s r ()', 'sum')
                                                                                # [batch_size, seq_len, resolution, 1]
         
         expanded_probability_inf = expanded_intensity_all_events_inf * torch.exp(-expanded_integral_inf)
                                                                                # [batch_size, seq_len, resolution, num_events]
+        expanded_probability_inf = expanded_probability_inf * expanded_time_gap_inf.unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+
         probability = expanded_probability_inf.sum(dim = -2)                   # [batch_size, seq_len, num_events]
         probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
@@ -307,6 +333,11 @@ class SAHP(BasicModule):
         else:
             resolution = max(min(int(mean * 200), 1000), 1)
         
+        tau_pred_all_event = self.prediction_with_all_event_types(history, events_next,
+                                                                  time_history, time_next,
+                                                                  probability, resolution, mask, mean, var, max_)
+                                                                               # [batch_size, seq_len, num_events]
+
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(history, predicted_events, time_history, time_next,
                                                                                probability, resolution, mask_next, max_)
         mae_per_event = self.mean_absolute_error_per_event_worker(history, events_next, time_history, time_next, 
@@ -315,8 +346,80 @@ class SAHP(BasicModule):
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / mask_next.sum(dim = -1)
         mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / mask_next.sum(dim = -1)
         
-        return f1, top_k_acc, probability_integral_sum, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
+        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
                (mae_per_event_pure_predict, mae_per_event)
+
+    def evaluate_all_event(self, history, tau, resolution):
+        # Intensity and integral estimation
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        eta = rearrange(eta, 'b s di -> b s 1 1 di')                           # [batch_size, seq_len, 1, 1, d_input]
+        mu = rearrange(mu, 'b s di -> b s 1 1 di')                             # [batch_size, seq_len, 1, 1, d_input]
+        gamma = rearrange(gamma, 'b s di -> b s 1 1 di')                       # [batch_size, seq_len, 1, 1, d_input]
+
+        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+        expanded_time = rearrange(tau, '... ne -> ... 1 ne') * \
+                        rearrange(time_multiplier, 'r -> 1 1 r 1')             # [batch_size, seq_len, resolution, num_events]
+
+        expanded_time_gap = torch.diff(expanded_time, dim = -2)                # [batch_size, seq_len, resolution - 1, num_events]
+        zero_gap = torch.zeros_like(expanded_time_gap[:, :, 0, :])             # [batch_size, seq_len, num_events]
+        expanded_time_gap, expanded_time_gap_ps = pack(
+            (zero_gap, expanded_time_gap), 'b s * ne'
+        )                                                                      # [batch_size, seq_len, resolution, num_events]
+    
+        hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, num_events, d_input]
+        expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events, num_events]
+        
+        intensity_mask = F.one_hot(torch.arange(self.num_events, device = self.device), num_classes = self.num_events)
+                                                                               # [num_events, num_events]
+        intensity_mask = rearrange(intensity_mask, ' ne ne1 -> 1 1 1 ne ne1')  # [batch_size, seq_len, resolution, num_events, num_events]
+        expanded_integral_all_events = expanded_intensity_all_events * \
+                                       rearrange(expanded_time_gap, 'b s r ne -> b s r ne 1')
+                                                                               # [batch_size, seq_len, resolution, num_events, num_events]
+        expanded_integral_all_events_sum = reduce(expanded_integral_all_events, '... ne -> ...', 'sum')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        expanded_intensity_all_events = reduce(expanded_intensity_all_events * intensity_mask, 'b s r ne ne1 -> b s r ne', 'sum')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        probabilty_expanded_events = torch.exp(-expanded_integral_all_events_sum) * expanded_intensity_all_events
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        probability = expanded_time_gap * probabilty_expanded_events           # [batch_size, seq_len, resolution, num_events]
+        probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
+
+        return probability
+
+    def prediction_with_all_event_types(self, history, events_next, time_history, 
+                                        time_next, p_x, resolution, mask, mean, var, max_val):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+
+        '''
+        def bisect_target(history, taus):
+            p_xt = self.evaluate_all_event(history, taus, resolution)
+                                                                               # [batch_size, seq_len, num_events]
+            p_t_x = p_xt / p_x                                                 # [batch_size, seq_len, num_events]
+            p_gap = p_t_x - 1 / self.mae_threshold                             # [batch_size, seq_len, num_events]
+
+            return p_gap
+            
+        def median_prediction(history, l, r):
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target(history, c)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, num_events]
+        r = 1e6*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, num_events]
+        tau_pred = median_prediction(history, l, r)                            # [batch_size, seq_len, num_events]
+
+        return tau_pred
 
     def evaluate_per_event(self, history, events_mask, time_next, tau, resolution):
         # Intensity and integral estimation
@@ -331,8 +434,13 @@ class SAHP(BasicModule):
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time = rearrange(tau, '... -> ... 1') * time_multiplier       # [batch_size, seq_len, resolution]
-        expanded_time_gap = torch.diff(expanded_time, dim = -1).mean(dim = -1, keepdim = True)
-                                                                               # [batch_size, seq_len, 1]
+
+        expanded_time_gap = torch.diff(expanded_time, dim = -1)                # [batch_size, seq_len, resolution - 1]
+        zero_gap = torch.zeros_like(expanded_time_gap[:, :, 0])                # [batch_size, seq_len]
+        expanded_time_gap, expanded_time_gap_ps = pack(
+            (zero_gap, expanded_time_gap), 'b s *'
+        )                                                                      # [batch_size, seq_len, resolution]
+
         hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, d_input]
         expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events]
         intensity_sum_across_events = torch.sum(expanded_intensity_all_events, dim = -1)
@@ -355,29 +463,29 @@ class SAHP(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
 
         '''
-        def bisect_target(events_history, taus):
+        def bisect_target(history, taus):
             events_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-            p_xt = self.evaluate_per_event(events_history, events_next_one_hot , time_next, taus, resolution)
+            p_xt = self.evaluate_per_event(history, events_next_one_hot , time_next, taus, resolution)
                                                                                # [batch_size, seq_len]
             p_x = torch.sum(probability_integral * events_next_one_hot, dim = -1)
                                                                                # [batch_size, seq_len]
             p_t_x = p_xt / p_x                                                 # [batch_size, seq_len]
-            p_gap = p_t_x - (1 / self.mae_threshold)                           # [batch_size, seq_len]
+            p_gap = p_t_x - 1 / self.mae_threshold                             # [batch_size, seq_len]
 
             return p_gap
             
-        def median_prediction(events_history, l, r):
+        def median_prediction(history, l, r):
             for _ in range(50):
                 c = (l + r)/2
-                v = bisect_target(events_history, c)
+                v = bisect_target(history, c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
 
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
         tau_pred = median_prediction(history, l, r)
         gap = (tau_pred - time_next) * mask
         gap = torch.abs(gap)
@@ -407,8 +515,13 @@ class SAHP(BasicModule):
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time = rearrange(time_next, '... -> ... 1') * time_multiplier # [batch_size, seq_len, resolution]
-        expanded_time_gap = reduce(torch.diff(expanded_time, dim = -1), 'b s r -> b s ()', 'mean')
-                                                                               # [batch_size, seq_len, 1]
+
+        zero_gap = torch.zeros_like(expanded_time[:, :, 0], device = self.device)
+                                                                               # [batch_size, seq_len]
+        expanded_time_gap = torch.diff(expanded_time, dim = -1)                # [batch_size, seq_len, resolution - 1]
+        expanded_time_gap, expanded_time_gap_ps = pack(
+            (zero_gap, expanded_time_gap), 'b s *'
+        )                                                                      # [batch_size, seq_len, resolution]
         hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, d_input]
         expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events]
 
@@ -440,7 +553,7 @@ class SAHP(BasicModule):
         mean, var = input_data[1]
 
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
-        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len] * 2
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         history = self.history_encoder(time_history, events_history, mask_history)
@@ -449,15 +562,20 @@ class SAHP(BasicModule):
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
-        eta = rearrange(eta, 'b s di -> b s 1 di')                             # [batch_size, seq_len, 1, d_input]
-        mu = rearrange(mu, 'b s di -> b s 1 di')                               # [batch_size, seq_len, 1, d_input]
-        gamma = rearrange(gamma, 'b s di -> b s 1 di')                         # [batch_size, seq_len, 1, d_input]
+        eta_ = rearrange(eta, 'b s di -> b s 1 di')                            # [batch_size, seq_len, 1, d_input]
+        mu_ = rearrange(mu, 'b s di -> b s 1 di')                              # [batch_size, seq_len, 1, d_input]
+        gamma_ = rearrange(gamma, 'b s di -> b s 1 di')                        # [batch_size, seq_len, 1, d_input]
 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
         expanded_time = rearrange(time_next, '... -> ... 1') * time_multiplier # [batch_size, seq_len, resolution]
-        expanded_time_gap = reduce(torch.diff(expanded_time, dim = -1), 'b s r -> b s ()', 'mean')
-                                                                               # [batch_size, seq_len, 1]
-        hidden_state = self.state_decay(mu, eta, gamma, expanded_time)         # [batch_size, seq_len, resolution, d_input]
+        zero_gap = torch.zeros_like(expanded_time[:, :, 0], device = self.device)
+                                                                               # [batch_size, seq_len]
+        expanded_time_gap = torch.diff(expanded_time, dim = -1)                # [batch_size, seq_len, resolution - 1]
+        expanded_time_gap, expanded_time_gap_ps = pack(
+            (zero_gap, expanded_time_gap), 'b s *'
+        )                                                                      # [batch_size, seq_len, resolution]
+
+        hidden_state = self.state_decay(mu_, eta_, gamma_, expanded_time)      # [batch_size, seq_len, resolution, d_input]
         expanded_intensity_all_events = self.intensity_layer(hidden_state)     # [batch_size, seq_len, resolution, num_events]
 
         expanded_integral_all_events = expanded_intensity_all_events * rearrange(expanded_time_gap, '... -> ... 1')
@@ -488,13 +606,18 @@ class SAHP(BasicModule):
         
         # Additional plots
         additional_plot = []
-        f1, top_k, probability_sum, maes_avg, maes \
+
+        mae = self.mean_absolute_error(eta, mu, gamma, time_history, time_next, mask_next, sum = False)
+                                                                               # [batch_size, seq_len]
+        f1, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
                 = self.mean_absolute_error_per_event(
                     input_time = time, input_events = events, mask = mask, mean = mean, var = var, fast = False
                 )
         mae_per_event_pure_predict_avg, mae_per_event_avg = maes_avg
         mae_per_event_pure_predict, mae_per_event = maes
 
+        mae = mae.detach().cpu().numpy()                                       # [batch_size, seq_len]
+        tau_pred_all_event = tau_pred_all_event.detach().cpu().numpy()         # [batch_size, seq_len, num_events]
         probability_sum = probability_sum.detach().cpu().numpy()               # [batch_size, seq_len]
         mae_per_event_pure_predict_avg = mae_per_event_pure_predict_avg.detach().cpu().numpy()
                                                                                # [batch_size]
@@ -502,15 +625,17 @@ class SAHP(BasicModule):
         mae_per_event_pure_predict = mae_per_event_pure_predict.detach().cpu().numpy()
                                                                                # [batch_size, seq_len]
         mae_per_event = mae_per_event.detach().cpu().numpy()                   # [batch_size, seq_len]
+        expand_integral = expand_integral.detach().cpu().numpy()               # [batch_size, seq_len * resolution, num_events]
         expand_intensity = expand_intensity.detach().cpu().numpy()             # [batch_size, seq_len * resolution, num_events]
 
-        packed_values = zip(f1, top_k, probability_sum, mae_per_event_pure_predict, mae_per_event_pure_predict_avg, \
-                            mae_per_event, mae_per_event_avg, expand_intensity, time_next, mask_next)
+        packed_values = zip(f1, top_k, probability_sum, tau_pred_all_event, mae, mae_per_event_pure_predict,\
+                            mae_per_event_pure_predict_avg, mae_per_event, mae_per_event_avg, \
+                            expand_intensity, expand_integral, time_next, mask_next)
 
-        for idx, (f1_per_seq, top_k_per_seq, probability_sum_per_seq, 
+        for idx, (f1_per_seq, top_k_per_seq, probability_sum_per_seq, tau_pred_all_event_per_seq, mae_per_seq,
                   mae_per_event_pure_predict_per_seq, mae_per_event_pure_predict_avg_per_seq,
                   mae_per_event_per_seq, mae_per_event_avg_per_seq,
-                  expand_intensity_per_seq, time_next_per_seq, mask_per_seq) \
+                  expand_intensity_per_seq, expand_integral_per_seq, time_next_per_seq, mask_per_seq) \
             in enumerate(packed_values):
             '''
             the mean of pe-MAE of each event sequence against predicted events and real events
@@ -530,17 +655,27 @@ class SAHP(BasicModule):
                 'marks': 'Top-K accuracy'
             }
 
+            seq_len = mask_per_seq.sum()
+            '''
+            The prediction against all events
+            '''
+            data_tau_pred_all_event_per_seq = {
+                'x': list(range(seq_len)) * self.num_events,
+                'y': np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
+                'marks': [f'Event {i}' for i in range(self.num_events)] * seq_len
+            }
+
             '''
             Logarithm of pe-MAEs at each event
             '''
-            seq_len = mask_per_seq.sum()
             data_maes_per_seq = {
-                'x': list(range(seq_len)) * 2,
+                'x': list(range(seq_len)) * 3,
                 'y': np.concatenate(
                     (np.log(1 + mae_per_event_pure_predict_per_seq[:seq_len]),
-                    np.log(1 + mae_per_event_per_seq[:seq_len]))
+                     np.log(1 + mae_per_event_per_seq[:seq_len]),
+                     np.log(1 + mae_per_seq[:seq_len]))
                 ),
-                'marks': ['MAE_k against prediction'] * seq_len +  ['MAE_k against real events'] * seq_len
+                'marks': ['MAE_k against prediction'] * seq_len +  ['MAE_k against real events'] * seq_len + ['MAE'] * seq_len
             }
 
             '''
@@ -603,19 +738,31 @@ class SAHP(BasicModule):
                     'data': data_maes_per_seq,
                     'markers': True
                 }
+            ],
+            [
+                't_pred_all_event',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'hue': 'marks',
+                    'data': data_tau_pred_all_event_per_seq,
+                    'markers': True
+                }
             ]]
 
             # Heatmap
             heatmap_data = {}
+            expand_probability_per_seq = expand_intensity_per_seq * np.exp(-expand_integral_per_seq)
+                                                                               # [(seq_len * resolution), num_events]
             # rho: spearman coefficient
-            heatmap_data['spearman'] = spearmanr(expand_intensity_per_seq[:seq_len * resolution])[0]
+            heatmap_data['spearman'] = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
             if self.num_events == 2:
                 heatmap_data['spearman'] = np.array([[1, heatmap_data['spearman']], [heatmap_data['spearman'], 1]])
 
             # r: pearson coefficient
-            heatmap_data['pearson'] = np.corrcoef(expand_intensity_per_seq[:seq_len * resolution], rowvar = False)
+            heatmap_data['pearson'] = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
             # L^1 metric
-            heatmap_data['L1'] = L1_distance(expand_intensity_per_seq[:seq_len * resolution],
+            heatmap_data['L1'] = L1_distance(expand_probability_per_seq[:seq_len * resolution],
                                              resolution = resolution, num_events = self.num_events,
                                              time_next = time_next_per_seq[:seq_len])
 
@@ -659,6 +806,55 @@ class SAHP(BasicModule):
                 ])
 
             additional_plot.append(additional_plot_per_seq)
+
+            accumulated_probability_distribution_per_seq = \
+                expand_intensity_per_seq.sum(axis = -1) * np.exp(-expand_integral_per_seq.sum(axis = -1))
+                                                                               # [seq_len * resolution]
+            accumulated_probability_distribution_reshaped_per_seq = \
+                rearrange(accumulated_probability_distribution_per_seq, '(s r) -> s r', r = resolution)
+                                                                               # [seq_len * resolution]
+            accumulated_probability_distribution_per_seq_at_event = accumulated_probability_distribution_reshaped_per_seq[:, 0]
+            accumulated_probability_distribution_per_seq_no_event = accumulated_probability_distribution_reshaped_per_seq[:, 1:].flatten()
+
+            df_probability = {
+                'distribution_values': accumulated_probability_distribution_per_seq
+            }
+            df_probability_event = {
+                'distribution_values': accumulated_probability_distribution_per_seq_at_event
+            }
+            df_probability_no_event = {
+                'distribution_values': accumulated_probability_distribution_per_seq_no_event
+            }
+        
+            # distplot, confirming the spiking issue.
+            additional_plot[idx]['displot'] = [[
+                'distribution_of_probability_values',
+                {
+                    'data': df_probability,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            [
+                'distribution_of_probability_values_at_events',
+                {
+                    'data': df_probability_event,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            [
+                'distribution_of_probability_values_no_events',
+                {
+                    'data': df_probability_no_event,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            ]
 
         return (intensity_and_integral_plot, additional_plot), timestamp
 
@@ -738,7 +934,7 @@ class SAHP(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [evaluation_report[1].item() + evaluation_report[-1], test_report[1].item()+ test_report[-1]]
+        return [evaluation_report[0], test_report[0]]
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 

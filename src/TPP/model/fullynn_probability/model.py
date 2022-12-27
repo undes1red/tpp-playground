@@ -25,7 +25,7 @@ class FullyNNModel(BasicModule):
                  reverse_bottleneck = True,
                  no_bottleneck = False, no_norm = False, no_activate = False,
                  wq_nonneg = False, wk_nonneg = False, wv_nonneg = False,
-                 split_comp_graph = True, negative_loss = False, additional_event_loss = False):
+                 split_comp_graph = True, negative_loss = False, additional_event_loss = True):
         super(FullyNNModel, self).__init__()
         self.device = device
         self.mae_threshold = mae_threshold
@@ -129,8 +129,11 @@ class FullyNNModel(BasicModule):
     def divide_history_and_next(self, input):
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
+    
+    def mean_absolute_error_static(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+        return self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask, mean, var, sum = True):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -159,8 +162,13 @@ class FullyNNModel(BasicModule):
         tau_pred = median_prediction(integral_from_zero_to_inf, events_history, time_history, l, r, mean, var)
                                                                                # [batch_size, seq_len]
         gap = (tau_pred - time_next) * mask                                    # [batch_size, seq_len]
-        gap_mean = torch.sum(torch.abs(gap)) / mask.sum()
-        return gap_mean.item()
+        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
+
+        if sum:
+            gap_mean = torch.sum(gap) / mask.sum()
+            return gap_mean.item()
+        else:
+            return gap
 
     def mean_absolute_error_per_event(self, input_time, input_events, mask, mean, var, fast = False):
         '''
@@ -212,7 +220,7 @@ class FullyNNModel(BasicModule):
                     top_k_acc_single_event_seq.append(
                         accuracy_score(
                             y_true = events_next_per_seq.detach().cpu(),
-                            y_pred = probability_integral_per_seq.detach().cpu()
+                            y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
                         )
                     )
                     top_k_acc_single_event_seq.append(1.0)
@@ -232,19 +240,27 @@ class FullyNNModel(BasicModule):
             resolution = max(min(int(input_time.mean().item() // 0.005), 500), 1)
         else:
             resolution = max(min(int(mean // 0.005), 500), 1)
+        
+        tau_pred_all_event = self.prediction_with_all_event_types(events_history, events_next,
+                                             time_history, time_next, probability_integral_from_zero_to_infinite, 
+                                             probability_integral_from_zero_to_infinite, resolution, mask, mean, var)
+                                                                               # [batch_size, seq_len, num_events]
 
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
-                                                                               p_x_predicted, resolution, mask_next, mean, var)
+                                                                               p_x_predicted, probability_integral_from_zero_to_infinite,
+                                                                               resolution, mask_next, mean, var)
         mae_per_event = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
-                                                                  p_x_real, resolution, mask_next, mean, var)
+                                                                  p_x_real, probability_integral_from_zero_to_infinite,
+                                                                  resolution, mask_next, mean, var)
         
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / mask_next.sum(dim = -1)
         mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / mask_next.sum(dim = -1)
 
-        return f1, top_k_acc, probability_integral_sum, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
+        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
                (mae_per_event_pure_predict, mae_per_event)
 
-    def evaluate_per_event(self, events_history, events_next, time_history, taus, resolution, mean, var, mask):
+    def evaluate_per_event(self, events_history, events_next, time_history, taus, probability_integral_from_zero_to_infinite, 
+                           resolution, mean, var, mask):
         # Train k FullyNN models for k different event types.
         if self.event_toggle:
             taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)
@@ -254,37 +270,79 @@ class FullyNNModel(BasicModule):
         probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, 
                                                              mean = mean, var = var, mask = mask)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        # probability distribution
-        # p(m, t|\mathcal{H})
-        probability_for_each_event = - torch.autograd.grad(
-            outputs = probability_integral_from_t_to_infinite,
-            inputs = taus,
-            grad_outputs = torch.ones_like(probability_integral_from_t_to_infinite)
-        )[0]                                                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        check_tensor(probability_for_each_event)
-        
+        # \int_{0}^{t}{p(m, \tau|\mathcal{H})d\tau}
+        probability_integral_from_zero_to_t = probability_integral_from_zero_to_infinite - probability_integral_from_t_to_infinite
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+
         if self.event_toggle:
             events_next_index = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-            probability_at_t = probability_for_each_event * events_next_index  # [batch_size, seq_len, num_events]
-            probability_at_t = reduce(probability_at_t, 'b s ne -> b s', 'sum')# [batch_size, seq_len]
+            probability_from_zero_to_t = probability_integral_from_zero_to_t * events_next_index
+                                                                               # [batch_size, seq_len, num_events]
+            probability_from_zero_to_t = reduce(probability_from_zero_to_t, 'b s ne -> b s', 'sum')
+                                                                               # [batch_size, seq_len]
         else:
-            probability_at_t = probability_for_each_event                      # [batch_size, seq_len]
+            probability_from_zero_to_t = probability_integral_from_zero_to_t   # [batch_size, seq_len]
 
-        return probability_at_t
+        return probability_from_zero_to_t
 
-    def mean_absolute_error_per_event_worker(self, events_history, events_next,
-        time_history, time_next, p_x, resolution, mask, mean, var):
+    def evaluate_all_event(self, events_history, events_next, time_history, taus, probability_integral_from_zero_to_infinite, 
+                           resolution, mean, var, mask):
+        # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+        probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, 
+                                                             mean = mean, var = var, mask = mask)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        # \int_{0}^{t}{p(m, \tau|\mathcal{H})d\tau}
+        probability_from_zero_to_t = probability_integral_from_zero_to_infinite - probability_integral_from_t_to_infinite
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+
+        return probability_from_zero_to_t
+
+    def prediction_with_all_event_types(self, events_history, events_next,
+        time_history, time_next, p_x, probability_integral_from_zero_to_infinite, resolution, mask, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
 
         '''
         def bisect_target(events_history, time_history, taus, mean, var):
-            p_xt = self.evaluate_per_event(events_history, events_next, time_history, taus,
+            p_xt = self.evaluate_all_event(events_history, events_next, time_history, taus, probability_integral_from_zero_to_infinite, 
+                                           resolution, mean, var, mask)        # [batch_size, seq_len, num_events]
+            p_t_x = p_xt / p_x                                                 # [batch_size, seq_len, num_events]
+            p_gap = p_t_x - 1 / self.mae_threshold                             # [batch_size, seq_len, num_events]
+
+            return p_gap
+            
+        def median_prediction(events_history, time_history, l, r, mean, var):
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target(events_history, time_history, c, mean, var)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, num_events]
+        r = 1e6*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, num_events]
+        tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
+                                                                               # [batch_size, seq_len, num_events]
+
+        return tau_pred
+
+    def mean_absolute_error_per_event_worker(self, events_history, events_next,
+        time_history, time_next, p_x, probability_integral_from_zero_to_infinite, resolution, mask, mean, var):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+
+        '''
+        def bisect_target(events_history, time_history, taus, mean, var):
+            p_xt = self.evaluate_per_event(events_history, events_next, time_history, taus, probability_integral_from_zero_to_infinite, 
                                            resolution, mean, var, mask)        # [batch_size, seq_len]
             p_t_x = p_xt / p_x                                                 # [batch_size, seq_len]
-            p_gap = (1 / self.mae_threshold) - p_t_x                           # [batch_size, seq_len]
+            p_gap = p_t_x - 1 / self.mae_threshold                             # [batch_size, seq_len]
 
             return p_gap
             
@@ -352,9 +410,16 @@ class FullyNNModel(BasicModule):
                                                                     time_next, resolution, mean, var, mask_next)
                                                                                # [batch_size, seq_len * resolution] * n
 
-        f1, top_k, probability_sum, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
+        mae = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
+                                           time_next = time_next, mask = mask_next, mean = mean, var = var, sum = False)
+                                                                               # [batch_size, seq_len]
+        f1, top_k, probability_sum, tau_pred_all_event, maes_avg, maes = self.mean_absolute_error_per_event(input_time, input_events, mask, mean, var)
+        mae = mae.detach().cpu().numpy()
         mae_per_event_pure_predict_avg, mae_per_event_avg = maes_avg
         mae_per_event_pure_predict, mae_per_event = maes
+
+        accumulated_probability_distribution = probed_results['accumulated_gradient'].detach().cpu().numpy()
+                                                                               # [batch_size, seq_len * resolution]
 
         probability_sum = probability_sum.detach().cpu().numpy()               # [batch_size, seq_len]
         mae_per_event_pure_predict_avg = mae_per_event_pure_predict_avg.detach().cpu().numpy()
@@ -363,14 +428,15 @@ class FullyNNModel(BasicModule):
         mae_per_event_pure_predict = mae_per_event_pure_predict.detach().cpu().numpy()
                                                                                # [batch_size, seq_len]
         mae_per_event = mae_per_event.detach().cpu().numpy()                   # [batch_size, seq_len]
+        tau_pred_all_event = tau_pred_all_event.detach().cpu().numpy()         # [batch_size, seq_len, num_events]
         
-        packed_values = zip(f1, top_k, probability_sum, mae_per_event_pure_predict, mae_per_event_pure_predict_avg, \
-                            mae_per_event, mae_per_event_avg, time_next, mask_next)
+        packed_values = zip(f1, top_k, probability_sum, tau_pred_all_event, mae, mae_per_event_pure_predict, mae_per_event_pure_predict_avg, \
+                            mae_per_event, mae_per_event_avg, time_next, mask_next, accumulated_probability_distribution)
 
-        for idx, (f1_per_seq, top_k_per_seq, probability_sum_per_seq, 
-                  mae_per_event_pure_predict_per_seq, mae_per_event_pure_predict_avg_per_seq,
+        for idx, (f1_per_seq, top_k_per_seq, probability_sum_per_seq, tau_pred_all_event_per_seq, 
+                  mae_per_seq, mae_per_event_pure_predict_per_seq, mae_per_event_pure_predict_avg_per_seq,
                   mae_per_event_per_seq, mae_per_event_avg_per_seq,
-                  time_next_per_seq, mask_per_seq) \
+                  time_next_per_seq, mask_per_seq, accumulated_probability_distribution_per_seq) \
             in enumerate(packed_values):
             '''
             the mean of pe-MAE of each event sequence against predicted events and real events
@@ -390,17 +456,27 @@ class FullyNNModel(BasicModule):
                 'marks': 'Top-K accuracy'
             }
 
+            seq_len = mask_per_seq.sum()
+            '''
+            The prediction against all events
+            '''
+            data_tau_pred_all_event_per_seq = {
+                'x': list(range(seq_len)) * self.num_events,
+                'y': np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
+                'marks': [f'Event {i}' for i in range(self.num_events)] * seq_len
+            }
+
             '''
             Logarithm of pe-MAEs at each event
             '''
-            seq_len = mask_per_seq.sum()
             data_maes_per_seq = {
-                'x': list(range(seq_len)) * 2,
+                'x': list(range(seq_len)) * 3,
                 'y': np.concatenate(
                     (np.log(1 + mae_per_event_pure_predict_per_seq[:seq_len]),
-                    np.log(1 + mae_per_event_per_seq[:seq_len]))
+                     np.log(1 + mae_per_event_per_seq[:seq_len]),
+                     np.log(1 + mae_per_seq[:seq_len]))
                 ),
-                'marks': ['MAE_k against prediction'] * seq_len +  ['MAE_k against real events'] * seq_len
+                'marks': ['MAE_k against prediction'] * seq_len + ['MAE_k against real events'] * seq_len + ['MAE'] * seq_len
             }
 
             data_probability_sum_per_seq = {
@@ -454,7 +530,61 @@ class FullyNNModel(BasicModule):
                     'data': data_probability_sum_per_seq,
                     'markers': True
                 }
+            ],
+            [
+                't_pred_all_event',
+                {
+                    'x': 'x',
+                    'y': 'y',
+                    'hue': 'marks',
+                    'data': data_tau_pred_all_event_per_seq,
+                    'markers': True
+                }
             ]]
+            accumulated_probability_distribution_reshaped_per_seq = \
+                rearrange(accumulated_probability_distribution_per_seq, '(s r) -> s r', r = resolution)
+            accumulated_probability_distribution_per_seq_at_event = accumulated_probability_distribution_reshaped_per_seq[:, 0]
+            accumulated_probability_distribution_per_seq_no_event = accumulated_probability_distribution_reshaped_per_seq[:, 1:].flatten()
+
+            df_probability = {
+                'distribution_values': accumulated_probability_distribution_per_seq
+            }
+            df_probability_event = {
+                'distribution_values': accumulated_probability_distribution_per_seq_at_event
+            }
+            df_probability_no_event = {
+                'distribution_values': accumulated_probability_distribution_per_seq_no_event
+            }
+
+            # distplot, confirming the spiking issue.
+            additional_plot[idx]['displot'] = [[
+                'distribution_of_probability_values_at_events',
+                {
+                    'data': df_probability_event,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            [
+                'distribution_of_probability_values_no_events',
+                {
+                    'data': df_probability_no_event,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            [
+                'distribution_of_probability_values',
+                {
+                    'data': df_probability,
+                    "kind": "kde",
+                    'height': 4,
+                    'aspect': 0.7
+                }
+            ],
+            ]
 
         return (probed_results, additional_plot), timestamp
     
@@ -487,10 +617,7 @@ class FullyNNModel(BasicModule):
                 loss_event_prediction_without_time = reduce(event_prediction_without_time, '... ne -> ...', 'sum')
                                                                                # [batch_size, seq_len]
             else:
-                event_prediction_without_time = - torch.log(probability_0_inf + 1e-12) * probability_mask
-                                                                               # [batch_size, seq_len, num_events]
-                loss_event_prediction_without_time = reduce(event_prediction_without_time, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
+                loss_event_prediction_without_time = 0
 
         original_loss = log_probability + loss_event_prediction_without_time   # [batch_size, seq_len]
         original_loss = torch.clamp(original_loss, max = 15) * mask            # [batch_size, seq_len]
@@ -615,6 +742,6 @@ class FullyNNModel(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [test_report[1],]
+        return [test_report[0],]
     
     metric_number = 1 # metric number is the length of the output of choose_metric

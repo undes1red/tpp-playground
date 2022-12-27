@@ -243,6 +243,9 @@ def draw_probability(model, data, desc, batch_idx, opt):
               aggregate_time_per_seq, timestamp_per_seq) in enumerate(packed_data):
         annotation = None
         if true_probability_per_seq is not None:
+            true_probability_per_seq = true_probability_per_seq.detach().cpu().numpy()
+                                                                               # [batch_size, seq_len * resolution]
+
             # Calculate pearson, spearman corrilation and L^1 distance here.
             # Then, print these values directly on the plots.
 
@@ -423,13 +426,14 @@ def ifl_extract(raw_data):
     '''
     Time, event, intensity
     '''
-    [event, time, mask], score, (mean, var), intensity = raw_data              # [batch_size, seq_len + 1]
+    [event, time, mask], _, mean_and_var, intensity = raw_data                 # [batch_size, seq_len + 1]
     batch_size = event.shape[0]
 
-    event = event[:, :-1]                                                      # [batch_size, seq_len]
+    event = event[:, :-1].clone()                                              # [batch_size, seq_len]
     time = torch.cat(
-        (torch.zeros(batch_size, 1, device = event.device), time[:, :-1]), dim = -1
-    )                                                                          # [batch_size, seq_len]
+        (torch.zeros((batch_size, 1), device = time.device), time[:, :-1]),
+    dim = -1)                                                                  # [batch_size, seq_len + 1]
+
     return time, event, intensity
 
 def syn_arg_extract(raw_data):

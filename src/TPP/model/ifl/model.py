@@ -22,7 +22,7 @@ class IFL(BasicModule):
             rnn_type,
         )
     
-    def forward(self, minibatch):
+    def forward(self, minibatch, evaluate = False):
         '''
         The shape of minibatch
         [
@@ -38,44 +38,44 @@ class IFL(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-        return self.model.log_prob(minibatch)
+        mae = 0
+        if evaluate:
+            mae = self.mean_absolute_error(minibatch)
 
-    def evaluate(self, input_time_hisotry, input_time_next):
-        input_time_next.requires_grad = True
+        return self.model.log_prob(minibatch), mae
 
-        integral = self.model(input_time_hisotry, input_time_next)             # [batch_size, seq_len, 1]                                                                               # int
-        
-        intensity = torch.autograd.grad(
-            outputs=integral,
-            inputs=input_time_next,
-            grad_outputs=torch.ones_like(integral),
-            create_graph=True,
-        )[0]                                                                   # [batch_size, seq_len, 1]
-
-        return integral, intensity
+    def evaluate(self, minibatch, taus):
+        probability, _ = self.model.log_cdf(minibatch, taus)
+        return probability
     
-    def mean_absolute_error(self, history, target):
+    def mean_absolute_error(self, minibatch):
         '''
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
-        def bisect_target(history, taus):
-            return self.evaluate(history, taus)[0] - torch.log(torch.tensor(self.mae_threshold, device = history.device))
+        def bisect_target(minibatch, taus):
+            return self.evaluate(minibatch, taus) - 1 / self.mae_threshold
         
-        def median_prediction(history, l, r):
+        def median_prediction(minibatch, l, r):
             for _ in range(30):
                 c = (l + r)/2
-                v = bisect_target(history, c)
+                v = bisect_target(minibatch, c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(history, dtype = torch.float32)             # [batch_size, seq_len, 1]
-        r = 6500.0*torch.ones_like(history, dtype = torch.float32)             # [batch_size, seq_len, 1]
-        tau_pred = median_prediction(history, l, r)
-        gap = tau_pred - target
-        return torch.mean(torch.abs(gap)).item()
+        sequences, _, _ = minibatch
+        event, time_interval, mask = sequences
+        number_of_events = mask.sum()
+
+        l = 0.0001*torch.ones_like(event, dtype = torch.float32)               # [batch_size, seq_len]
+        r = 1e6*torch.ones_like(event, dtype = torch.float32)                  # [batch_size, seq_len]
+        tau_pred = median_prediction(minibatch, l, r)
+        gap = (tau_pred - time_interval) * mask                                # [batch_size, seq_len]
+        gap_mean = gap.abs().sum() / number_of_events
+        
+        return gap_mean.item()
     
     def function_prober(self, data, resolution):
         self.model.eval()
@@ -86,7 +86,7 @@ class IFL(BasicModule):
     
         model.train()
             
-        log_likelihood, the_number_of_events = model(minibatch)
+        (log_likelihood, the_number_of_events), mae = model(minibatch)
     
         loss = loss_f(log_likelihood)
         loss.backward()
@@ -100,26 +100,43 @@ class IFL(BasicModule):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        log_likelihood, the_number_of_events = model(minibatch)
+        (log_likelihood, the_number_of_events), mae = model(minibatch, evaluate = True)
     
         loss = loss_f(log_likelihood)
     
         loss = loss.item() / the_number_of_events
         fact = minibatch[1].sum() / the_number_of_events
     
-        return loss, fact
+        return loss, fact, mae
 
     def postprocess(input, procedure):
-        return [input[0], input[0] - input[1]]
+        def train(input):
+            return [input[0], input[0] - input[1]]
+
+        def evaluate(input):
+            return [input[0], input[0] - input[1], input[2]]
+        
+        return train(input) if procedure == 'Training' else evaluate(input)
 
     def log_print_format(input, procedure):
-        format_dict = {}
-        format_dict['absolute_loss'] = input[0]
-        format_dict['relative_loss'] = input[1]
-        format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
-        return format_dict
+        def train(input):
+            format_dict = {}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
+            return format_dict
+        
+        def evaluate(input):
+            format_dict = {}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['MAE'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'MAE': ':2.8f'}
+            return format_dict
+        
+        return train(input) if procedure == 'Training' else evaluate(input)
 
-    format_dict_length = 2
+    format_dict_length = 3
     
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
 
@@ -133,7 +150,7 @@ class IFL(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [torch.abs(evaluation_report[-1]).item(), torch.abs(test_report[-1]).item()]
+        return [evaluation_report[1], test_report[1]]
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 
@@ -141,4 +158,4 @@ def loss_f(loglik):
     '''
     The definition of loss.
     '''
-    return loglik.mul(-1.0).sum()
+    return (-loglik).sum()

@@ -166,7 +166,7 @@ class FullyNN(nn.Module):
 
         return integral
 
-    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True):
+    def integral_intensity(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True, event_time_probe = False):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -174,19 +174,24 @@ class FullyNN(nn.Module):
         time_history:  [batch_size, seq_len]
         time_next:     [batch_size, seq_len]
         resolution:    int
-        '''        
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+        '''
+        if event_time_probe:
+            time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
+            time_expand = rearrange(time_next, 'b s ne -> b s 1 ne') * rearrange(time_multiplier, 'r -> 1 1 r 1')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        else:
+            time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
-        original_time_expand = time_multiplier * rearrange(time_next, '... -> ... 1')
+            original_time_expand = time_multiplier * rearrange(time_next, '... -> ... 1')
                                                                                # [batch_size, seq_len, resolution]
-        # Don't shift time with mean
-        # mean = 0
+            # Don't shift time with mean
+            # mean = 0
 
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+            time_history = (time_history - mean) / var                         # [batch_size, seq_len]
 
-        time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
+            time_expand = original_time_expand.clone()                         # [batch_size, seq_len, resolution]
+            if self.event_toggle:
+                time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         if self.event_toggle:
@@ -256,17 +261,29 @@ class FullyNN(nn.Module):
             expand_integral = rearrange(expand_integral, 'b s r -> b (s r)')   # [batch_size, seq_len * resolution]
             expand_intensity = rearrange(expand_intensity, 'b s r -> b (s r)') # [batch_size, seq_len * resolution]
 
-        '''
-        Restore the original timestamp
-        '''
-        batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-        timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
+        if event_time_probe:
+            '''
+            Restore the original timestamp
+            '''
+            batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
+            dummy_inception = torch.zeros((batch_size, seq_len, 1, self.num_events), device = self.device)
+                                                                               # [batch_size, seq_len, 1, num_events]
+            timestamp, timestamp_ps = pack(
+                [dummy_inception, time_expand.diff(dim = -2)],
+                'b s * ne')                                                    # [batch_size, seq_len, resolution, num_events]
+            return expand_integral, expand_intensity, timestamp
+        else:
+            '''
+            Restore the original timestamp
+            '''
+            batch_size, seq_len = history_expand.shape[0], history_expand.shape[1]
+            dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
+            timestamp, timestamp_ps = pack(
+                [dummy_inception, original_time_expand.diff(dim = -1)],
+                'b s *')                                                       # [batch_size, seq_len, resolution]
+            timestamp = rearrange(timestamp, 'b s r -> b (s r)')               # [batch_size, seq_len * resolution]
 
-        return expand_integral, expand_intensity, timestamp
+            return expand_integral, expand_intensity, timestamp
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
         '''
@@ -387,24 +404,29 @@ class FullyNN(nn.Module):
             # additional plot, measure the spearman correlation across available events.
             expand_intensity = rearrange(events_gradient.cpu(), 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_event]
+            expand_integral = rearrange(expand_integral.detach().cpu(), 'b s r ne -> b (s r) ne')
+                                                                               # [batch_size, seq_len * resolution, num_event]
             
             additional_plot = []
-            for idx, (expand_intensity_per_seq, mask_per_seq, time_next_per_seq) in enumerate(zip(expand_intensity, mask, time_next)):
+            for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
+                in enumerate(zip(expand_intensity, expand_integral, mask, time_next)):
                 additional_plot_per_seq = {
                     'heatmap': []
                 }
 
                 seq_len = mask_per_seq.sum()
                 heatmap_data = {}
+
+                probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
                 # rho: spearman coefficient
-                heatmap_data['spearman'] = spearmanr(expand_intensity_per_seq[:seq_len * resolution])[0]
+                heatmap_data['spearman'] = spearmanr(probability_distribution[:seq_len * resolution])[0]
                 if self.num_events == 2:
                     heatmap_data['spearman'] = np.array([[1, heatmap_data['spearman']], [heatmap_data['spearman'], 1]])
 
                 # r: pearson coefficient
-                heatmap_data['pearson'] = np.corrcoef(expand_intensity_per_seq[:seq_len * resolution], rowvar = False)
+                heatmap_data['pearson'] = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                heatmap_data['L1'] = L1_distance(expand_intensity_per_seq[:seq_len * resolution], 
+                heatmap_data['L1'] = L1_distance(probability_distribution[:seq_len * resolution], 
                                                  resolution = resolution, num_events = self.num_events,
                                                  time_next = time_next_per_seq[:seq_len])
 
