@@ -4,6 +4,7 @@ import torch, os
 import pandas as pd
 import numpy as np
 from scipy.stats import spearmanr
+from scipy.special import kl_div
 
 from .plotter_utils import true_intensity_dict, true_probability_dict, L1_distance
 from .utils import getLogger, restore_dataset_name
@@ -267,16 +268,40 @@ def draw_probability(model, data, desc, batch_idx, opt):
             df = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq, 'Predicted Probability': model_probability_per_seq}
             )
-        df_intensity_plot = pd.melt(df, 'Time')
-        df_intensity_plot.columns = ['Time', '', 'Probability']
+        df_probability_plot = pd.melt(df, 'Time')
+        df_probability_plot.columns = ['Time', '', 'Probability']
         df_events = pd.DataFrame.from_dict(
                 {'Time': aggregate_time_per_seq, 'Point': np.zeros_like(aggregate_time_per_seq), \
                  'Event': [f'Event {item}' for item in event_per_seq]}
         )
 
+        # We need to scrutinise the distribution.
+        # Only available on synthetic datasets
+        number_of_samples = int(0.2 * opt.resolution)
+        model_dist_right_after_event = model_probability_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
+        true_dist_right_after_event = true_probability_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
+        timestamp_per_seq_after_event = timestamp_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
+        timestamp_per_seq_after_event = timestamp_per_seq_after_event - timestamp_per_seq_after_event[0]
+        df_probe = pd.DataFrame.from_dict(
+                {'Time': timestamp_per_seq_after_event, 'Predicted Probability': model_dist_right_after_event, 'Truth': true_dist_right_after_event}
+            )
+        df_probability_plot_probe = pd.melt(df_probe, 'Time')
+        df_probability_plot_probe.columns = ['Time', '', 'Probability']
+
+        fig = plt.figure()
+        fig.set_size_inches(12.8, 9.6)
+        sns.set(font_scale = 3)
+        ax = sns.lineplot(x = 'Time', y = 'Probability', hue = '', data = df_probability_plot_probe, linewidth = 4)
+        ax.set_xlabel(r'Relative Time $(t - t_l)$')
+        ax.set_ylabel('Probability distribution')
+        if not os.path.exists(os.path.join(opt.store_dir, 'probability')):
+            os.makedirs(os.path.join(opt.store_dir, 'probability'))
+        plt.savefig(os.path.join(opt.store_dir, 'probability', desc + '_probe_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
+        plt.close(fig = fig)
+
         # Draw plot
         fig = plt.figure()
-        sns.lineplot(x = 'Time', y = 'Probability', hue = '', data = df_intensity_plot)
+        sns.lineplot(x = 'Time', y = 'Probability', hue = '', data = df_probability_plot)
         sns.scatterplot(x = 'Time', y = 'Point', data = df_events, palette = 'pastel', hue = 'Event')
         fig.set_size_inches(length,height)
         if annotation is not None:
@@ -369,6 +394,8 @@ def draw_features(model, data, desc, batch_idx, opt):
 
                 fig = plt.figure()
                 if hasattr(sns, key):
+                    sns.set(font_scale = 3)
+                    fig.set_size_inches(12.8, 12.8)
                     ax = getattr(sns, key)(**data)
                 if annotation is not None:
                     x = data['data'][data['x']]
@@ -482,5 +509,7 @@ def spearman_and_l1(model, data, opt):
         r = np.corrcoef(x = true_probability, y = model_probability)[0, 1]
         # L1 distance
         L1 = L1_distance(x = true_probability, y = model_probability, timestamp = timestamp, resolution = opt.resolution)
+        # KL-divergence
+        
     
     return rho, r, L1

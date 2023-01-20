@@ -1,11 +1,12 @@
 from .log_norm_mix import LogNormMix
 from ..utils import BasicModule
+from sklearn.metrics import f1_score
 
 import torch
 
 class IFL(BasicModule):
     def __init__(self, num_events: int, device, mean_log_inter_time: float = 0.0, std_log_inter_time: float = 1.0, 
-                       context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "GRU",
+                       context_size: int = 32, mark_embedding_size: int = 32, num_mix_components: int = 16, rnn_type: str = "LSTM",
                        mae_threshold = 2):
         super(IFL, self).__init__()
         self.device = device
@@ -47,8 +48,26 @@ class IFL(BasicModule):
     def evaluate(self, minibatch, taus):
         probability, _ = self.model.log_cdf(minibatch, taus)
         return probability
-    
-    def mean_absolute_error(self, minibatch):
+
+    def mean_absolute_error_and_f1(self, input_events, input_time, mask, mean, var):
+        # where should be padded scores is now an empty list. 
+        minibatch = [[input_events, input_time, mask], [], [mean, var]]
+
+        # Obtain dedicated MAE and predicted time.
+        gap, pred_time = self.mean_absolute_error(minibatch, sum = False, output_pred = True)
+                                                                               # [batch_size, seq_len + 1]
+        predicted_events  = self.model.event_prober(input_events, input_time, mask, [mean, var])
+                                                                               # [batch_size, seq_len + 1]
+        gap = gap[:, :-1]
+        predicted_events = predicted_events[:, :-1]
+        input_events = input_events[:, :-1]
+
+        f1 = f1_score(y_pred = predicted_events.squeeze().detach().cpu().numpy(), \
+                      y_true = input_events.squeeze().detach().cpu().numpy(), average = 'macro')
+
+        return gap, f1
+
+    def mean_absolute_error(self, minibatch, sum = True, output_pred = False):
         '''
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
@@ -73,9 +92,20 @@ class IFL(BasicModule):
         r = 1e6*torch.ones_like(event, dtype = torch.float32)                  # [batch_size, seq_len]
         tau_pred = median_prediction(minibatch, l, r)
         gap = (tau_pred - time_interval) * mask                                # [batch_size, seq_len]
-        gap_mean = gap.abs().sum() / number_of_events
-        
-        return gap_mean.item()
+        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
+
+        if sum:
+            gap_mean = torch.sum(gap) / mask.sum()
+            if output_pred:
+                return gap_mean.item(), tau_pred
+            else:
+                gap_mean = torch.sum(gap) / mask.sum()
+                return gap_mean.item()
+        else:
+            if output_pred:
+                return gap, tau_pred
+            else:
+                return gap
     
     def function_prober(self, data, resolution):
         self.model.eval()
@@ -150,9 +180,9 @@ class IFL(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [evaluation_report[1], test_report[1]]
+        return [test_report[1],]
     
-    metric_number = 2 # metric number is the length of the output of choose_metric
+    metric_number = 1 # metric number is the length of the output of choose_metric
 
 def loss_f(loglik):
     '''

@@ -200,8 +200,8 @@ syn_plot_hyperparameter_list = [
     "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \
-    # "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
-    "--dataset_name", ["self_correct_v2"], \
+    "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
+    # "--dataset_name", ["self_correct_v2"], \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \

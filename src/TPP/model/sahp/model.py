@@ -106,21 +106,34 @@ class SAHP(BasicModule):
         cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [batch_size, seq_len, (resolution), d_input]
         return cell_t
     
-    def mean_absolute_error_static(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
-        mae_mean_of_all_event = \
+        mae_mean_of_all_event, pred_time = \
                     self.mean_absolute_error(eta = eta, mu = mu, gamma = gamma,
                                              time_history = time_history, time_next = time_next, 
-                                             mask = mask_next)
-        
-        return mae_mean_of_all_event
+                                             mask = mask_next, output_pred = True, sum = False)
 
-    def mean_absolute_error(self, eta, mu, gamma, time_history, time_next, mask, sum = True):
+        # temporal point process loss
+        _, _, events_prediction_probability = self.log_likelihood(
+             eta = eta, mu = mu, gamma = gamma, time = pred_time, \
+             events = events_next, mask = mask_next
+        )
+
+        predicted_events = torch.argmax(events_prediction_probability, dim = -1)[mask_next == 1].detach().cpu().numpy()
+        events_true = events_next[mask_next == 1].detach().cpu().numpy()
+        f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+        '''
+        Event loss. This loss should not be counted into the backward loss
+        '''
+
+        return mae_mean_of_all_event, f1
+
+    def mean_absolute_error(self, eta, mu, gamma, time_history, time_next, mask, sum = True, output_pred = False):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -144,14 +157,21 @@ class SAHP(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask
+        gap = (tau_pred - time_next) * mask                                    # [batch_size, seq_len]
+        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
 
         if sum:
-            gap_mean = torch.sum(torch.abs(gap)) / mask.sum()
-            return gap_mean.item()
+            gap_mean = torch.sum(gap) / mask.sum()
+            if output_pred:
+                return gap_mean.item(), tau_pred
+            else:
+                gap_mean = torch.sum(gap) / mask.sum()
+                return gap_mean.item()
         else:
-            return torch.abs(gap)
-
+            if output_pred:
+                return gap, tau_pred
+            else:
+                return gap
 
     def evaluate(self, eta, mu, gamma, time, mask):
         '''
@@ -252,10 +272,16 @@ class SAHP(BasicModule):
             var = input_time.var()
         
         # Use a relatively large number as the positive infinity.
-        max_ = min(1e5, mean + 10 * var)
+        max_ = min(1e6, mean + 10 * var)
         time_inf = torch.ones_like(time_next) * max_                           # [batch_size, seq_len]
 
-        resolution = min(int(max_ * 100), 5000)
+        resolution = min(int(max_ * 100), 50000)
+
+        memory_ceiling = 1e9
+        _, seq_len = events_next.shape
+        if seq_len * resolution * self.num_events > memory_ceiling:
+            resolution = int(memory_ceiling // (seq_len * self.num_events))
+
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
@@ -289,10 +315,10 @@ class SAHP(BasicModule):
         
         expanded_probability_inf = expanded_intensity_all_events_inf * torch.exp(-expanded_integral_inf)
                                                                                # [batch_size, seq_len, resolution, num_events]
-        expanded_probability_inf = expanded_probability_inf * expanded_time_gap_inf.unsqueeze(dim = -1)
+        expanded_probability_inf = expanded_probability_inf[:, :, :-1, :] * expanded_time_gap_inf.unsqueeze(dim = -1)[:, :, 1:, :]
                                                                                # [batch_size, seq_len, resolution, num_events]
-
-        probability = expanded_probability_inf.sum(dim = -2)                   # [batch_size, seq_len, num_events]
+        
+        probability = expanded_probability_inf[:, :, 1:, :].sum(dim = -2)      # [batch_size, seq_len, num_events]
         probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
 
@@ -333,10 +359,11 @@ class SAHP(BasicModule):
         else:
             resolution = max(min(int(mean * 200), 1000), 1)
         
-        tau_pred_all_event = self.prediction_with_all_event_types(history, events_next,
-                                                                  time_history, time_next,
-                                                                  probability, resolution, mask, mean, var, max_)
-                                                                               # [batch_size, seq_len, num_events]
+        # tau_pred_all_event = self.prediction_with_all_event_types(history, events_next,
+        #                                                           time_history, time_next,
+        #                                                           probability, resolution, mask, mean, var, max_)
+        #                                                                        # [batch_size, seq_len, num_events]
+        tau_pred_all_event = torch.ones((1, seq_len, 97))                      # [batch_size, seq_len, num_events]
 
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(history, predicted_events, time_history, time_next,
                                                                                probability, resolution, mask_next, max_)
@@ -375,8 +402,7 @@ class SAHP(BasicModule):
         intensity_mask = F.one_hot(torch.arange(self.num_events, device = self.device), num_classes = self.num_events)
                                                                                # [num_events, num_events]
         intensity_mask = rearrange(intensity_mask, ' ne ne1 -> 1 1 1 ne ne1')  # [batch_size, seq_len, resolution, num_events, num_events]
-        expanded_integral_all_events = expanded_intensity_all_events * \
-                                       rearrange(expanded_time_gap, 'b s r ne -> b s r ne 1')
+        expanded_integral_all_events = expanded_intensity_all_events * rearrange(expanded_time_gap, 'b s r ne -> b s r ne 1')
                                                                                # [batch_size, seq_len, resolution, num_events, num_events]
         expanded_integral_all_events_sum = reduce(expanded_integral_all_events, '... ne -> ...', 'sum')
                                                                                # [batch_size, seq_len, resolution, num_events]
@@ -384,7 +410,8 @@ class SAHP(BasicModule):
                                                                                # [batch_size, seq_len, resolution, num_events]
         probabilty_expanded_events = torch.exp(-expanded_integral_all_events_sum) * expanded_intensity_all_events
                                                                                # [batch_size, seq_len, resolution, num_events]
-        probability = expanded_time_gap * probabilty_expanded_events           # [batch_size, seq_len, resolution, num_events]
+        probability = expanded_time_gap[:, :, 1:, :] * probabilty_expanded_events[:, :, :-1, :]
+                                                                               # [batch_size, seq_len, resolution - 1, num_events]
         probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
 
         return probability
@@ -415,7 +442,7 @@ class SAHP(BasicModule):
         
         l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
-        r = 1e6*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+        r = max_val*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
         tau_pred = median_prediction(history, l, r)                            # [batch_size, seq_len, num_events]
 
@@ -449,7 +476,7 @@ class SAHP(BasicModule):
                                                                                # [batch_size, seq_len, resolution]
         probabilty_expanded_events = torch.exp(-integral_sum_across_events.unsqueeze(dim = -1)) * expanded_intensity_all_events
                                                                                # [batch_size, seq_len, resolution, num_events]
-        probability = expanded_time_gap.unsqueeze(dim = -1) * probabilty_expanded_events
+        probability = expanded_time_gap.unsqueeze(dim = -1)[:, :, 1:, :] * probabilty_expanded_events[:, :, :-1, :]
                                                                                # [batch_size, seq_len, resolution, num_events]
         probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
         probability = (probability * events_mask).sum(dim = -1)                # [batch_size, seq_len]
@@ -485,7 +512,7 @@ class SAHP(BasicModule):
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
+        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len]
         tau_pred = median_prediction(history, l, r)
         gap = (tau_pred - time_next) * mask
         gap = torch.abs(gap)

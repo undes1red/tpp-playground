@@ -8,6 +8,11 @@ import pandas as pd
 import torch
 import numpy as np
 
+def check_tensor(x):
+    assert (x < 0).any() == False, 'Negative numbers detected!'
+    assert torch.isfinite(x).all() == True, 'inf detected in input!'
+    assert torch.isnan(x).any() == False, 'Nan detected in input!'
+
 # We use syn dataloader for this model.
 class RMTPP(BasicModule):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, num_events, output_size, limited_history_norm, 
@@ -33,17 +38,31 @@ class RMTPP(BasicModule):
 
         intensity, integral, mark, constant = self.submodel(events_history, time_history, time_next, mean, var)
 
+        check_tensor(intensity)
+        check_tensor(integral)
+
         loss, time_loss, events_loss, the_number_of_events =\
                     self.loss_f(intensity, integral, mark, events_next, mask_next)
-        
+
         mae = 0
+        f1 = 0
         if evaluation:
             '''
             Calculating MAE here.
             '''
             mae = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
-            
-        return loss, mae, time_loss, events_loss, the_number_of_events, constant
+            if self.original_mark_generation:
+                predicted_events = torch.argmax(mark, dim = -1)[mask_next == 1].detach().cpu().numpy()
+                                                                               # [batch_size, seq_len]
+                events_true = events_next[mask_next == 1].detach().cpu().numpy()
+                f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+            else:
+                predicted_events = torch.argmax(intensity, dim = -1)[mask_next == 1].detach().cpu().numpy()
+                                                                               # [batch_size, seq_len]
+                events_true = events_next[mask_next == 1].detach().cpu().numpy()
+                f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+
+        return loss, mae, f1, time_loss, events_loss, the_number_of_events, constant
 
     def evaluate(self, events_history, time_history, taus, mean, var):
         intensity, integral, _, _ = \
@@ -93,10 +112,24 @@ class RMTPP(BasicModule):
 
         return loss, time_loss, events_loss, mask_next.sum()
     
-    def mean_absolute_error_static(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
-        return self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
+        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var, \
+                                                  output_pred = True, sum = False)
+        intensity, integral, mark, constant = self.submodel(events_history, time_history, pred_time, mean, var)
+        if self.original_mark_generation:
+            predicted_events = torch.argmax(mark, dim = -1)[mask_next == 1].detach().cpu().numpy()
+                                                                           # [batch_size, seq_len]
+            events_true = events_next[mask_next == 1].detach().cpu().numpy()
+            f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+        else:
+            predicted_events = torch.argmax(intensity, dim = -1)[mask_next == 1].detach().cpu().numpy()
+                                                                           # [batch_size, seq_len]
+            events_true = events_next[mask_next == 1].detach().cpu().numpy()
+            f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var, sum = True):
+        return mae, f1
+
+    def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var, sum = True, output_pred = False):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -117,13 +150,22 @@ class RMTPP(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(events_history, time_history, l, r, mean, var)
+                                                                               # [batch_size, seq_len, 1]
         gap = (tau_pred - time_next).squeeze(-1) * mask_next
+        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
 
         if sum:
-            gap_mean = torch.sum(torch.abs(gap)) / mask_next.sum()
-            return gap_mean.item()
+            gap_mean = torch.sum(gap) / mask_next.sum()
+            if output_pred:
+                return gap_mean.item(), tau_pred
+            else:
+                gap_mean = torch.sum(gap) / mask_next.sum()
+                return gap_mean.item()
         else:
-            return torch.abs(gap)
+            if output_pred:
+                return gap, tau_pred
+            else:
+                return gap
 
     def function_prober(self, data, resolution):
         (time, events, _, _, _), (mean, var) = data                               # 2 * [batch_size, seq_len + 1]
@@ -385,8 +427,8 @@ class RMTPP(BasicModule):
             var = input_time.var()
         
         # Use a relatively large number as the positive infinity.
-        max_ = min(1e5, mean + 10 * var)
-        resolution = min(int(max_ * 100), 5000)
+        max_ = min(1e6, mean + 10 * var)
+        resolution = min(int(max_ * 100), 50000)
         time_infinite = torch.ones_like(time_next, device = self.device) * max_# [batch_size, seq_len, 1]
 
         # First, we find the integral and intensity function that RMTPP estimates.
@@ -406,7 +448,8 @@ class RMTPP(BasicModule):
         # Based on TPP's definition, the true value should be 0.
         probability_dist = torch.nan_to_num(probability_dist, nan = 0.0)       # [batch_size, seq_len, resolution, num_events]
         
-        cumulated_probability = probability_dist * timestamp / var             # [batch_size, seq_len, resolution, num_events]
+        cumulated_probability = probability_dist[:, :, :-1, :] * timestamp[:, :, 1:, :] / var
+                                                                               # [batch_size, seq_len, resolution, num_events]
         probability = cumulated_probability.sum(dim = -2)                      # [batch_size, seq_len, num_events]
         probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
@@ -462,9 +505,12 @@ class RMTPP(BasicModule):
                                                                                # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution]
         probability_dist = intensity * torch.exp(-integral.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len * resolution, num_events]
-        cumulative_probability = probability_dist * timestamp / var            # [batch_size, seq_len * resolution, num_events]
-        cumulative_probability = rearrange(cumulative_probability, 'b (s r) n -> b s r n', r = resolution)
+        probability_dist = rearrange(probability_dist, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_events]
+        timestamp = rearrange(timestamp, 'b (s r) n -> b s r n', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        cumulative_probability = probability_dist[:, :, :-1, :] * timestamp[:, :, 1:, :] / var
+                                                                               # [batch_size, seq_len, resolution - 1, num_events]
         cumulative_probability = cumulative_probability.sum(dim = -2)          # [batch_size, seq_len, num_events]
 
         return cumulative_probability
@@ -508,10 +554,12 @@ class RMTPP(BasicModule):
                                                                                # 2 * [batch_size, seq_len * resolution, num_events] + [batch_size, seq_len * resolution]
         probability_dist = intensity * torch.exp(-integral.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len * resolution, num_events]
-        cumulative_probability = probability_dist * timestamp.unsqueeze(dim = -1) / var
-                                                                               # [batch_size, seq_len * resolution, num_events]
-        cumulative_probability = rearrange(cumulative_probability, 'b (s r) n -> b s r n', r = resolution)
+        probability_dist = rearrange(probability_dist, 'b (s r) n -> b s r n', r = resolution)
                                                                                # [batch_size, seq_len, resolution, num_events]
+        timestamp = rearrange(timestamp, 'b (s r) -> b s r 1', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        cumulative_probability = probability_dist[:, :, :-1, :] * timestamp[:, :, 1:, :] / var
+                                                                               # [batch_size, seq_len, resolution - 1, num_events]
         cumulative_probability = cumulative_probability.sum(dim = -2)          # [batch_size, seq_len, num_events]
         cumulative_probability = cumulative_probability * events_mask          # [batch_size, seq_len, num_events]
         probability = cumulative_probability.sum(dim = -1)                     # [batch_size, seq_len]
@@ -547,7 +595,7 @@ class RMTPP(BasicModule):
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len, 1]
-        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len, 1]
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len, 1]
         tau_pred = median_prediction(l, r)
         gap = (tau_pred - time_next).squeeze(-1) * mask
         gap = torch.abs(gap)
@@ -558,7 +606,7 @@ class RMTPP(BasicModule):
         model.train()
         
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
-        loss, mae, time_loss, events_loss, the_number_of_events, constant = model(events, time, mean, var, mask)
+        loss, mae, f1, time_loss, events_loss, the_number_of_events, constant = model(events, time, mean, var, mask)
 
         loss.backward()
 
@@ -573,7 +621,7 @@ class RMTPP(BasicModule):
         model.eval()
 
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
-        _, mae, time_loss, events_loss, the_number_of_events, constant\
+        _, mae, f1, time_loss, events_loss, the_number_of_events, constant\
             = model(events, time, mean, var, mask, evaluation = True)
 
         time_loss = time_loss.item() / the_number_of_events
@@ -581,13 +629,13 @@ class RMTPP(BasicModule):
         fact = score.sum().item() / the_number_of_events
         constant_norm = torch.linalg.norm(constant).detach().item() / the_number_of_events
 
-        return time_loss, events_loss, fact, mae, constant_norm
+        return time_loss, events_loss, fact, mae, f1, constant_norm
 
     def postprocess(input, procedure):
         if procedure == 'Training':
             return [input[0], input[1], input[0] - input[2], input[3]]
         else:
-            return [input[0], input[1], input[0] - input[2], input[3], input[4]]
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
 
     def log_print_format(input, procedure):
         def format_training(input):
@@ -605,13 +653,14 @@ class RMTPP(BasicModule):
             format_dict['events_loss'] = input[1]
             format_dict['relative_loss'] = input[2]
             format_dict['MAE'] = input[3]
-            format_dict['constant_norm'] = input[4]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f', 'MAE': ':2.8f', 'constant_norm': ':8.5f'}
+            format_dict['f1'] = input[4]
+            format_dict['constant_norm'] = input[5]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f', 'MAE': ':2.8f', 'f1': ':8.5f', 'constant_norm': ':8.5f'}
             return format_dict
 
         return format_training(input) if procedure == 'Training' else format_eva_and_test(input)
     
-    format_dict_length = 5
+    format_dict_length = 6
     
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'events_loss': ':8.5f', 'constant_norm': ':8.5f'}
 
@@ -627,7 +676,7 @@ class RMTPP(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [evaluation_report[3], test_report[3]]
+        return [evaluation_report[0], test_report[0]]
     
     metric_number = 2 # metric number is the length of the output of choose_metric
 

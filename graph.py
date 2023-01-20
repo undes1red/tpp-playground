@@ -8,6 +8,9 @@ from src.TPP.dataloader import prepare_dataloaders
 from src.TPP.tpp_plotter import draw, spearman_and_l1
 import os, argparse, torch
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -99,11 +102,12 @@ if __name__ == '__main__':
     # Load the model checkpoint.
     model.load_state_dict(model_state_dict)
     opt.n_worker = model_setting.n_worker
-    logger.info('Model restore completed.')
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f'Model restore completed. The number of trainable parameters in this model: {total_params}.')
     logger.info(print_args(opt))
 
     graph = False
-    MAE_E = True
+    MAE_E = False
 
     if not graph:
         for key, (value, value_size) in data_dict.items():
@@ -121,8 +125,12 @@ if __name__ == '__main__':
                     probability_integral_sum = 0
                     all_event_pred_mean = 0
                     all_event_pred_var = 0
+                    mae_pred_values = []
+                    mae_event_values = []
                 else:
                     mae = 0
+                    mae_each_event = []
+                    f1 = 0
 
             for data in tqdm(value, desc = f'{key}', leave = False, total = value_size):
                 if opt.dataloader_name == 'syn':
@@ -163,17 +171,23 @@ if __name__ == '__main__':
                             mae_per_event_pred += mae_per_event_predict_
                             mae_per_event_real += mae_per_event_avg_
                             probability_integral_sum += probability_integral_sum_
+                            all_event_pred_mean += all_event_pred_.mean()
+                            all_event_pred_var += all_event_pred_.var()
                         else:
                         # For MTPP models except RMTPP
-                            results = zip(f1_, mae_per_event_predict_, mae_per_event_avg_, probability_integral_sum_, all_event_pred_)
-                            for f1_per_seq, mae_per_event_predict_per_seq, mae_per_event_avg_per_seq, probability_integral_sum_per_seq, all_event_pred_per_seq in results:
+                            results = zip(f1_, mae_per_event_predict_, mae_per_event_avg_, probability_integral_sum_, \
+                                          all_event_pred_, mae_perdict_each_event, mae_event_next_each_event)
+                            for f1_per_seq, mae_per_event_predict_per_seq, mae_per_event_avg_per_seq, \
+                                probability_integral_sum_per_seq, all_event_pred_per_seq, mae_perdict_each_event_per_seq, \
+                                mae_event_next_each_event_per_seq in results:
                                 f1 += f1_per_seq
                                 mae_per_event_pred += mae_per_event_predict_per_seq
                                 mae_per_event_real += mae_per_event_avg_per_seq
                                 probability_integral_sum += probability_integral_sum_per_seq
                                 all_event_pred_mean += all_event_pred_per_seq.mean()
                                 all_event_pred_var += all_event_pred_per_seq.var()
-
+                                mae_pred_values += torch.log(1 + mae_perdict_each_event_per_seq.detach().cpu()).tolist()
+                                mae_event_values += torch.log(1 + mae_event_next_each_event_per_seq.detach().cpu()).tolist()
                         
                             f1 /= len(f1_)
                             mae_per_event_pred /= len(mae_per_event_predict_)
@@ -187,15 +201,26 @@ if __name__ == '__main__':
                             events_history, events_next = model.divide_history_and_next(input_events, unsqueeze = False)
                             time_history, time_next = model.divide_history_and_next(input_time, unsqueeze = True)
                             mask_history, mask_next = model.divide_history_and_next(mask, unsqueeze = False)
-                        else:
+                        elif opt.model_name != 'ifl':
                         # For MTPP models except RMTPP
                             events_history, events_next = model.divide_history_and_next(input_events)
                             time_history, time_next = model.divide_history_and_next(input_time)
                             mask_history, mask_next = model.divide_history_and_next(mask)
                         
-                        mae_ = model.mean_absolute_error_static(events_history, time_history, time_next, mask_history, mask_next, mean, var)
-                        mae += mae_
-            
+                        if opt.model_name != 'ifl':
+                            mae_, f1_ = model.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var)
+                        else:
+                            '''
+                            IFL specific
+                            '''
+                            mae_, f1_ = model.mean_absolute_error_and_f1(input_events, input_time, mask, mean, var)
+                            mask_next = mask[:, 1:]
+
+                        mae += torch.sum(mae_) / mask_next.sum()
+                        # only work when batch_size == 1
+                        mae_each_event += torch.log(1 + mae_.squeeze().detach().cpu()).tolist()
+                        f1 += f1_
+                
             if opt.synthetic_evaluation:
                 rho = rho / value_size
                 r = r / value_size
@@ -209,13 +234,33 @@ if __name__ == '__main__':
                     probability_integral_sum = probability_integral_sum / value_size
                     all_event_pred_mean = all_event_pred_mean / value_size
                     all_event_pred_var = all_event_pred_var / value_size
+
+                    df_pred = pd.DataFrame(mae_pred_values)
+                    df_mae_e = pd.DataFrame(mae_event_values)
+                    # Draw the distribution graph
+                    fig = plt.figure()
+                    sns.displot(data = df_mae_e, kind = "kde", height = 4, aspect = 0.7)
+                    plt.savefig(os.path.join(os.path.join(opt.store_dir, f'mae_e_dist.png')), dpi = 1000)
+                    df_mae_e.to_csv(os.path.join(os.path.join(opt.store_dir, 'mae_e.csv')))
+                    plt.close(fig = fig)
+
                     report = f'For dataset {key}, the average f1 is {f1}. The average of mae_per_event against predictions is {mae_per_event_pred}, while the mean of mae_per_event against real events is {mae_per_event_real}, the sum of p(m|H) is {probability_integral_sum}, the mean of all predicted times is {all_event_pred_mean}, and the variance is {all_event_pred_var}.'
                 else:
                     mae = mae / value_size
-                    report = f'For dataset {key}, the average mae is {mae}.'
+                    f1 = f1 / value_size
+
+                    df_mae = pd.DataFrame(mae_each_event)
+                    fig = plt.figure()
+                    sns.displot(data = df_mae, kind = "kde", height = 4, aspect = 0.7)
+                    plt.savefig(os.path.join(os.path.join(opt.store_dir, f'mae_dist.png')), dpi = 1000)
+                    df_mae.to_csv(os.path.join(os.path.join(opt.store_dir, 'mae.csv')))
+                    plt.close(fig = fig)
+
+                    report = f'For dataset {key}, the average mae is {mae}, and macro-f1 is {f1}.'
 
             print(report)
-            with open(os.path.join(opt.store_dir, f'result_{key}.log'), 'w') as f:
+            suffix_ = 'event_time' if MAE_E else 'time_event'
+            with open(os.path.join(opt.store_dir, f'result_{key}_{suffix_}.log'), 'w') as f:
                 f.write(report)
 
     if graph:

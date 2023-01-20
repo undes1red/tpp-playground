@@ -54,6 +54,8 @@ class TrainingHost:
         np.random.seed(opt.seed)
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
+        # For debug usage
+        # torch.autograd.set_detect_anomaly(True)
 
         # Prepare for multithreading
         os.environ['MASTER_ADDR'] = 'localhost'

@@ -73,7 +73,7 @@ class RMTPPModule(nn.Module):
 
         # time_scalar can not be zero.
         time_scalar_sign = (time_scalar >= 0).int() - (time_scalar < 0).int()  # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
-        shifted_time_scalar_abs_value = torch.abs(time_scalar).clamp(min = 1e-4)
+        shifted_time_scalar_abs_value = torch.abs(time_scalar).clamp(min = 1e-2)
                                                                                # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
         time_scalar = shifted_time_scalar_abs_value * time_scalar_sign         # [batch_size, seq_len, num_events] if self.original_mark_generation == False else [batch_size, seq_len, 1]
 

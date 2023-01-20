@@ -54,7 +54,7 @@ class THP(BasicModule):
             mae = self.mean_absolute_error(history, time_history, time_next, mask_next)
 
         # temporal point process loss
-        log_likeli_loss, marker_loss = self.log_likelihood(
+        log_likeli_loss, marker_loss, f1 = self.log_likelihood(
              history = history, time_history = time_history, time_next = time_next, \
              events = events_next, mask = mask_next
         )
@@ -65,19 +65,24 @@ class THP(BasicModule):
 
         the_number_of_events = mask_next.sum()
 
-        return log_likeli_loss, marker_loss, mae, the_number_of_events
+        return log_likeli_loss, marker_loss, mae, f1, the_number_of_events
 
-    def mean_absolute_error_static(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         history = self.model(time_history, events_history, mask_history)       # [batch_size, seq_len, num_events]
 
-        mae_mean_of_all_event = \
+        mae_mean_of_all_event, pred_time = \
                     self.mean_absolute_error(history = history,
                                              time_history = time_history, time_next = time_next, 
-                                             mask = mask_next)
+                                             mask = mask_next, output_pred = True, sum = False)
+        # temporal point process loss
+        _, _, f1 = self.log_likelihood(
+             history = history, time_history = time_history, time_next = pred_time, \
+             events = events_next, mask = mask_next
+        )
         
-        return mae_mean_of_all_event
+        return mae_mean_of_all_event, f1
     
-    def mean_absolute_error(self, history, time_history, time_next, mask, sum = True):
+    def mean_absolute_error(self, history, time_history, time_next, mask, sum = True, output_pred = False):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -107,13 +112,21 @@ class THP(BasicModule):
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask
+        gap = (tau_pred - time_next) * mask                                    # [batch_size, seq_len]
+        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
 
         if sum:
-            gap_mean = torch.sum(torch.abs(gap)) / mask.sum()
-            return gap_mean.item()
+            gap_mean = torch.sum(gap) / mask.sum()
+            if output_pred:
+                return gap_mean.item(), tau_pred
+            else:
+                gap_mean = torch.sum(gap) / mask.sum()
+                return gap_mean.item()
         else:
-            return torch.abs(gap)
+            if output_pred:
+                return gap, tau_pred
+            else:
+                return gap
 
     def evaluate(self, time, events, mask):
         '''
@@ -158,6 +171,11 @@ class THP(BasicModule):
         # intensity_all_events = F.softplus(self.model.linear(history) + self.alpha * scaled_time, beta = self.beta)
                                                                                # [batch_size, seq_len, num_events]
 
+        # event prediction
+        predicted_events = torch.argmax(intensity_all_events, dim = -1)[mask == 1].detach().cpu().numpy()
+        events_true = events[mask == 1].detach().cpu().numpy()
+        f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+
         intensity = torch.sum(intensity_all_events * type_mask, dim = -1)      # [batch_size, seq_len]
 
         # event log-likelihood
@@ -183,7 +201,7 @@ class THP(BasicModule):
                                                                                # [batch_size, seq_len]
         events_loss = (events_loss * mask).sum()
 
-        return mtpp_loss, events_loss
+        return mtpp_loss, events_loss, f1
     
     def compute_integral_unbiased(self, history, time_history, time_next, non_pad_mask, resolution = 100):
         """ Log-likelihood of non-events, using Monte Carlo integration. """
@@ -220,6 +238,7 @@ class THP(BasicModule):
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
         be recorded as part of the output.
         '''
+
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         _, events_next = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
@@ -232,9 +251,14 @@ class THP(BasicModule):
             var = input_time.var()
         
         # Use a relatively large number as the positive infinity.
-        max_ = min(1e5, mean + 10 * var)
+        max_ = min(1e6, mean + 10 * var)
 
-        resolution = min(int(max_ * 100), 5000)
+        resolution = min(int(max_ * 100), 50000)
+
+        memory_ceiling = 7e8
+        _, seq_len = events_next.shape
+        if seq_len * resolution * self.num_events > memory_ceiling:
+            resolution = int(memory_ceiling // (seq_len * self.num_events))
 
         # history information
         history = self.evaluate(input_time, input_events, mask)                # [batch_size, seq_len, d_input]
@@ -262,15 +286,15 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history).detach()         # [batch_size, seq_len, num_events]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_events]
         
-        expanded_intensity = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
+        expanded_intensity = softplus_ext(self.alpha.detach() * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta.detach()))
                                                                                # [batch_size, seq_len, resolution, num_events]
         intensity_sum_across_events = torch.sum(expanded_intensity, dim = -1)  # [batch_size, seq_len, resolution]
         integral_sum_across_events = torch.cumsum(intensity_sum_across_events * expanded_time_gap, dim = -1)
                                                                                # [batch_size, seq_len, resolution]
         probabilty_expanded_events = torch.exp(-integral_sum_across_events.unsqueeze(dim = -1)) * expanded_intensity
                                                                                # [batch_size, seq_len, resolution, num_events]
-        probability = expanded_time_gap.unsqueeze(dim = -1) * probabilty_expanded_events
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        probability = expanded_time_gap.unsqueeze(dim = -1)[:, :, 1:, :] * probabilty_expanded_events[:, :, :-1, :]
+                                                                               # [batch_size, seq_len, resolution - 1, num_events]
         probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
         probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
@@ -312,9 +336,11 @@ class THP(BasicModule):
         else:
             resolution = max(min(int(mean * 200), 1000), 1)
         
-        tau_pred_all_event = self.prediction_with_all_event_types(history, events_next, time_history, 
-                                        time_next, probability, resolution, mask, mean, var, max_)
-                                                                               # [batch_size, seq_len, num_events]
+        # tau_pred_all_event = self.prediction_with_all_event_types(history, events_next,
+        #                                                           time_history, time_next,
+        #                                                           probability, resolution, mask, mean, var, max_)
+        #                                                                        # [batch_size, seq_len, num_events]
+        tau_pred_all_event = torch.ones((1, seq_len, 97))                      # [batch_size, seq_len, num_events]
         
         mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(history, predicted_events, time_history, time_next,
                                                                                probability, resolution, mask_next, max_)
@@ -352,7 +378,7 @@ class THP(BasicModule):
         intensity_for_each_event = rearrange(intensity_for_each_event, '... ne -> ... 1 1 ne')
                                                                                # [batch_size, seq_len, 1, 1, num_events]
         
-        expanded_intensity = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
+        expanded_intensity = softplus_ext(self.alpha.detach() * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta.detach()))
                                                                                # [batch_size, seq_len, num_events, resolution, num_events]
         intensity_mask = F.one_hot(torch.arange(self.num_events, device = self.device), num_classes = self.num_events)
                                                                                # [num_events, num_events]
@@ -367,7 +393,8 @@ class THP(BasicModule):
         
         probabilty_expanded_events = torch.exp(-integral_sum_across_events) * expanded_intensity
                                                                                # [batch_size, seq_len, num_events, resolution]
-        probability = expanded_time_gap * probabilty_expanded_events           # [batch_size, seq_len, num_events, resolution]
+        probability = expanded_time_gap[:, :, :, 1:] * probabilty_expanded_events[:, :, :, :-1]
+                                                                               # [batch_size, seq_len, num_events, resolution - 1]
         probability = probability.sum(dim = -1)                                # [batch_size, seq_len, num_events]
 
         return probability
@@ -398,7 +425,7 @@ class THP(BasicModule):
         
         l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
-        r = 1e6*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+        r = max_val*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
         tau_pred = median_prediction(history, l, r)                            # [batch_size, seq_len, num_events]
 
@@ -425,15 +452,15 @@ class THP(BasicModule):
         intensity_for_each_event = self.model.linear(history).detach()         # [batch_size, seq_len, num_events]
         intensity_for_each_event = intensity_for_each_event.unsqueeze(dim = -2)# [batch_size, seq_len, 1, num_events]
         
-        expanded_intensity = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
+        expanded_intensity = softplus_ext(self.alpha.detach() * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta.detach()))
                                                                                # [batch_size, seq_len, resolution, num_events]
         intensity_sum_across_events = torch.sum(expanded_intensity, dim = -1)  # [batch_size, seq_len, resolution]
         integral_sum_across_events = torch.cumsum(intensity_sum_across_events * expanded_time_gap, dim = -1)
                                                                                # [batch_size, seq_len, resolution]
         probabilty_expanded_events = torch.exp(-integral_sum_across_events.unsqueeze(dim = -1)) * expanded_intensity
                                                                                # [batch_size, seq_len, resolution, num_events]
-        probability = expanded_time_gap.unsqueeze(dim = -1) * probabilty_expanded_events
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        probability = expanded_time_gap.unsqueeze(dim = -1)[:, :, 1:, :] * probabilty_expanded_events[:, :, :-1, :]
+                                                                               # [batch_size, seq_len, resolution - 1, num_events]
         probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
         probability = (probability * events_type_mask).sum(dim = -1)           # [batch_size, seq_len]
 
@@ -468,7 +495,7 @@ class THP(BasicModule):
             return (l + r)/2
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
+        r = max_val*torch.ones_like(time_history, dtype = torch.float32)       # [batch_size, seq_len]
         tau_pred = median_prediction(history, l, r)
         gap = (tau_pred - time_next) * mask
         gap = torch.abs(gap)
@@ -811,7 +838,7 @@ class THP(BasicModule):
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
         time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss, mae, the_number_of_events = model(time, events, mask)
+        tpp_loss, mark_loss, mae, f1, the_number_of_events = model(time, events, mask)
         loss = tpp_loss
         loss.backward()
 
@@ -826,19 +853,19 @@ class THP(BasicModule):
         model.eval()
 
         time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        tpp_loss, mark_loss, mae, the_number_of_events = model(time, events, mask, evaluate = True)
+        tpp_loss, mark_loss, mae, f1, the_number_of_events = model(time, events, mask, evaluate = True)
 
         tpp_loss, mark_loss = tpp_loss.item(), mark_loss.item()
         fact = fact.sum()
 
-        return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, mae, fact / the_number_of_events
+        return tpp_loss / the_number_of_events, mark_loss / the_number_of_events, mae, f1, fact / the_number_of_events
 
     def postprocess(input, procedure):
         def train(input):
             return [input[0], input[0] - input[2], input[1]]
         
         def evaluate(input):
-            return [input[0], input[0] - input[3], input[1], input[2]]
+            return [input[0], input[0] - input[4], input[1], input[2], input[3]]
 
         return train(input) if procedure == 'Training' else evaluate(input)
 
@@ -857,12 +884,13 @@ class THP(BasicModule):
             format_dict['relative_loss'] = input[1]
             format_dict['events_loss'] = input[2]
             format_dict['mae'] = input[3]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f', 'mae': ':2.8f'}
+            format_dict['f1'] = input[4]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f', 'mae': ':2.8f', 'f1': ':8.5f'}
             return format_dict
         
         return train(input) if procedure == 'Training' else evaluate(input)
         
-    format_dict_length = 4
+    format_dict_length = 5
     
     logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'events loss': ':8.5f'}
 

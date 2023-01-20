@@ -14,6 +14,10 @@ from .thp_parameter_set import plot_hyperparameter as thp_p
 from .rmtpp_parameter_set import training_hyperparameter as rmtpp_t
 from .rmtpp_parameter_set import plot_hyperparameter as rmtpp_p
 
+# LogNormMix parameter set
+from .lognormmix_parameter_set import training_hyperparameter as ifl_t
+from .lognormmix_parameter_set import plot_hyperparameter as ifl_p
+
 # Self-attentive Hawkes Process(SAHP) parameter set
 from .sahp_parameter_set import training_hyperparameter as sahp_t
 from .sahp_parameter_set import plot_hyperparameter as sahp_p
@@ -27,6 +31,7 @@ plot_parameter_set = {
     'fullynn': {'train': fps_t, 'plot': fps_p},
     'thp': {'train': thp_t, 'plot': thp_p},
     'rmtpp': {'train': rmtpp_t, 'plot': rmtpp_p},
+    'lognormmix': {'train': ifl_t, 'plot': ifl_p},
     'sahp': {'train': sahp_t, 'plot': sahp_p},
     'fullynn_p': {'train': fpps_t, 'plot': fpps_p},
 }

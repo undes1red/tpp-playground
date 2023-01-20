@@ -43,13 +43,14 @@ class FullyNN(nn.Module):
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, nonlinear, event_toggle, n_head, wq_nonneg, wk_nonneg, wv_nonneg, split_comp_graph, 
-                 device):
+                 denominator_shift, pretrain, alpha, beta, device):
         super(FullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
         self.history_module = history_module.lower()
         self.split_comp_graph = split_comp_graph
+        self.denominator_shift = denominator_shift
 
         #　Maybe we can decompose self.hidden_x into the multiplication of two smaller matrices.
         if self.event_toggle:
@@ -95,7 +96,20 @@ class FullyNN(nn.Module):
         self.agg = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.activate = TA[nonlinear]()
 
+        # We might need these two factors to control the vector's norm.
+        if pretrain:
+            # alpha
+            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device))
+            # beta
+            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device))
+        else:
+            # alpha
+            self.output_factor = torch.tensor(alpha,  device = self.device)
+            # beta
+            self.residual_factor = torch.tensor(beta, device = self.device)
+
         self.non_neg = nn.Softplus()
+        self.non_neg_factor = nn.ReLU()
         self.non_neg_integral = nn.Sigmoid()
 
     def forward(self, events_history, time_history, time_next, mean, var, mask):
@@ -142,25 +156,35 @@ class FullyNN(nn.Module):
         time = self.hidden_time(time)                                          # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
         time_zero = self.hidden_time(time_zero)                                # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
         
-        output = self.activate(time + hidden_history)                          # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        output_zero = self.activate(time_zero + hidden_history)                # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        # output = self.activate(time + hidden_history)                        # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        # output_zero = self.activate(time_zero + hidden_history)              # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
 
+        # output = nn.functional.relu(time + hidden_history)                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        # output_zero = nn.functional.relu(time_zero + hidden_history)         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+
+        output = time + hidden_history                                         # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        output_zero = time_zero + hidden_history                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
 
         for layer in self.mlp:
+            residual = output                                                  # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            
+            output = self.non_neg_factor(self.residual_factor) * residual + self.non_neg_factor(self.output_factor) * output
+                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+
+            residual_zero = output_zero                                        # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             output_zero = layer(output_zero)                                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
             output_zero = self.activate(output_zero)                           # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-
+            output_zero = self.non_neg_factor(self.residual_factor) * residual_zero + self.non_neg_factor(self.output_factor) * output_zero
+                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
 
         integral = self.non_neg_integral(-self.agg(output))                    # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
         integral_zero = self.non_neg_integral(-self.agg(output_zero))          # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
 
         integral = rearrange(integral, '... 1 -> ...')                         # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len, 1]
         integral_zero = reduce(integral_zero, '... ne 1 -> ... ()', 'sum')     # [batch_size, seq_len, 1]
-
-        return integral / integral_zero
+ 
+        return integral / (integral_zero + self.denominator_shift)
 
     def probability(self, events_history, time_history, time_next, resolution, mean, var, mask, sum = True):
         '''
@@ -213,11 +237,16 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity] is we need events else [batch_size, seq_len, resolution, d_intensity]
 
         emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        # output = self.activate(emb_time_expand + history_expand)             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        output = emb_time_expand + history_expand                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+
 
         for layer in self.mlp:
+            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+            output = self.non_neg_factor(self.residual_factor) * residual + self.non_neg_factor(self.output_factor) * output
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
 
         expand_integral = self.non_neg_integral(-self.agg(output))             # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
         
@@ -226,12 +255,14 @@ class FullyNN(nn.Module):
             integral_sum = reduce(integral_from_zero_to_inf, 'b s ne 1 -> b s ()', 'sum')
                                                                                # [batch_size, seq_len, 1]
             integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1 1')       # [batch_size, seq_len, 1, 1, 1]
-            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, num_events, 1]
+            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
+                                                                               # [batch_size, seq_len, resolution, num_events, 1]
         else:
             integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, 1]
             integral_sum = rearrange(integral_from_zero_to_inf, 'b s 1 -> b s 1 1')
                                                                                # [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, 1]
+            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
+                                                                               # [batch_size, seq_len, resolution, 1]
 
         expand_probability = - torch.autograd.grad(
             outputs=expand_integral,
@@ -316,14 +347,19 @@ class FullyNN(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity] is we need events else [batch_size, seq_len, resolution, d_intensity]
 
         emb_time_expand = self.hidden_time(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = self.activate(emb_time_expand + history_expand)               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        # output = self.activate(emb_time_expand + history_expand)             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        output = emb_time_expand + history_expand                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+
         output_storage = [output]                                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
 
         for layer in self.mlp:
+            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output = self.activate(output)                                     # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+            output = self.non_neg_factor(self.residual_factor) * residual + self.non_neg_factor(self.output_factor) * output
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
             output_storage.append(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] * (self.mlp_size + 1) if we need events else [batch_size, seq_len, resolution, d_intensity] * (self.mlp_size + 1)
-        
+
         accumulative_layer_output = rearrange(self.agg(output), '... 1 -> ...')# [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
         expand_integral = self.non_neg_integral(-accumulative_layer_output)    # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
 
@@ -332,11 +368,13 @@ class FullyNN(nn.Module):
             integral_sum = reduce(integral_from_zero_to_inf, 'b s ne -> b s ()', 'sum')
                                                                                # [batch_size, seq_len, 1]
             integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1')         # [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution, num_events]
+            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
+                                                                               # [batch_size, seq_len, resolution, num_events]
         else:
             integral_from_zero_to_inf = expand_integral[:, :, 0].detach()      # [batch_size, seq_len]
             integral_sum = rearrange(integral_from_zero_to_inf, 'b s -> b s 1')# [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / integral_sum                   # [batch_size, seq_len, resolution]
+            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
+                                                                               # [batch_size, seq_len, resolution]
 
         # Gradient 1: Integral -> time
         events_gradient = - torch.autograd.grad(
@@ -471,34 +509,6 @@ class FullyNN(nn.Module):
                 }
 
         return result, additional_plot, timestamp
-
-
-class InvertedBottleneck(nn.Module):
-    def __init__(self, d_input, d_hidden, device, no_bottleneck, no_norm, no_activate):
-        super(InvertedBottleneck, self).__init__()
-
-        self.no_bottleneck = no_bottleneck
-        self.no_norm = no_norm
-        self.no_activate = no_activate
-
-        self.expand = nn.Linear(d_input, d_hidden, device = device)
-        self.bottleneck = nn.Linear(d_hidden, d_input, device = device)
-        self.norm = nn.LayerNorm(d_input, device = device)
-
-        self.activate = nn.GELU()
-
-    def forward(self, x):
-        residual = x
-
-        if not self.no_norm:
-            x = self.norm(x)                                                   # [..., d_input]
-        if not self.no_bottleneck:
-            x = self.expand(x)                                                 # [..., d_hidden]
-            x = self.bottleneck(x)                                             # [..., d_input]
-        if not self.no_activate:
-            x = self.activate(x)                                               # [..., d_input]
-
-        return residual + x
 
 def L1_distance(input, resolution, num_events, time_next):
     '''

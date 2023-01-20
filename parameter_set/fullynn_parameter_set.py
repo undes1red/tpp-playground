@@ -196,7 +196,7 @@ syn_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json", "syn/fullynn_zero_shift.json", "syn/fullynn_CL.json", "syn/fullynn_zero_shift_CL.json"], \
+    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json"], \
     "--lr", "0.002", \
     "--batch_size", "128", \
     "--n_training_steps", "10000", \

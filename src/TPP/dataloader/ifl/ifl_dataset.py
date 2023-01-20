@@ -19,7 +19,7 @@ class IflDataset(utils.data.Dataset):
     '''
 
     def __init__(self, data, device, num_events, start_time: int = None, \
-                 end_time: int = None, input_norm_data = True, plot = False):
+                 end_time: int = None, input_norm_data = True, inception_shift = False, plot = False):
         super(IflDataset, self).__init__()
         self.data = data
         self.device = device
@@ -33,12 +33,22 @@ class IflDataset(utils.data.Dataset):
         self.input_norm_data = input_norm_data
         self.event_num = num_events
 
+        if inception_shift:
+            '''
+            Current stackoverflow specific
+            '''
+            for idx, item in enumerate(self.data.time_seq):
+                first_event_abs_time = item[0]
+                self.data.time_seq[idx].insert(0, first_event_abs_time - 0.8)
+                tmp = np.diff(self.data.time_seq[idx]) + 1e-6
+                self.data.time_seq[idx] = np.cumsum(tmp).tolist()
+
         # Data normalization
         if input_norm_data:
             regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())
             regenerated_data.insert(0, 'start', self.start_time)
             regenerated_data.insert(regenerated_data.columns.size, 'end', self.end_time)
-            regenerated_data = np.log(regenerated_data.diff(axis = 1) + 1e-8).stack()
+            regenerated_data = np.log(regenerated_data.diff(axis = 1) + 1e-15).stack()
             self.mean = regenerated_data.mean()
             self.var = regenerated_data.std()
         
