@@ -3,11 +3,11 @@ from tqdm import tqdm
 from itertools import cycle
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from .utils import print_performances, suffix, lst_add_lst, read_json, \
+from src.TPP.utils import print_performances, suffix, lst_add_lst, read_json, \
                    lst_divide, evaluation, Metric, add_prefix_to_keys, print_args, getLogger, FileLogger
-from .model import get_model
-from .optimizer.optim import ScheduledOptim
-from .dataloader import prepare_dataloaders
+from src.TPP.model import get_model
+from src.TPP.optimizer.optim import ScheduledOptim
+from src.TPP.dataloader import prepare_dataloaders
 
 
 '''
@@ -71,6 +71,15 @@ class TPPTrainer:
         '''
         Directory preparation
         '''
+
+        '''
+        Create log and model-saving dirs if they are not present.
+        '''
+        if not os.path.isdir(self.opt.log):
+            os.makedirs(self.opt.log)
+        if not os.path.isdir(self.opt.save_model):
+            os.makedirs(self.opt.save_model)
+
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         if not os.path.exists(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix)) and self.rank == 0:
             os.mkdir(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix))

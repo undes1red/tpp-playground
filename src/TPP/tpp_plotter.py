@@ -1,18 +1,9 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
-import torch, os
-import pandas as pd
-import numpy as np
-from scipy.stats import spearmanr
-from scipy.special import kl_div
-
-from .plotter_utils import true_intensity_dict, true_probability_dict, L1_distance
-from .utils import getLogger, restore_dataset_name
+import os
+from src.TPP.utils import getLogger
 
 logger = getLogger(name = __file__)
-
-length = 20
-height = 5
 
 '''
 This is the main plotter library.
@@ -37,449 +28,56 @@ This function should return
 2. model_prober
 '''
 
-'''
-1. We can draw probability distribution plots and intensity function at the same time.
-2. We will utilize intensity functions values and their integrals for probability distribution.
-   We don't need to implement another model method to obtain them.
-'''
-intensity_probe_qualified_models = [
-    'dwg',            # an II-TPP model with \Lambda^*(0) = 0 in mind.
-    'fullynn',        # proposed by Omi et al., the first II-TPP model.
-    'ctlstm',         # proposed by Mei et al., a MTPP model based on LSTM.
-    'thp',            # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
-    'rmtpp',          # proposed by Du et al., might be the first NN-based TPP algorithm.
-    'fullynn_v2',     # ...
-    'multi_fullynn',  # MFullyNN, another multi-mark FullyNN adaptation.
-    'sahp',           # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
-    ]
-
-'''
-Intensity function drawing utils
-'''
-def expand_true_intensity(time, intensity, opt):
-    try:
-        return true_intensity_dict[restore_dataset_name(opt.dataset_name)](time, intensity, opt.resolution, device = opt.device).detach().cpu().numpy()
-                                                                               # [batch_size, seq_len * resolution]
-    except:
-        return [None] * intensity.shape[0]                                     # [batch_size]
-
-def expand_model_intensity_and_integral(model, data, opt):
-    if opt.model_name in intensity_probe_qualified_models:
-        model.eval()
-        return model.function_prober(data, opt.resolution)                     # [batch_size, seq_len * resolution] * 3
-    else:
-        raise Exception('This model is incompatible with intensity prober!')
-
-def draw_intensity(model, data, desc, batch_idx, opt):
-    '''
-    Now you should investigate your own model implementations and modify this function.
-    Because of the design of training_step() and evaluation_step(), intensity and integral outputs can not be handled automatically.
-
-    data: [time_diff, score, target_intensity]
-    '''
-
-    _, model_intensity, timestamp = expand_model_intensity_and_integral(model, data, opt)
-                                                                               # [batch_size, seq_len * resolution]
-    time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().numpy()         # [batch_size, seq_len]
-    true_intensity = expand_true_intensity(time, intensity, opt = opt)         # [batch_size, seq_len * resolution]
-    
-    timestamp = timestamp.cumsum(dim = -1).detach().cpu().numpy()
-    event = event.detach().cpu().numpy()
-    model_intensity = model_intensity.detach().cpu().numpy()                   # [batch_size, seq_len * resolution]
-
-    if np.isnan(model_intensity).any():
-        '''
-        Model intensity prediction has failed!
-        '''
-        logger.error('We detect NaN in the intensity predictions! Please try again after checking the model checkpoints and retraining your model.')
-        return 0
-
-    # pack the required data
-    packed_data = zip(model_intensity, true_intensity, event, aggregate_time, timestamp)
-
-    for idx, (model_intensity_per_seq, true_intensity_per_seq, event_per_seq, \
-              aggregate_time_per_seq, timestamp_per_seq) in enumerate(packed_data):
-        annotation = None
-        if true_intensity_per_seq is not None:
-            # Calculate pearson, spearman corrilation and L^1 distance here.
-            # Then, print these values directly on the plots.
-        
-            # Spearman correlation
-            rho = spearmanr(a = true_intensity_per_seq, b = model_intensity_per_seq)[0]
-            # Pearson correlation
-            r = np.corrcoef(x = true_intensity_per_seq, y = model_intensity_per_seq)[0, 1]
-            # L1 distance
-            L1 = L1_distance(x = true_intensity_per_seq, y = model_intensity_per_seq, \
-                             timestamp = timestamp_per_seq, resolution = opt.resolution)
-
-            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
-
-        if true_intensity_per_seq is not None:
-            df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq, 'Predicted Intensity': model_intensity_per_seq, 'Truth': true_intensity_per_seq}
-            )
-        else:
-            df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq, 'Predicted Intensity': model_intensity_per_seq}
-            )
-        df_intensity_plot = pd.melt(df, 'Time')
-        df_intensity_plot.columns = ['Time', '', 'Intensity']
-        df_events = pd.DataFrame.from_dict(
-                {'Time': aggregate_time_per_seq, 'Point': np.zeros_like(aggregate_time_per_seq), \
-                 'Event': [f'Event {item}' for item in event_per_seq]}
-        )
-
-        # Draw plot
-        fig = plt.figure()
-        sns.lineplot(x = 'Time', y = 'Intensity', hue = '', data = df_intensity_plot)
-        sns.scatterplot(x = 'Time', y = 'Point', data = df_events, palette = 'pastel', hue = 'Event')
-        fig.set_size_inches(length,height)
-        if annotation is not None:
-            fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
-        if not os.path.exists(os.path.join(opt.store_dir, 'intensity')):
-            os.makedirs(os.path.join(opt.store_dir, 'intensity'))
-        plt.savefig(os.path.join(opt.store_dir, 'intensity', desc + '_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
-        plt.close(fig = fig)
-
-        logger.info(f'Figure {desc}_{idx} in batch {batch_idx} finished drawing.')
-
-
-'''
-Probability distribution drawing utils
-'''
-def expand_true_probability(time, intensity, opt):
-    try:
-        functions = true_probability_dict[restore_dataset_name(opt.dataset_name)]
-    except:
-        return [None] * intensity.shape[0]                                     # [batch_size]
-        
-    if len(functions) == 2:
-        '''
-        Two functions means you should combine the intensity function and corresponding integral function to
-        obtain the final probability distribution.
-        '''
-        expand_true_intensity = \
-            functions[0](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len * resolution]
-        expand_true_integral = \
-            functions[1](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len * resolution]
-        return expand_true_intensity * torch.exp(-expand_true_integral)        # [batch_size, seq_len * resolution]
-    else:
-        '''
-        While for several special tpps defined by probability distributions instead of intensity functions, thing are quite
-        easier: go find the distribution and the task is done.
-        '''
-        expand_true_probability = functions[0](time, intensity, opt.resolution, device = opt.device)
-                                                                               # [batch_size, seq_len * resolution]
-        return expand_true_probability
-
-
-probability_probe_qualified_models = {
-    # The following models do not directly provide the probability distribution.
-    # You should manually find the distribution by its definition: p(m, t|mathcal{H}) = \lambda^*_i(t)\exp(-\int^{t}_{t_l}{\lambda^*(\tau)d\tau})
-    'intensity_and_integral': [
-    'dwg',                # an II-TPP model with \Lambda^*(0) = 0 in mind.
-    'fullynn',            # proposed by Omi et al., the first II-TPP model.
-    'ctlstm',             # proposed by Mei et al., a MTPP model based on LSTM.
-    'thp',                # proposed by Zuo et al., a modified RMTPP whose history encoder utilises Transformers as the beckbone.
-    'rmtpp',              # proposed by Du et al., might be the first NN-based TPP algorithm.
-    'fullynn_v2',         # ...
-    'multi_fullynn',      # MFullyNN, another multi-mark FullyNN adaptation.
-    'sahp',               # proposed by Zhang et al.. You can call it CTT(Continuous Time Transformers)
-    ],
-    # The following models directly estimate TPP or MTPP's probability distribution.
-    # No intensity function is involved.
-    'probability': [
-    "ifl",                # proposed by Shchur et al., an intensity-free model which directly estimate p(t|\mathcal{H})
-    'fullynn_probability',# Yet another II-TPP model but the output is the general integral of p(m, t|\mathcal{H}) in interval [t, +\infty)
-    ]
-}
-
-def expand_model_probability(model, data, opt):
-    if opt.model_name in probability_probe_qualified_models['intensity_and_integral']:
-        model.eval()
-        probed_intensity_integral, probed_intensity, timestamp = \
-            model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
-        probed_probability = probed_intensity * torch.exp(-probed_intensity_integral)
-                                                                               # [batch_size, seq_len * resolution]
-        return probed_probability, timestamp
-    elif opt.model_name in probability_probe_qualified_models['probability']:
-        model.eval()
-        probed_probability, timestamp = \
-            model.function_prober(data, opt.resolution)                        # [batch_size, seq_len * resolution]
-        return probed_probability, timestamp
-    else:
-        raise Exception('This model is incompatible with probability prober!')
-
-def draw_probability(model, data, desc, batch_idx, opt):
-    '''
-    Now you should investigate your own model implementations and modify this function. If your algorithm is listed in 'intensity_available', its
-    model_probe() should return model-learned intensity function values and integral values at all timestamp samples, otherwise model_probe() should output
-    the probability distribution values directly(Like several intensity-free models). Thanks to the constant and easy relation from intensity functions
-    to correlated probability distributions, we do not require an additional complicated method for probability distribution probe.
-
-    data: [time_diff, score, target_intensity]
-    '''
-    model_probability, timestamp = expand_model_probability(model, data, opt)
-
-    time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu().numpy()         # [batch_size, seq_len]
-    true_probability = expand_true_probability(time, intensity, opt)           # [batch_size, seq_len * resolution]
-
-    timestamp = timestamp.cumsum(dim = -1).detach().cpu().numpy()              # [batch_size, seq_len * resolution]
-    event = event.cpu().numpy()
-    model_probability = model_probability.detach().cpu().numpy()               # [batch_size, seq_len * resolution]
-
-    if np.isnan(model_probability).any():
-        '''
-        Model failed the probability prediction!
-        '''
-        logger.error('We detect NaN in the probability predictions! Please try again after checking the model checkpoints and retraining your model.')
-        return 0
-
-    # pack the required data
-    packed_data = zip(model_probability, true_probability, event, aggregate_time, timestamp)
-
-    for idx, (model_probability_per_seq, true_probability_per_seq, event_per_seq, \
-              aggregate_time_per_seq, timestamp_per_seq) in enumerate(packed_data):
-        annotation = None
-        if true_probability_per_seq is not None:
-            true_probability_per_seq = true_probability_per_seq.detach().cpu().numpy()
-                                                                               # [batch_size, seq_len * resolution]
-
-            # Calculate pearson, spearman corrilation and L^1 distance here.
-            # Then, print these values directly on the plots.
-
-            # Spearman correlation
-            rho = spearmanr(a = model_probability_per_seq, b = true_probability_per_seq)[0]
-            # Pearson correlation
-            r = np.corrcoef(x = model_probability_per_seq, y = true_probability_per_seq)[0, 1]
-            # L1 distance
-            L1 = L1_distance(x = model_probability_per_seq, y = true_probability_per_seq, \
-                             timestamp = timestamp_per_seq, resolution = opt.resolution)
-
-            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
-
-        if true_probability_per_seq is not None:
-            df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq, 'Predicted Probability': model_probability_per_seq, 'Truth': true_probability_per_seq}
-            )
-        else:
-            df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq, 'Predicted Probability': model_probability_per_seq}
-            )
-        df_probability_plot = pd.melt(df, 'Time')
-        df_probability_plot.columns = ['Time', '', 'Probability']
-        df_events = pd.DataFrame.from_dict(
-                {'Time': aggregate_time_per_seq, 'Point': np.zeros_like(aggregate_time_per_seq), \
-                 'Event': [f'Event {item}' for item in event_per_seq]}
-        )
-
-        # We need to scrutinise the distribution.
-        # Only available on synthetic datasets
-        number_of_samples = int(0.2 * opt.resolution)
-        model_dist_right_after_event = model_probability_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
-        true_dist_right_after_event = true_probability_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
-        timestamp_per_seq_after_event = timestamp_per_seq.reshape(-1, opt.resolution)[3, :number_of_samples]
-        timestamp_per_seq_after_event = timestamp_per_seq_after_event - timestamp_per_seq_after_event[0]
-        df_probe = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq_after_event, 'Predicted Probability': model_dist_right_after_event, 'Truth': true_dist_right_after_event}
-            )
-        df_probability_plot_probe = pd.melt(df_probe, 'Time')
-        df_probability_plot_probe.columns = ['Time', '', 'Probability']
-
-        fig = plt.figure()
-        fig.set_size_inches(12.8, 9.6)
-        sns.set(font_scale = 3)
-        ax = sns.lineplot(x = 'Time', y = 'Probability', hue = '', data = df_probability_plot_probe, linewidth = 4)
-        ax.set_xlabel(r'Relative Time $(t - t_l)$')
-        ax.set_ylabel('Probability distribution')
-        if not os.path.exists(os.path.join(opt.store_dir, 'probability')):
-            os.makedirs(os.path.join(opt.store_dir, 'probability'))
-        plt.savefig(os.path.join(opt.store_dir, 'probability', desc + '_probe_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
-        plt.close(fig = fig)
-
-        # Draw plot
-        fig = plt.figure()
-        sns.lineplot(x = 'Time', y = 'Probability', hue = '', data = df_probability_plot)
-        sns.scatterplot(x = 'Time', y = 'Point', data = df_events, palette = 'pastel', hue = 'Event')
-        fig.set_size_inches(length,height)
-        if annotation is not None:
-            fig.text(x = 0.1, y = 0.98, verticalalignment='top', horizontalalignment = 'left', s = annotation)
-        if not os.path.exists(os.path.join(opt.store_dir, 'probability')):
-            os.makedirs(os.path.join(opt.store_dir, 'probability'))
-        plt.savefig(os.path.join(opt.store_dir, 'probability', desc + '_' + str(idx) + '_' + str(batch_idx) + '.png'), dpi = 1000)
-        plt.close(fig = fig)
-
-        logger.info(f'Figure {desc}_{idx} in batch {batch_idx} finished drawing.')
-
-
-'''
-Probe various model features.
-'''
-def draw_features(model, data, desc, batch_idx, opt):
+def draw(model, minibatch, desc, batch_idx, opt):
     '''
     This function is for model probing. It can be super useful when you need to dig into a model and see
     what really happens.
     data: [time_diff, score, target_intensity]
-
-    Update 2022-08-21: now you can use additional_plot to draw plots like attention heatmap.
     '''
 
-    model.eval()
-    time, event, _ = extract_data(data, opt)                                  # [batch_size, seq_len + 1] & [batch_size, seq_len]
-    aggregate_time = torch.cumsum(time[:, 1:], dim = -1).cpu()                # [batch_size, seq_len]
-    data, timestamp  = model.model_prober(data, opt.resolution)
-    if len(data) == 1:
-        '''
-        No additional maps available.
-        '''
-        probed_data = data[0]
-        additional_plot = {}
-    else:
-        '''
-        We have additional maps.
-        '''
-        probed_data, additional_plot = data
-    timestamp = timestamp.cumsum(dim = -1).detach().cpu().numpy()              # [batch_size, seq_len]
-    event = event.cpu().numpy()                                                # [batch_size, seq_len]
+    '''
+    In the new pipeline, each plot is defined as a instruction list. draw_features() should extract and
+    call correct seaborn APIs from each plot dict. The structure of the 'plots dict goes as follows:
+    {
+        ...
+        '[plot name]':
+        [
+            ...
+            {
+                'plot_type': '[plot_type]'
+                'length': [diagram length],
+                'height': [diagram height],
+                'kwargs':
+                {
+                    ...'[arguments sent to seaborn APIs.]'
+                }
+            }
+            ...
+        ]
+        ...
+    }
+    '''
+
+    plots = model.plot(minibatch, opt)
     
-    '''
-    function probe for functions defined over time
-    '''
-    if not opt.plot_type == 'debug_addition_only':
-        for key, value in probed_data.items():
-            value = value.detach().cpu().numpy()
-
-            packed_data = zip(value, timestamp, aggregate_time, event)
-            for idx, (value_per_seq, timestamp_per_seq, aggregate_time_per_seq, event_per_seq) in enumerate(packed_data):
-                df_event = pd.DataFrame.from_dict(
-                        {'Time': aggregate_time_per_seq, 'Point': np.zeros_like(aggregate_time_per_seq), \
-                        'Event': [f'Event {item}' for item in event_per_seq]}
-                )
-
-                df_value = pd.DataFrame.from_dict(
-                        {'Time': timestamp_per_seq, key: value_per_seq}
-                    )
+    # Create the plot storing directory if not exist.
+    plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
+    if not os.path.exists(plot_store_dir_for_this_batch):
+        os.makedirs(plot_store_dir_for_this_batch)
     
-                # Draw plot
-                fig = plt.figure()
-                sns.lineplot(x = 'Time', y = key, data = df_value)
-                sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = 'pastel', hue = 'Event')
-                fig.set_size_inches(length,height)
-
-                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx))):
-                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx)))
-
-                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(idx), key + '.png'), dpi = 1000)
-                logger.info(f'Debug plot {key} with data index {idx} for batch {batch_idx} in dataset {desc} finished drawing.')
-                plt.close(fig = fig)
-    
-    '''
-    Check if we have unfinished additional tasks.
-    '''
-    if len(additional_plot) > 0:
-        logger.info('Now we start drawing the additional maps.')
-    else:
-        logger.info('No additional task is required.')
-
-    for seq_idx, additional_plot_per_seq in enumerate(additional_plot):
-        for key, value in additional_plot_per_seq.items():
-            for plot_idx, plot in enumerate(value):
-                annotation = None
-                if len(plot) == 2:
-                    map_name, data = plot
-                else:
-                    map_name, data, annotation = plot
-
-                fig = plt.figure()
-                if hasattr(sns, key):
-                    sns.set(font_scale = 3)
-                    fig.set_size_inches(12.8, 12.8)
-                    ax = getattr(sns, key)(**data)
-                if annotation is not None:
-                    x = data['data'][data['x']]
-                    y = data['data'][data['y']]
-                    for x_, y_ in zip(x, y):
-                        ax.text(x_ - 0.15, y_, f'{y_:.2f}', **annotation)
-
-                if not os.path.exists(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx))):
-                    os.makedirs(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx)))
-
-                plt.savefig(os.path.join(opt.store_dir, 'debug', desc, str(batch_idx), str(seq_idx),
-                            key + '_' + map_name + '_' + str(plot_idx) + '.png'), dpi = 1000)
-                plt.close(fig = fig)
-                logger.info(f'Debug {key}_{map_name}_{plot_idx} for sequence {seq_idx} for batch {batch_idx} in dataset {desc} finished drawing.')
+    for plot_name, plot_instructions in plots.items():
+        fig = plt.figure()
+        for instruction in plot_instructions:
+            if instruction.get('length') and instruction.get('height'):
+                fig.set_size_inches(instruction.get('length'), instruction.get('height'))
+            getattr(sns, instruction['plot_type'])(**instruction['kwargs'])
+        
+        logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
+        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.png'), dpi = 1000)
+        plt.close(fig = fig)
 
 
-def draw(model, data, desc, idx, opt):
-    if opt.plot_type == 'intensity':
-        draw_intensity(model, data, desc, idx, opt)
-    elif opt.plot_type == 'probability':
-        draw_probability(model, data, desc, idx, opt)
-    elif opt.plot_type == 'debug' or opt.plot_type == 'debug_addition_only':
-        draw_features(model, data, desc, idx, opt)
-    else:
-        raise Exception('Unknown plot type detected!')
-
-def extract_data(data, opt):
-    '''
-    Why do we need this function?
-    Because different dataloaders would give minibatches in quite different manners, and there is no way
-    to force all dataloader to comply a pre-defined data output structure. 
-
-    extract_data should choose the proper extract data function stored in dictionary 'extract_data_from_rawdata'
-    by the name of used dataloader.
-    All functions defined in 'extract_data_from_rawdata' may receive raw data from the dataloader(batch_size is always 1), extract
-    time and intensity sequences, and output them.
-
-    Addition: The expected time sequences should have shape [batch_size, seq_len + 1] and the first item of each sequence is 0. Other values in 
-    a time sequence should be the time interval between two adjoint events. Several algorithms may require an escape time to guarantee
-    all event sequences having the same length on the timeline. But for simplicity, one should remove such escape events here.
-    '''
-    return extract_data_from_rawdata[opt.dataloader_name](data)
-
-def syn_extract(raw_data):
-    [time_seq, event_seq, _, _, intensity], _ = raw_data
-    return time_seq, event_seq[:, 1:], intensity
-
-def ctlstm_extract(raw_data):
-    return raw_data[0][1][:, :-1], raw_data[2]
-
-def cnf_extract(raw_data):
-    pass
-
-def ifl_extract(raw_data):
-    '''
-    Time, event, intensity
-    '''
-    [event, time, mask], _, mean_and_var, intensity = raw_data                 # [batch_size, seq_len + 1]
-    batch_size = event.shape[0]
-
-    event = event[:, :-1].clone()                                              # [batch_size, seq_len]
-    time = torch.cat(
-        (torch.zeros((batch_size, 1), device = time.device), time[:, :-1]),
-    dim = -1)                                                                  # [batch_size, seq_len + 1]
-
-    return time, event, intensity
-
-def syn_arg_extract(raw_data):
-    [_, _, result, _, event, intensity, _], _ = raw_data
-    # pad the time sequence
-    result = torch.cat(
-        (torch.zeros((result.shape[0], 1), device = result.device), result), dim = -1
-    )
-    return result, event, intensity
-
-
-extract_data_from_rawdata = {
-    'syn': syn_extract,
-    'ctlstm': ctlstm_extract,
-    'cnf': cnf_extract,
-    'ifl': ifl_extract,
-    'syn_arg': syn_arg_extract
-}
-
+'''
 def spearman_and_l1(model, data, opt):
     model_probability, timestamp = expand_model_probability(model, data, opt)  # [batch_size, seq_len * resolution]
     time, event, intensity = extract_data(data, opt)                           # [batch_size, seq_len + 1] & [batch_size, seq_len]
@@ -488,9 +86,9 @@ def spearman_and_l1(model, data, opt):
     # torch.tensor to numpy.array
     model_probability = model_probability.squeeze().detach().cpu().numpy()
     if np.isnan(model_probability).any():
-        '''
+        \'''
         Model intensity prediction has failed!
-        '''
+        \'''
         logger.error('We detect NaN in the intensity predictions! Please try again after checking the training log and retraining your model.')
         return 0
 
@@ -513,3 +111,5 @@ def spearman_and_l1(model, data, opt):
         
     
     return rho, r, L1
+
+'''

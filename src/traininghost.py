@@ -4,7 +4,7 @@ import numpy as np
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from .traininghost_utils import getLogger
+from src.traininghost_utils import getLogger
 
 '''
 The TrainingHost executes model training using pytorch multiprocessing backbones, referring to neural_stpp created by Facebook.
@@ -12,11 +12,12 @@ The TrainingHost executes model training using pytorch multiprocessing backbones
 logger = getLogger('__TrainingHost__')
 
 class TrainingHost:
-    def __init__(self, root_path, procedure_name):
+    def __init__(self, parser, root_path):
+        self.opt = parser.parse_args()
         self.root_path = root_path
-        self.procedure_name = procedure_name
-        logger.info(f'Root path: {self.root_path}')
-        logger.info(f'Procedure name: {self.procedure_name}')
+
+        procedure = importlib.import_module('src.' + self.opt.procedure)
+        self.opt = getattr(procedure, 'postprocess')(self.opt, self.root_path)
 
     def start(self):
         '''
@@ -27,31 +28,32 @@ class TrainingHost:
         1. The arguments loader should be named as "procedure_name + arguments"(no whitespace).
         2. The name of the entry function should be 'train'.
         '''
-        procedure = importlib.import_module('src.' + self.procedure_name)
-        argument_class_name = self.procedure_name + 'Arguments'
-        opt = getattr(procedure, argument_class_name)(self.root_path).get_args()
-        self.trainer = getattr(procedure, self.procedure_name + 'Trainer')()
+        logger.info(f'Root path: {self.root_path}')
+        logger.info(f'Procedure name: {self.opt.procedure}')
+
+        procedure = importlib.import_module('src.' + self.opt.procedure)
+        self.trainer = getattr(procedure, self.opt.procedure + 'Trainer')()
 
         '''
         Reproducibility.
         '''
-        if opt.no_seed:
+        if self.opt.no_seed:
             import time
             logger.warning(f'Reproducibility only presents when a random seed is explicitly given. If you really request reproducible results. Please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
             logger.warning(f'No explicit random seed is detected, so the framework will spontaneously select a number as the random seed based on the UNIX timestamp.')
             random.seed(int(time.time()) % 65535)
-            opt.seed = random.randint(0, 65535)
-            logger.info(f'The model loves {opt.seed} this time.')
+            self.opt.seed = random.randint(0, 65535)
+            logger.info(f'The model loves {self.opt.seed} this time.')
         else:
-            logger.info(f'You request that we should use number {opt.seed} as the random seed.')
+            logger.info(f'You request that we should use number {self.opt.seed} as the random seed.')
 
         '''
         Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for furhter information about
         reproducibility
         '''
-        random.seed(opt.seed)
-        torch.manual_seed(opt.seed)
-        np.random.seed(opt.seed)
+        random.seed(self.opt.seed)
+        torch.manual_seed(self.opt.seed)
+        np.random.seed(self.opt.seed)
         torch.backends.cudnn.benchmark = False
         torch.use_deterministic_algorithms(True)
         # For debug usage
@@ -63,27 +65,27 @@ class TrainingHost:
 
         try:
             mp.set_start_method("forkserver")
-            mp.spawn(self.main, args = (opt.ngpus, opt), nprocs=opt.ngpus, join=True)
+            mp.spawn(self.main, nprocs=self.opt.ngpus, join=True)
         except Exception:
             import traceback
             logger.error(traceback.format_exc())
             sys.exit(1)
     
-    def main(self, rank, ngpus, opt):
+    def main(self, rank):
         '''
         Multiprocessing training controller.
         '''
-        dist.init_process_group("nccl" if opt.cuda else 'gloo', rank=rank, world_size=ngpus, timeout=datetime.timedelta(minutes=30))
+        dist.init_process_group("nccl" if self.opt.cuda else 'gloo', rank=rank, world_size=self.opt.ngpus, timeout=datetime.timedelta(minutes=30))
 
         '''
         Gradient aggergation check
         '''
-        if opt.agg_update_step > 1 and rank == 0:
-            logger.warning(f'Gradient aggregation is detected! The number of all training steps is multiplied by {opt.agg_update_step}!')
-            opt.n_training_steps *= opt.agg_update_step
-            opt.n_evaluation_steps *= opt.agg_update_step
-            opt.n_report_steps *= opt.agg_update_step
-            opt.n_warmup_steps *= opt.agg_update_step
+        if self.opt.agg_update_step > 1 and rank == 0:
+            logger.warning(f'Gradient aggregation is detected! The number of all training steps is multiplied by {self.opt.agg_update_step}!')
+            self.opt.n_training_steps *= self.opt.agg_update_step
+            self.opt.n_evaluation_steps *= self.opt.agg_update_step
+            self.opt.n_report_steps *= self.opt.agg_update_step
+            self.opt.n_warmup_steps *= self.opt.agg_update_step
     
         '''
         Avoid pytorch issue #36313
@@ -95,34 +97,26 @@ class TrainingHost:
         '''
         Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
         '''
-        if not opt.log and not opt.save_model and rank == 0:
+        if not self.opt.log and not self.opt.save_model and rank == 0:
             logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
     
         '''
         Report device status
         '''
-        opt.device = torch.device(
-            f'cuda:{rank:d}' if opt.cuda and torch.cuda.is_available() else 'cpu')
+        self.opt.device = torch.device(
+            f'cuda:{rank:d}' if self.opt.cuda and torch.cuda.is_available() else 'cpu')
     
         if rank == 0:
-            if opt.device.type == 'cuda':
+            if self.opt.device.type == 'cuda':
                 logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     logger.info('{} \t Memory: {:.2f}GiB'.format(props.name, props.total_memory / (1024**3)))
             else:
-                logger.info('WARNING: Using device {}'.format(opt.device))
-    
-        '''
-        Create log and model-saving dirs if they are not present.
-        '''
-        if not os.path.isdir(opt.log):
-            os.makedirs(opt.log)
-        if not os.path.isdir(opt.save_model):
-            os.makedirs(opt.save_model)
+                logger.info('WARNING: Using device {}'.format(self.opt.device))
     
         try:
-            self.trainer.train(rank = rank, opt = opt)
+            self.trainer.train(rank = rank, opt = self.opt)
         except:
             import traceback
             logger.error(traceback.format_exc())

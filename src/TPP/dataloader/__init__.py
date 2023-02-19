@@ -2,16 +2,17 @@ import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
 
-from .utils import *
-from ..utils import getLogger, read_json
+from src.TPP.dataloader.utils import *
+from src.TPP.utils import getLogger, read_json
 
 
 logger = getLogger(__name__)
 
+
 def dataloader_zoo(name):
-    path, function_name = dataloader_modulepath[name]
-    module = importlib.import_module('.' + path, package = 'src.TPP.dataloader')
-    return getattr(module, function_name)()
+    module = importlib.import_module('.' + name, package = 'src.TPP.dataloader')
+    return module.get_dataloader()
+
 
 def find_dataset(name, rank):
     try:

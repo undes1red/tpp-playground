@@ -1,7 +1,6 @@
-import argparse
 class BasicArguments:
-    def __init__(self):
-        self.parser = argparse.ArgumentParser()
+    def __init__(self, parser):
+        self.parser = parser
         # The Ultimate
         self.parser.add_argument('--no_seed', action='store_true',
                             help='Do not freeze random seed. Use this option if you want to explore your model\'s robustness.')
@@ -28,7 +27,3 @@ class BasicArguments:
 
         # wandb support
         self.parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
-
-
-    def get_args(self):
-        return self.parser.parse_args()

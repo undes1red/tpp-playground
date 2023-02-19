@@ -1,11 +1,11 @@
 '''A wrapper class for scheduled optimizer '''
 
 import math
-from ..utils import mean, read_json
+from src.TPP.utils import mean, read_json, getLogger
 import torch.optim as optim
-from ..utils import getLogger
 
 logger = getLogger(__name__)
+
 
 class ScheduledOptim():
     '''

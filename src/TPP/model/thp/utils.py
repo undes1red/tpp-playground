@@ -1,22 +1,8 @@
-import math, torch
-import torch.nn as nn
+import torch
 import torch.nn.functional as F
+from einops import rearrange, repeat, reduce, pack
+import numpy as np
 
-def get_non_pad_mask(seq, pad):
-    """ Get the non-padding positions. """
-
-    assert seq.dim() == 2
-    return seq.ne(pad).type(torch.float).unsqueeze(-1)                         # [(seq.dim()), 1]
-
-
-def get_attn_key_pad_mask(seq_k, seq_q, pad):
-    """ For masking out the padding part of key sequence. """
-
-    # expand to fit the shape of key query attention matrix
-    len_q = seq_q.size(1)
-    padding_mask = seq_k.eq(pad)
-    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1)  # b x lq x lk
-    return padding_mask
 
 def get_subsequent_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
@@ -28,82 +14,19 @@ def get_subsequent_mask(seq):
     return subsequent_mask
 
 
-def compute_event(event, non_pad_mask):
-    """ Log-likelihood of events. """
-
-    # add 1e-6 in case some events have 0 likelihood
-    event += math.pow(10, -6)
-    event.masked_fill_(~non_pad_mask.bool(), 1.0)
-
-    result = torch.log(event)
-    return result
+def check_tensor(x):
+    assert (x < 0).any() == False, 'Negative numbers detected!'
+    assert torch.isfinite(x).all() == True, 'inf detected in input!'
+    assert torch.isnan(x).any() == False, 'Nan detected in input!'
 
 
-def type_loss(prediction, types, loss_func):
-    """ Event prediction loss, cross entropy or label smoothing. """
+def move_from_tensor_to_ndarray(*kwargs):
+    tmp_results = []
+    for tensor in kwargs:
+        tmp_results.append(tensor.detach().cpu().numpy())
+    
+    return tmp_results
 
-    # convert [1,2,3] based types to [0,1,2]; also convert padding events to -1
-    truth = types[:, 1:] - 1
-    prediction = prediction[:, :-1, :]
-
-    pred_type = torch.max(prediction, dim=-1)[1]
-    correct_num = torch.sum(pred_type == truth)
-
-    # compute cross entropy loss
-    if isinstance(loss_func, LabelSmoothingLoss):
-        loss = loss_func(prediction, truth)
-    else:
-        loss = loss_func(prediction.transpose(1, 2), truth)
-
-    loss = torch.sum(loss)
-    return loss, correct_num
-
-
-def time_loss(prediction, event_time):
-    """ Time prediction loss. """
-
-    prediction.squeeze_(-1)
-
-    true = event_time[:, 1:] - event_time[:, :-1]
-    prediction = prediction[:, :-1]
-
-    # event time gap prediction
-    diff = prediction - true
-    se = torch.sum(diff * diff)
-    return se
-
-
-class LabelSmoothingLoss(nn.Module):
-    """
-    With label smoothing,
-    KL-divergence between q_{smoothed ground truth prob.}(w)
-    and p_{prob. computed by model}(w) is minimized.
-    """
-
-    def __init__(self, label_smoothing, tgt_vocab_size, ignore_index=-100):
-        assert 0.0 < label_smoothing <= 1.0
-        super(LabelSmoothingLoss, self).__init__()
-
-        self.eps = label_smoothing
-        self.num_classes = tgt_vocab_size
-        self.ignore_index = ignore_index
-
-    def forward(self, output, target):
-        """
-        output (FloatTensor): (batch_size) x n_classes
-        target (LongTensor): batch_size
-        """
-
-        non_pad_mask = target.ne(self.ignore_index).float()
-
-        target[target.eq(self.ignore_index)] = 0
-        one_hot = F.one_hot(target, num_classes=self.num_classes).float()
-        one_hot = one_hot * (1 - self.eps) + (1 - one_hot) * self.eps / self.num_classes
-
-        log_prb = F.log_softmax(output, dim=-1)
-        loss = -(one_hot * log_prb).sum(dim=-1)
-        loss = loss * non_pad_mask
-        return loss
 
 def softplus_ext(input, beta, threshold = 20):
     '''
@@ -128,3 +51,33 @@ def softplus_ext(input, beta, threshold = 20):
     output = output_part_1.masked_fill(final_mask, 0) + output_part_2.masked_fill(~final_mask, 0)
 
     return output
+
+
+def L1_distance(input, resolution, num_events, time_next):
+    '''
+    This function calculates the L^1 distance between two functions in scattered form.
+    Input:
+    1. input:      function values
+                   [seq_len * resolution, num_events]
+    2. resolution: int
+                   the number of points from [t_{i - 1}, t_i]
+    3. num_event:  int
+                   the number of event types
+    4. time_next:  [seq_len]
+                   the length of all intervals with interpolations.
+    '''
+
+    input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
+    intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
+    intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
+    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
+
+    gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
+    gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
+
+    L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
+                                                                               # [num_events, num_events]
+    # round off the value smaller than 1e-6
+    L1[L1 < 1e-6] = 0
+
+    return L1

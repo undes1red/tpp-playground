@@ -1,6 +1,7 @@
 import torch, random
 import numpy as np
 
+
 class move_data_to_the_correct_device:
     def __init__(self, device):
         self.device = device
@@ -25,16 +26,3 @@ def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
-
-
-dataloader_modulepath = {
-    # These following dataloaders fits all other models.
-    'syn': ['synthetic.synthetic_dataset', 'syn_dataloader'],
-    'syn_arg': ['synthetic_autoregressive.synthetic_autoregressive_dataset', 'synarg_dataloader'],
-    'ctlstm': ['ctlstm.ctlstm_dataset', 'ctlstm_dataloader'],
-    'cnf': ['cnf.cnf_dataset', 'cnf_dataloader'],
-    'ifl': ['ifl.ifl_dataset', 'ifl_dataloader'],
-
-    # 2021-10-14 update: legacy dataloaders are deprecated and are removed from the dataloader zoo.
-    # Take your own risk to readd and use them.
-}

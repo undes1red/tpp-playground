@@ -5,7 +5,7 @@
 from src.TPP.utils import suffix, read_json, getLogger, print_args
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
-from src.TPP.tpp_plotter import draw, spearman_and_l1
+from src.TPP.tpp_plotter import draw
 import os, argparse, torch
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--evaluation', action='store_true')
-    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'debug', 'debug_addition_only'], default = 'intensity', help='Temporal point process only.')
+    parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'integral', 'debug', 'debug_addition_only'], default = 'intensity', help='Temporal point process only.')
     parser.add_argument('--custom_collator', action='store_true',\
                 help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
 
@@ -106,8 +106,8 @@ if __name__ == '__main__':
     logger.info(f'Model restore completed. The number of trainable parameters in this model: {total_params}.')
     logger.info(print_args(opt))
 
-    graph = False
-    MAE_E = False
+    graph = True
+    MAE_E = True
 
     if not graph:
         for key, (value, value_size) in data_dict.items():
@@ -158,11 +158,15 @@ if __name__ == '__main__':
                 else:
                     if MAE_E:
                         # MAE-E
+                        events_history, events_next = model.divide_history_and_next(input_events)
+                        time_history, time_next = model.divide_history_and_next(input_time)
+                        mask_history, mask_next = model.divide_history_and_next(mask)
                         f1_, _, probability_integral_sum_, all_event_pred_, \
                             (mae_per_event_predict_, mae_per_event_avg_), \
                             (mae_perdict_each_event, mae_event_next_each_event) = \
-                            model.mean_absolute_error_per_event(input_time = input_time, input_events = input_events, 
-                                                                mask = mask, mean = mean, var = var, fast = True)
+                            model.mean_absolute_error_per_event(events_history, events_next, \
+                                                                time_history, time_next, mask_next, mean, var)
+
                         probability_integral_sum_ = probability_integral_sum_.detach().mean(dim = -1)
 
                         # For RMTPP
@@ -267,19 +271,19 @@ if __name__ == '__main__':
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if opt.train:
             for idx, train_data in enumerate(data_dict['train'][0]):
-                draw(model, train_data, 'train', idx = idx, opt = opt)
+                draw(model, train_data, 'train', batch_idx = idx, opt = opt)
                 if idx >= opt.figure_count - 1:
                     break
 
         if opt.evaluation:
             for idx, evaluation_data in enumerate(data_dict['evaluation'][0]):
-                draw(model, evaluation_data, 'evaluation', idx = idx, opt = opt)
+                draw(model, evaluation_data, 'evaluation', batch_idx = idx, opt = opt)
                 if idx >= opt.figure_count - 1:
                     break
 
         if opt.test:
             for idx, test_data in enumerate(data_dict['test'][0]):
-                draw(model, test_data, 'test', idx = idx, opt = opt)
+                draw(model, test_data, 'test', batch_idx = idx, opt = opt)
                 if idx >= opt.figure_count - 1:
                     break
 

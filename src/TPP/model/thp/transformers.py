@@ -2,8 +2,8 @@ import math, torch
 import torch.nn as nn
 from einops import repeat
 
-from .layers import TransformerLayer
-from .utils import *
+from src.TPP.model.thp.layers import TransformerLayer
+from src.TPP.model.thp.utils import *
 
 
 class Encoder(nn.Module):
@@ -119,9 +119,6 @@ class TransformerTPP(nn.Module):
             dropout = dropout,
             device = self.device
         )
-
-        # convert hidden vectors into valid intensity function values.
-        self.linear = nn.Linear(d_input, num_types, device = self.device)
 
         # OPTIONAL recurrent layer, this sometimes helps
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)

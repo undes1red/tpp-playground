@@ -1,9 +1,10 @@
 import os
-from ..arguments import BasicArguments
+from src.arguments import BasicArguments
+
 
 class TPPArguments(BasicArguments):
-    def __init__(self, root_path):
-        super().__init__()
+    def __init__(self, parser, root_path):
+        super().__init__(parser)
 
         self.root_path = root_path        
         # Input data
@@ -40,23 +41,24 @@ class TPPArguments(BasicArguments):
         self.parser.add_argument('--n_cycles', type=float, default=0.5)
         self.parser.add_argument('--last_epoch', type=int, default=-1)
 
-    def get_args(self):
-        return self.relativepath_to_absolutepath(self.parser.parse_args(), self.root_path)
+        # identification mark
+        self.parser.add_argument('--procedure', type = str, default = 'TPP',
+                            help='Used as an identifier. DO NOT USE IT.')
 
+'''
+The following functions are preprocessing functions.
+'''
+def postprocess(opt, root_path):
     '''
-    The following functions are preprocessing functions.
+    Convert relative paths into absolute path.
     '''
-    def relativepath_to_absolutepath(self, opt, root_path):
-        '''
-        Convert relative paths into absolute path.
-        '''
-        opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
-        opt.log = os.path.join(root_path, 'log', opt.dataset_name)
-        opt.save_model = os.path.join(root_path, 'model', opt.dataset_name)
-        opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None
-        opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
-        opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
-        opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
-        opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
+    opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
+    opt.log = os.path.join(root_path, 'log', opt.dataset_name)
+    opt.save_model = os.path.join(root_path, 'model', opt.dataset_name)
+    opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None
+    opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
+    opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
+    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
 
-        return opt
+    return opt

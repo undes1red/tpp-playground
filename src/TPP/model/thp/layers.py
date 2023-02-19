@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from .selfattn import SelfAttn
+from src.TPP.model.thp.selfattn import SelfAttn
 
 class TransformerLayer(nn.Module):
     def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, dropout = 0.1):

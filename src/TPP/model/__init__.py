@@ -1,5 +1,5 @@
 import importlib
-from ..utils import getLogger
+from src.TPP.utils import getLogger
 
 logger = getLogger(__name__)
 
@@ -14,31 +14,9 @@ def get_model(name, rank = 0):
         return model
     except:
         if rank == 0:
-            logger.exception(f"Model named {name} is not found! Please register your model in src/model/__init__.py and try again.")
+            logger.exception(f"Model named {name} is not found! Please register your model in src/model/{name}/__init__.py and try again.")
 
-
-modelpath = {
-    # [file name, Model wrapper name]
-    # Actively maintained models
-    'dwg': ['dwg.model', 'TemporalModel'],
-    'fullynn': ['fullynn.model', 'FullyNNModel'],
-    'multi_fullynn': ['multi_fullynn.model', 'MultiFullyNNModel'],
-    'ifl': ['ifl.model', 'IFL'],
-    'rmtpp': ['rmtpp.model', 'RMTPP'],
-    'thp': ['thp.model', 'THP'],
-    'sahp': ['sahp.model', 'SAHP'],
-    'fullynn_probability': ['fullynn_probability.model', 'FullyNNModel'],
-    
-    # Temporarily abandoned models
-    'ctlstm': ['ctlstm.model', 'CTLSTMwrapper'],
-    'cnf': ['cnf.model', 'CNFWrapper'],
-    'fullynn_v2': ['fullynn_v2.model', 'FullyNN2Model'],
-    'attn_cm': ['attn_cm.model', 'AttnCMWrapper'],
-    'transnn': ['transnn.model', 'TransNNModel'],
-    'multi_fullynn_arg': ['multi_fullynn_arg.model', 'MultiFullyNNModel'],
-}
 
 def model_zoo(name):
-    path, model_name = modelpath[name]
-    module = importlib.import_module('.' + path, package = 'src.TPP.model')
-    return getattr(module, model_name)
+    module = importlib.import_module('.' + name, package = 'src.TPP.model')
+    return module.get_model()

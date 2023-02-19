@@ -2,9 +2,10 @@ import math, torch
 import torch.nn as nn
 from einops import repeat
 
-from .layers import TransformerLayer
-from .utils import *
-from .position import BiasedPositionalEmbedding
+from src.TPP.model.sahp.layers import TransformerLayer
+from src.TPP.model.sahp.utils import *
+from src.TPP.model.sahp.position import BiasedPositionalEmbedding
+
 
 class TransformerEncoder(nn.Module):
     """ A sequence to sequence model with attention mechanism. """

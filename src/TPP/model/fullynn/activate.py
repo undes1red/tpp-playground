@@ -15,6 +15,7 @@ class sym_Log(nn.Module):
         activate = self.multiplier * torch.log(1 + torch.abs(x))
         return mask * activate
 
+
 class sym_softplus(nn.Module):
     '''
     The symmetry-about-a-point log activation function
@@ -27,6 +28,7 @@ class sym_softplus(nn.Module):
         mask = (x >= 0).int() - (x < 0).int()
         activate = self.multiplier * torch.nn.functional.softplus(torch.abs(x))
         return mask * activate
+
 
 class sym_Polynomial(nn.Module):
     '''
