@@ -1,19 +1,19 @@
-# parameter sets of model multi_fullynn
+# parameter sets of model tfullynn
 
 stackoverflow_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
-    "--dataloader_config", "stackoverflow/shift.json",
-    "--dataset_name", ["stackoverflow"], \
-    "--n_training_steps", "3000", \
-    "--n_evaluation_steps", "50", \
-    "--n_report_steps", "50", \
+    "--dataloader_name", "generic", \
+    "--dataloader_config", "stackoverflow/tfullynn_dl.json",
+    "--dataset_name", "stackoverflow", \
+    "--n_training_steps", "50000", \
+    "--n_evaluation_steps", "500", \
+    "--n_report_steps", "500", \
     "--b", "128", \
-    "--n_warmup_steps", "600", \
-    "--model_name", "fullynn", \
-    "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json"],
-    "--lr", "0.001", \
+    "--n_warmup_steps", "10000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "stackoverflow/tfullynn.json",
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -24,17 +24,17 @@ stackoverflow_training_hyperparameter_list = [
 retweet_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
-    "--dataloader_config", "retweet/shift.json",
-    "--dataset_name", ["retweet"], \
-    "--n_training_steps", "6000", \
-    "--n_evaluation_steps", "50", \
-    "--n_report_steps", "50", \
+    "--dataloader_name", "generic", \
+    "--dataloader_config", "retweet/tfullynn_dl.json",
+    "--dataset_name", "retweet", \
+    "--n_training_steps", "100000", \
+    "--n_evaluation_steps", "500", \
+    "--n_report_steps", "500", \
     "--b", "128", \
-    "--n_warmup_steps", "1200", \
-    "--model_name", "fullynn", \
-    "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json"],
-    "--lr", "0.001", \
+    "--n_warmup_steps", "20000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "retweet/tfullynn.json",
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -42,20 +42,20 @@ retweet_training_hyperparameter_list = [
     "--n_cycles", "0.5",
 ]
 
-mimic_training_hyperparameter_list = [
+mooc_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
-    "--dataloader_config", "mimic/no_norm.json",
-    "--dataset_name", ["mimic"], \
-    "--n_training_steps", "10000", \
-    "--n_evaluation_steps", "100", \
-    "--n_report_steps", "100", \
-    "--b", "128", \
-    "--n_warmup_steps", "1000", \
-    "--model_name", "fullynn", \
-    "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json"],
-    "--lr", "0.001", \
+    "--dataloader_name", "generic", \
+    "--dataloader_config", "mooc/tfullynn_dl.json",
+    "--dataset_name", "mooc", \
+    "--n_training_steps", "400000", \
+    "--n_evaluation_steps", "5000", \
+    "--n_report_steps", "5000", \
+    "--b", "32", \
+    "--n_warmup_steps", "80000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "mooc/tfullynn.json",
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -66,17 +66,17 @@ mimic_training_hyperparameter_list = [
 bookorder_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
-    "--dataloader_config", "bookorder/shift.json",
-    "--dataset_name", ["bookorder"], \
-    "--n_training_steps", "1000", \
-    "--n_evaluation_steps", "20", \
-    "--n_report_steps", "20", \
-    "--b", "64", \
-    "--n_warmup_steps", "250", \
-    "--model_name", "fullynn", \
-    "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json"],
-    "--lr", "0.001", \
+    "--dataloader_name", "generic", \
+    "--dataloader_config", "bookorder/tfullynn_dl.json",
+    "--dataset_name", "bookorder", \
+    "--n_training_steps", "20000", \
+    "--n_evaluation_steps", "100", \
+    "--n_report_steps", "100", \
+    "--b", "8", \
+    "--n_warmup_steps", "4000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "bookorder/tfullynn.json",
+    "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
@@ -87,15 +87,15 @@ bookorder_training_hyperparameter_list = [
 syn_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--n_training_steps", "10000", \
-    "--n_evaluation_steps", "100", \
-    "--n_report_steps", "100", \
+    "--n_evaluation_steps", "500", \
+    "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json, syn/fullynn_no_split.json"],
+    "--model_name", "tfullynn", \
+    "--model_config", "syn/tfullynn.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -147,7 +147,7 @@ stackoverflow_plot_hyperparameter_list = [
     "--resolution", "200"
 ]
 
-mimic_plot_hyperparameter_list = [
+mooc_plot_hyperparameter_list = [
     "graph.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
@@ -218,14 +218,14 @@ training_hyperparameter = {
     'stackoverflow': stackoverflow_training_hyperparameter_list,
     'retweet': retweet_training_hyperparameter_list,
     'bookorder': bookorder_training_hyperparameter_list,
-    'mimic': mimic_training_hyperparameter_list,
+    'mooc': mooc_training_hyperparameter_list,
     'syn': syn_training_hyperparameter_list
 }
 
 plot_hyperparameter = {
     'retweet': retweet_plot_hyperparameter_list,
     'stackoverflow': stackoverflow_plot_hyperparameter_list,
-    'mimic': mimic_plot_hyperparameter_list,
     'bookorder': bookorder_plot_hyperparameter_list,
+    'mooc': mooc_plot_hyperparameter_list,
     'syn': syn_plot_hyperparameter_list
 }

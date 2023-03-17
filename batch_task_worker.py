@@ -1,15 +1,17 @@
 # You can use this file if you are too lazy to create and modify script files.
 # Just pack numerous tasks and run them one by one automatically.
 
-import subprocess, os, argparse, itertools, math
+import subprocess, os, argparse, itertools, math, importlib
 from src.traininghost import getLogger
-from parameter_set import parameter_retriver
+
 
 logger = getLogger(__name__)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--script_type', type = str, choices = ['train', 'plot'], default = 'train',\
                                      help = 'You can use this only argument to select what you want to do.')
+parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
+                                     help = 'You need this argument to select the proper parameter set.')
 parser.add_argument('--GPU', type = int, default = None, help='How many GPU you want to use? Set it to None to use all GPUs, \
                                                                  or set it to negative number or None for CPU learning.')
 parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
@@ -60,7 +62,7 @@ def list_generator(hyperparameter_list):
         single_parameters[last_parameter] = ''
     
     # Now, map all fixed argument into a list.
-    fixed_arguments_part = [head] + list(itertools.chain.from_iterable(single_parameters.items()))
+    fixed_arguments_part = [head] + [opt.procedure_name] + list(itertools.chain.from_iterable(single_parameters.items()))
 
     # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
     # generation loop.
@@ -102,6 +104,8 @@ def list_generator(hyperparameter_list):
                     add_mark = True
 
 task_count = 1
+parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
+parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
 for hp_list in list_generator(parameter_retriver(opt)):
     if not do_not_use_gpu:
         hp_list.append("--cuda")

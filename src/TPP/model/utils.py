@@ -55,21 +55,6 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
     
     # The largest length of the format_dict
     format_dict_length = 0
-    
-    '''
-    Q: Why is the print format function different from the file print format function?
-    A: Because FileLogger needs to know what it should output and prepare the log file before the training procedure begins. Item 'step' in dict 'logfile_format'
-    is reserved to record the training progress so you should always have it in 'logfile_format'.
-    Other stuff are the same as what log_print_format() does.
-    '''
-    logfile_format = {'step': ''}
-
-    @staticmethod
-    @abstractmethod
-    def logfile_print_format(input):
-        '''
-        See the annotations above.
-        '''
 
     
     metric_number = 0 # metric number is the length of the output of choose_metric

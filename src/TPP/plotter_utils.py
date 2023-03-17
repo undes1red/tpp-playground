@@ -74,6 +74,7 @@ def hawkes_1(time, intensity, resolution, device):
     expand_true_intensity[:, 0, :] = mu
     return expand_true_intensity
 
+
 def hawkes_1_integral(time, intensity, resolution, device):
     '''
     Hawkes_1 process: \Lambda(t) = \mu * (t - t_l) + a - a * exp(-b(t - t_l)). When t = t_l, \Lambda(t) = 0.
@@ -170,6 +171,7 @@ def hawkes_2(time, intensity, resolution, device):
     expand_true_intensity[:, 0, :] = mu
     return expand_true_intensity
 
+
 def hawkes_2_integral(time, intensity, resolution, device):
     '''
     Hawkes_2 process: \Lambda(t) = \mu * (t - t_l) + a_1 - a_1 * exp(-b_1(t - t_l)) + a_2 - a_2 * exp(-b_2(t - t_l)).
@@ -225,6 +227,7 @@ def hawkes_2_integral(time, intensity, resolution, device):
 
     return expand_true_integral
 
+
 '''
 Time-independent poisson process
 '''
@@ -246,6 +249,7 @@ def poisson(time, intensity, resolution, device):
     batch_size, seq_len = intensity.shape
     return torch.ones((batch_size, seq_len, resolution), device = device) * lam
                                                                                # [batch_size, seq_len, resolution]
+
 
 def poisson_integral(time, intensity, resolution, device):
     '''
@@ -270,7 +274,7 @@ def poisson_integral(time, intensity, resolution, device):
 '''
 Stationary renewal process, whose probability distribution instead of intensity function is defined.
 '''
-def stationary_renew(time, intensity, resolution, device):
+def stationary_renewal(time, intensity, resolution, device):
     '''
     The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
     The intensity function only matches the explicitly given lognorm distribution used in the synthetic data generator. 
@@ -293,7 +297,8 @@ def stationary_renew(time, intensity, resolution, device):
                                                                                # [batch_size, seq_len, resolution]
     return expand_true_intensity
 
-def stationary_renew_probability(time, intensity, resolution, device):
+
+def stationary_renewal_probability(time, intensity, resolution, device):
     '''
     We won't implement the integral of stationary renewal's intensity function.
     We will directly use the distribution, instead.
@@ -349,6 +354,7 @@ def self_correct(time, intensity, resolution, device):
 
     return expand_intensity
 
+
 def self_correct_integral(time, intensity, resolution, device):
     '''
     self correct process has intensity function: \lambda(t) = exp(mu * tau - alpha * N)
@@ -391,7 +397,7 @@ true_intensity_dict = {
     'hawkes_1': hawkes_1,
     'hawkes_2': hawkes_2,
     'poisson': poisson,
-    'stationary_renewal': stationary_renew,
+    'stationary_renewal': stationary_renewal,
     'self_correct': self_correct,
 }
 
@@ -399,6 +405,6 @@ true_probability_dict = {
     'hawkes_1': [hawkes_1, hawkes_1_integral],
     'hawkes_2': [hawkes_2, hawkes_2_integral],
     'poisson': [poisson, poisson_integral],
-    'stationary_renewal': [stationary_renew_probability],
+    'stationary_renewal': [stationary_renewal_probability],
     'self_correct': [self_correct, self_correct_integral],
 }

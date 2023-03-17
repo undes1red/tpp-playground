@@ -159,7 +159,7 @@ class FullyNNModel(BasicModule):
         '''
         time_loss = self.nll_loss(intensity = intensity_for_each_event, events_next = events_next, \
                                   intensity_integral = integral_for_each_event, mask_next = mask_next)
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         return time_loss, events_loss, the_number_of_events
 
@@ -184,11 +184,12 @@ class FullyNNModel(BasicModule):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        the_number_of_events = mask_next.sum().item()
 
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
-        mae = mae.sum() / mask_next.sum()
+        mae = mae.sum().item() / the_number_of_events
 
         if self.event_toggle:
             pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
@@ -255,7 +256,6 @@ class FullyNNModel(BasicModule):
         '''
         time_loss = self.nll_loss(intensity = intensity_for_each_event_from_tl_to_time_next, events_next = events_next, \
                                   intensity_integral = integral_for_each_event_from_tl_to_time_next, mask_next = mask_next)
-        the_number_of_events = mask_next.sum()
 
         return time_loss, events_loss, mae, f1, the_number_of_events
 
@@ -849,8 +849,9 @@ class FullyNNModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss]
+        return time_loss, fact, events_loss
     
+
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -864,7 +865,8 @@ class FullyNNModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss, mae, f1]
+        return time_loss, fact, events_loss, mae, f1
+
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -883,6 +885,7 @@ class FullyNNModel(BasicModule):
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
+
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
@@ -907,30 +910,13 @@ class FullyNNModel(BasicModule):
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
     format_dict_length = 5
-    
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f', 'mae': ':2.8f', 'f1_value': ':2.8f'}
 
-    def logfile_print_format(input):
-        if len(input) == 3:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = 0
-            format_dict['f1_value'] = 0
-        else:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = input[3]
-            format_dict['f1_value'] = input[4]
-        return format_dict
     
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [test_report[0],]
+        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
     
-    metric_number = 1 # metric number is the length of the output of choose_metric
+    metric_number = 2 # metric number is the length of the output of choose_metric

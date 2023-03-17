@@ -42,6 +42,7 @@ class ScheduledOptim():
         else:
             self._scheduler = None
 
+
     def step_and_update_lr(self):
         "Step with the inner optimizer"
         self._optimizer.step()
@@ -49,9 +50,11 @@ class ScheduledOptim():
         if self._scheduler:
             self._scheduler.step()
 
+
     def zero_grad(self):
         "Zero out the gradients with the inner optimizer"
         self._optimizer.zero_grad()
+
 
     def get_lr(self):
         lr = []
@@ -60,14 +63,17 @@ class ScheduledOptim():
 
         return mean(lr)
 
+
     def get_model(self):
         if self._model == None:
             raise Exception('Only with mixed precision training enabled you can get model from optimizer.')
         else:
             return self._model
     
+
     def state_dict(self):
         return {'optimizer': self._optimizer.state_dict(), 'scheduler': self._scheduler.state_dict()}
+    
     
     def load_state_dict(self, state_dict):
         self._optimizer.load_state_dict(state_dict['optimizer'])

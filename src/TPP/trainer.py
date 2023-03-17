@@ -1,10 +1,12 @@
 import os, torch
 from tqdm import tqdm
+import pandas as pd
 from itertools import cycle
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from src.TPP.utils import print_performances, suffix, lst_add_lst, read_json, \
-                   lst_divide, evaluation, Metric, add_prefix_to_keys, print_args, getLogger, FileLogger
+                          lst_divide, evaluation, Metric, add_prefix_to_keys, \
+                          print_args, getLogger
 from src.TPP.model import get_model
 from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
@@ -16,9 +18,19 @@ Define the logger.
 '''
 logger = getLogger(__name__)
 
+
 class TPPTrainer:
     def __init__(self):
-        pass
+        '''
+        Now, we use pd.DataFrame to record training records.
+        '''
+        self.df_records = {
+            'Training': None,
+            'Evaluation': None,
+            'Test': None,
+            'Best': None
+        }
+
 
     def train(self, rank, opt):
         '''
@@ -81,15 +93,17 @@ class TPPTrainer:
             os.makedirs(self.opt.save_model)
 
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
-        if not os.path.exists(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix)) and self.rank == 0:
-            os.mkdir(os.path.join(self.opt.save_model, 'output_' + self.folder_suffix))
+        self.output_checkpoint_folder = 'output_' + self.folder_suffix
+        self.log_folder = 'log_' + self.folder_suffix
+        if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)) and self.rank == 0:
+            os.mkdir(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
+        if not os.path.exists(os.path.join(self.opt.log, self.log_folder)) and self.rank == 0:
+            os.mkdir(os.path.join(self.opt.log, self.log_folder))
 
         '''
         Setting up file loggers and a wandb online logger.
         '''
-        if self.opt.log and self.rank == 0:
-            self.file_logger, self.best_model_logger = self.create_file_logger()
-    
+        if self.opt.log and self.rank == 0:    
             if self.opt.wandb:
                 import wandb
                 wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \
@@ -135,87 +149,74 @@ class TPPTrainer:
             '''
             A short report about evaluation and testing.
             '''
-            if current_step % self.opt.n_evaluation_steps == 0:
+            if current_step % self.opt.n_evaluation_steps == 0 and self.rank == 0:
                 self.evaluation_report(current_step)
                         
-        if self.rank == 0:
+        if self.rank == 0 and self.opt.log:
+            for key, value in self.df_records.items():
+                if value is None:
+                    logger.warning('You require us to track the {key} process, but nothing is recorded!')
+                    continue
+
+                if key == 'Best':
+                    log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                else:
+                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
+                logger.info(f'{key} records are stored in {log_filepath}.')
+                value.to_csv(log_filepath, index = False)
+
             logger.warning('Training finished!')
             if self.opt.wandb:
                 wandb.finish()
 
-    def create_file_logger(self):
-        self.log_folder = 'log_' + self.folder_suffix
-        if not os.path.exists(os.path.join(self.opt.log, self.log_folder)):
-            os.mkdir(os.path.join(self.opt.log, self.log_folder))
-        log_train_file = os.path.join(self.opt.log, self.log_folder, 'train.log')
-        log_eva_file = os.path.join(self.opt.log, self.log_folder, 'evaluate.log')
-        log_test_file = os.path.join(self.opt.log, self.log_folder, 'test.log')
-        log_best_model_file = os.path.join(self.opt.save_model, 'output_' + self.folder_suffix, 'checkpoint.log')
-
-        logger.info(f'Training performance will be written to file: \n{log_train_file},\n{log_eva_file},\n{log_test_file}')
-        # These log_items defined here should match corresponding logger's print() method.
-        file_logger = FileLogger(self.model_class.logfile_format, training_log = log_train_file, evaluation_log = log_eva_file, test_log = log_test_file)
-        metric_format_dict = {
-            **{'step': ''},
-            **dict(zip([f'metric_{metric_count}' for metric_count in range(1, self.model_class.metric_number + 1)], \
-                         [':8.5f'] * self.model_class.metric_number))
-        }
-        best_model_logger = FileLogger(metric_format_dict, best_model = log_best_model_file)
-
-        return file_logger, best_model_logger
 
     def train_report(self, current_step):
         logger.warning(f'Brief training status report at step {current_step}.')
         report_sum = self.model_class.postprocess(self.report_sum, procedure = 'Training')
-        print_performances(logger = logger, procedure='Training', lr = self.sched_optimizer.get_lr(), \
-                           **(self.model_class.log_print_format(report_sum, procedure = 'Training')))
+        log_print_format_dict = self.model_class.log_print_format(report_sum, procedure = 'Training')
+        if self.opt.log:
+            self.transform_report_sum_into_recording_df(**log_print_format_dict, procedure = 'Training', current_step = current_step)
+        print_performances(logger = logger, procedure='Training', lr = self.sched_optimizer.get_lr(), **log_print_format_dict)
         if self.opt.wandb:
             import wandb
             wandb.log(
                 add_prefix_to_keys(self.model_class.log_print_format(report_sum, \
                     procedure = 'Training'), temp = 'train_'), commit = False, step = current_step)
             wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
-        if self.rank == 0 and self.file_logger:
-            report = self.model_class.logfile_print_format(report_sum)
-            self.file_logger.print(logger_name = 'training_log', step = current_step, **report)
         self.report_sum = [0] * self.format_dict_length
 
+
     def evaluation_report(self, current_step):
-        if self.rank == 0:
-            logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
+        logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
 
         eva_report = self.model_class.postprocess(
             evaluation(self.evaluation_data, self.model, self.model_class, device = self.opt.device, \
                        output_length = self.format_dict_length, desc = '  - (Evaluation)   '), procedure = 'Evaluation'
         )
+        log_print_format_dict_eva = self.model_class.log_print_format(eva_report, procedure = 'Evaluation')
+        print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_eva)
         test_report = self.model_class.postprocess(
             evaluation(self.test_data, self.model, self.model_class, device = self.opt.device, \
                        output_length = self.format_dict_length, desc = '  - (Test)   '), procedure = 'Test'
         )
+        log_print_format_dict_test = self.model_class.log_print_format(test_report, procedure = 'Test')
+        print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_test)
 
-        if self.rank == 0:
-            print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), \
-                               **(self.model_class.log_print_format(eva_report, procedure = 'Evaluation')))
-            print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), \
-                               **(self.model_class.log_print_format(test_report, procedure = 'Test')))
-            if self.opt.wandb:
-                import wandb
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
-                    procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
-                    procedure = 'Test'), temp = 'test_'), step = current_step)
+        if self.opt.log:
+            self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
+            self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
+        if self.opt.wandb:
+            import wandb
+            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
+                procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
+            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
+                procedure = 'Test'), temp = 'test_'), step = current_step)
         
-            self.save(current_step, eva_report, test_report)
+        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
 
-            if self.file_logger:
-                eva = self.model_class.logfile_print_format(eva_report)
-                test = self.model_class.logfile_print_format(test_report)
-                self.file_logger.print(logger_name = 'evaluation_log', step = current_step, **eva)
-                self.file_logger.print(logger_name = 'test_log', step = current_step, **test)
 
-    def save(self, current_step, eva_report, test_report):
+    def save(self, current_step, eva_report_format_dict, test_report_format_dict):
         # We will store the checkpoint after model evaluation.
-
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
@@ -225,13 +226,27 @@ class TPPTrainer:
                 model_name = os.path.join(
                         self.opt.save_model, 'output_' + self.folder_suffix, (f'checkpoint_training_step_{current_step}' + '.chkpt'))
                 torch.save(checkpoint, model_name)
+                logger.warning(f'The checkpoint file at step {current_step} has been stored.')
             elif self.opt.save_mode == 'best':
                 model_name = os.path.join(self.opt.save_model, 'output_' + self.folder_suffix, 'checkpoint.chkpt')
-                if current_step > self.opt.n_warmup_steps and self.metric_checker.compare(self.model_class.choose_metric(eva_report, test_report)):
+                metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
+                assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
+                if current_step > self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
                     torch.save(checkpoint, model_name)
-                    logger.info('  The checkpoint file has been updated.')
-                    best_model_dict = dict(zip(
-                        [f'metric_{metric_count}' for metric_count in range(1, self.model_class.metric_number + 1)], \
-                        self.model_class.choose_metric(eva_report, test_report)
-                        ))
-                    self.best_model_logger.print(logger_name = 'best_model', step = current_step, **best_model_dict)
+                    logger.warning(f'The checkpoint file has been updated at step {current_step}.')
+                    self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
+                                                                **dict(zip(metric_names, metric_values)))
+
+
+    def transform_report_sum_into_recording_df(self, num_format, procedure, current_step, **kwargs):
+        df_perline = kwargs
+        new_df_perline_dict = {'current_step': [current_step,]}
+        for key, value in df_perline.items():
+            new_df_perline_dict[key] = [value,]
+        
+        new_df_perline_df = pd.DataFrame.from_dict(new_df_perline_dict)
+
+        if self.df_records[procedure] is None:
+            self.df_records[procedure] = new_df_perline_df
+        else:
+            self.df_records[procedure] = pd.concat((self.df_records[procedure], new_df_perline_df), axis = 0)

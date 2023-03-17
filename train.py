@@ -9,7 +9,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Enumerate subparsers
-    procedure_names = ['TPP', 'Transformers']
+    procedure_names = ['TPP', 'Transformers', 'fakenews']
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')
     for procedure_name in procedure_names:

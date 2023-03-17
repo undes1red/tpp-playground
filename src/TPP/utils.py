@@ -4,20 +4,25 @@ import math, json, logging
 from tqdm import tqdm
 from functools import reduce
 
+
 def add(a, b):
     return a + b
+
 
 def mean(iter):
     return reduce(add, iter)/len(iter)
 
+
 def lst_add_lst(list1, list2):
     return [sum(x) for x in zip(list1, list2)]
+
 
 def lst_divide(lst, denominator):
     if isinstance(denominator, list):
         assert len(lst) == len(denominator)
         return [x/y for x, y in zip(lst, denominator)]
     return [x/denominator for x in lst]
+
 
 # How to print formated logs via logger and format definitions.
 def print_performances(logger, procedure, lr = None, num_format = None, **kwargs):
@@ -36,6 +41,7 @@ def read_json(json_path):
         a = json.load(f)
     return a
 
+
 # Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
     output = []
@@ -45,6 +51,7 @@ def suffix(opt, *args):
     output = "_".join(map(str, output))
     
     return output
+
 
 # General evaluation procedure.
 def evaluation(data, model, model_class, device, output_length, desc):
@@ -57,6 +64,7 @@ def evaluation(data, model, model_class, device, output_length, desc):
 
     return sum_
 
+
 # extract dataset name from the input string
 # eg: 'dataset_name_new_v2'
 def restore_dataset_name(name):
@@ -65,6 +73,7 @@ def restore_dataset_name(name):
     if name.endswith('_new'):
         name = name[:-4]
     return name
+
 
 class Metric():
     '''
@@ -101,6 +110,7 @@ class Metric():
     def show(self):
         return self.best_metric
 
+
 # add a prefix for all keys in a dict.
 # wandb use only
 def add_prefix_to_keys(dct, temp):
@@ -108,6 +118,7 @@ def add_prefix_to_keys(dct, temp):
     del tmp_dct['num_format']
     result = {temp + str(key): item for key, item in tmp_dct.items()}
     return result
+
 
 # A more neat way to print hyperparameters:
 def print_args(opt):
@@ -117,8 +128,11 @@ def print_args(opt):
 
     return output
 
+
 '''
 Logger settings
+'''
+
 '''
 def getEventLogger(name, root):
     logger = logging.getLogger(name)
@@ -142,6 +156,7 @@ def getEventLogger(name, root):
 
     return logger
 
+
 def getFileLogger(name, file, root):
     logger = logging.getLogger(name)
     if root:
@@ -163,7 +178,45 @@ def getFileLogger(name, file, root):
 
     return logger
 
+
 def getLogger(name = None, file = None, root = True):
+    \'''
+    Get normal loggers or file loggers.
+
+    Args:
+    name: The name of a generated logger
+    file: print all logs into the file if set.
+    \'''
+    if file:
+        return getFileLogger(name, file, root)
+    else:
+        return getEventLogger(name, root)
+'''
+
+def getEventLogger(name, root):
+    logger = logging.getLogger(name)
+    if root:
+        logger.parent = None
+        logger.root = logger
+
+    logger.setLevel(logging.DEBUG)
+    if (logger.hasHandlers()):
+        logger.handlers.clear()
+    # create console handler and set level to debug
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    # create formatter
+    formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d]: %(message)s', datefmt = '%Y-%m-%d %H:%M:%S')
+    # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # add formatter to ch
+    ch.setFormatter(formatter)
+    # add ch to logger
+    logger.addHandler(ch)
+
+    return logger
+
+
+def getLogger(name = None, root = True):
     '''
     Get normal loggers or file loggers.
 
@@ -171,29 +224,5 @@ def getLogger(name = None, file = None, root = True):
     name: The name of a generated logger
     file: print all logs into the file if set.
     '''
-    if file:
-        return getFileLogger(name, file, root)
-    else:
-        return getEventLogger(name, root)
 
-'''
-File logger handler.
-'''
-class FileLogger(object):
-    def __init__(self, print_format, **kwargs):
-        self.loggers = dict()
-        for name, path in kwargs.items():
-            self.loggers[name] = getLogger(name, path)
-        self.print_format = print_format
-        self.print_item = self.print_format.keys()
-        self.format_string = ''
-        for key in self.print_item:
-            self.format_string += '{' + key + self.print_format[key] + '}, '
-
-        # Initial info
-        for logger in self.loggers.values():
-            logger.info(', '.join(self.print_item))
-
-    def print(self, logger_name, **kwargs):
-        logger = self.loggers[logger_name]
-        logger.info(self.format_string.format_map(kwargs))
+    return getEventLogger(name, root)

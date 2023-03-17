@@ -117,7 +117,7 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.sum()
 
         time_loss = self.nll_loss(probability = probability_for_each_event, mask_next = mask_next, events_next = events_next)
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         if self.event_toggle and self.additional_event_loss:
             loss = time_loss + events_loss
@@ -132,24 +132,36 @@ class IFIBModel(BasicModule):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        the_number_of_events = mask_next.sum().item()
         
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
-        mae = mae.sum() / mask_next.sum()
+        mae = mae.sum().item() / the_number_of_events
 
         if self.event_toggle:
             time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+            pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         time_zero = torch.zeros_like(time_next, device = self.device)          # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
 
         time_next.requires_grad = True                                         # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        
+        pred_time.requires_grad = True                                         # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+
         probability_integral_from_zero_to_infinite = self.model(events_history, time_history, time_zero, mean = mean, var = var)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        probability_integral_from_pred_time_to_infinite = self.model(events_history, time_history, pred_time, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         probability_integral_from_time_next_to_infinite = self.model(events_history, time_history, time_next, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+
+        probability_for_each_event_at_pred_time = - torch.autograd.grad(
+            outputs = probability_integral_from_pred_time_to_infinite,
+            inputs = pred_time,
+            grad_outputs = torch.ones_like(probability_integral_from_pred_time_to_infinite)
+        )[0]                                                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]                
 
         probability_for_each_event_at_time_next = - torch.autograd.grad(
             outputs = probability_integral_from_time_next_to_infinite,
@@ -157,6 +169,7 @@ class IFIBModel(BasicModule):
             grad_outputs = torch.ones_like(probability_integral_from_time_next_to_infinite)
         )[0]                                                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]                
 
+        pred_time.requires_grad = False
         time_next.requires_grad = False
 
         f1_pred, f1_pred_at_time_next = 0, 0
@@ -172,10 +185,10 @@ class IFIBModel(BasicModule):
             '''
             macro-F1 value, event predictions are made with time predictions.
             '''
-            events_pred_index_at_time_next = torch.argmax(probability_for_each_event_at_time_next, dim = -1)[mask_next == 1]
+            events_pred_index_at_pred_time = torch.argmax(probability_for_each_event_at_pred_time, dim = -1)[mask_next == 1]
             events_true = events_next[mask_next == 1]
-            events_pred_index_at_time_next, events_true = move_from_tensor_to_ndarray(events_pred_index_at_time_next, events_true)
-            f1_pred_at_time_next = f1_score(y_true = events_true, y_pred = events_pred_index_at_time_next, average = 'macro')
+            events_pred_index_at_pred_time, events_true = move_from_tensor_to_ndarray(events_pred_index_at_pred_time, events_true)
+            f1_pred_at_pred_time = f1_score(y_true = events_true, y_pred = events_pred_index_at_pred_time, average = 'macro')
 
             '''
             Event loss, event predictions are made with time predictions.
@@ -191,9 +204,8 @@ class IFIBModel(BasicModule):
             events_loss = events_loss.sum()
     
         time_loss = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next, events_next = events_next)
-        the_number_of_events = mask_next.sum()
 
-        return time_loss, events_loss, mae, f1_pred, f1_pred_at_time_next, the_number_of_events
+        return time_loss, events_loss, mae, f1_pred, f1_pred_at_pred_time, the_number_of_events
 
 
     def nll_loss(self, probability, events_next, mask_next):
@@ -567,14 +579,15 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss]
+        return time_loss, fact, events_loss
     
+
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
-        time_loss, events_loss, mae, f1_pred, f1_pred_at_time_next, the_number_of_events = model(
+        time_loss, events_loss, mae, f1_pred, f1_pred_at_pred_time, the_number_of_events = model(
                 input_time = time_seq, input_events = event_seq, mask = mask, evaluate = True,\
                 mean = mean, var = var
         )
@@ -583,7 +596,8 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss, mae, f1_pred, f1_pred_at_time_next]
+        return time_loss, fact, events_loss, mae, f1_pred, f1_pred_at_pred_time
+
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -602,6 +616,7 @@ class IFIBModel(BasicModule):
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
+
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
@@ -618,40 +633,23 @@ class IFIBModel(BasicModule):
             format_dict['relative_loss'] = input[1]
             format_dict['events_loss'] = input[2]
             format_dict['mae'] = input[3]
-            format_dict['f1_without_time'] = input[4]
-            format_dict['f1_with_time'] = input[5]
+            format_dict['f1_event_first'] = input[4]
+            format_dict['f1_time_first'] = input[5]
             format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f',
                                          'events_loss': ':6.5f', 'mae': ':2.8f', 
-                                         'f1_without_time': ':2.8f', 'f1_with_time': ':2.8f'}
+                                         'f1_event_first': ':2.8f', 'f1_time_first': ':2.8f'}
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
     format_dict_length = 6
     
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f', 'mae': ':2.8f', 'f1_value': ':2.8f'}
 
-    def logfile_print_format(input):
-        if len(input) == 3:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = 0
-            format_dict['f1_value'] = 0
-        else:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = input[3]
-            format_dict['f1_value'] = input[4]
-        return format_dict
-    
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [test_report[0],]
+        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
     
-    metric_number = 1 # metric number is the length of the output of choose_metric
+    metric_number = 2 # metric number is the length of the output of choose_metric

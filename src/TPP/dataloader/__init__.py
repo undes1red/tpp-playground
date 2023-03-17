@@ -26,11 +26,11 @@ def find_dataset(name, rank):
 
 
 def prepare_dataloaders(opt, rank = 0):
-    file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + '/*.json') + glob.glob(opt.data_path + '/*.csv')]
+    file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
     if len(file_names) == 0:
         logger.exception(f'No appropriate data file in {opt.data_path}! Please check the training script.')
     else:
-        logger.info(f'There are {len(file_names)} appropriate files in {opt.data_path}. Is that expected?')
+        logger.info(f'There are {len(file_names)} appropriate files in {opt.data_path}. Format: {opt.dataset_type}. Is that expected?')
     
     dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
     logger.info(f"Additional dataloader settings from config files: {dataloader_config_dict}")

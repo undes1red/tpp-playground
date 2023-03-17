@@ -3,10 +3,12 @@ import torch, os
 import torch.utils as utils
 import pandas as pd
 import numpy as np
-from ..utils import move_data_to_the_correct_device
+from src.TPP.dataloader.utils import move_data_to_the_correct_device
+
 
 def concate(per_line, item1 = np.array([]), item2 = np.array([])):
     return np.concatenate([item1, per_line, item2])
+
 
 def concate_shift(per_line, item1, item2):
     return np.concatenate([item1 + per_line[0] - 1, per_line, item2 + item1 + per_line[0] - 1])
@@ -167,6 +169,7 @@ def read_data(path, file_names):
             f"Wrong datafile format. Please check your data file in {path}")
     
     return data_raw
+
 
 def ifl_dataloader():
     '''

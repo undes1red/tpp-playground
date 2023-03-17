@@ -159,7 +159,7 @@ class FENNModel(BasicModule):
         '''
         time_loss = self.nll_loss(intensity = intensity_for_each_event, events_next = events_next, \
                                   intensity_integral = integral_for_each_event, mask_next = mask_next)
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         return time_loss, events_loss, the_number_of_events
 
@@ -184,11 +184,12 @@ class FENNModel(BasicModule):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        the_number_of_events = mask_next.sum().item()
 
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
-        mae = mae.sum() / mask_next.sum()
+        mae = mae.sum().item() / the_number_of_events
 
         if self.event_toggle:
             pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
@@ -254,7 +255,6 @@ class FENNModel(BasicModule):
         '''
         time_loss = self.nll_loss(intensity = intensity_for_each_event_from_tl_to_time_next, events_next = events_next, \
                                   intensity_integral = integral_for_each_event_from_tl_to_time_next, mask_next = mask_next)
-        the_number_of_events = mask_next.sum()
 
         return time_loss, events_loss, mae, f1, the_number_of_events
 

@@ -25,28 +25,8 @@ def getEventLogger(name, root):
 
     return logger
 
-def getFileLogger(name, file, root):
-    logger = logging.getLogger(name)
-    if root:
-        logger.parent = None
-        logger.root = logger
 
-    logger.setLevel(logging.DEBUG)
-    if (logger.hasHandlers()):
-        logger.handlers.clear()
-    # create console handler and set level to debug
-    ch = logging.FileHandler(file, mode = 'w')
-    ch.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(message)s')
-    # add formatter to ch
-    ch.setFormatter(formatter)
-    # add ch to logger
-    logger.addHandler(ch)
-
-    return logger
-
-def getLogger(name = None, file = None, root = True):
+def getLogger(name = None, root = True):
     '''
     Get normal loggers or file loggers.
 
@@ -54,7 +34,5 @@ def getLogger(name = None, file = None, root = True):
     name: The name of a generated logger
     file: print all logs into the file if set.
     '''
-    if file:
-        return getFileLogger(name, file, root)
-    else:
-        return getEventLogger(name, root)
+
+    return getEventLogger(name, root)

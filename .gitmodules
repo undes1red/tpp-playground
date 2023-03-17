@@ -1,6 +1,0 @@
-[submodule "src/loss-landscape"]
-	path = src/loss-landscape
-	url = git@github.com:tomgoldstein/loss-landscape.git
-[submodule "src/sam"]
-	path = src/sam
-	url = git@github.com:davda54/sam.git

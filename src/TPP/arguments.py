@@ -9,6 +9,7 @@ class TPPArguments(BasicArguments):
         self.root_path = root_path        
         # Input data
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
+        self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
         self.parser.add_argument('--custom_collator', action='store_true',\
@@ -43,7 +44,8 @@ class TPPArguments(BasicArguments):
 
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
-                            help='Used as an identifier. DO NOT USE IT.')
+                            help='Used as an identifier. DO NOT USE IT IN YOUR BOOTSTRAP SCRIPT.')
+
 
 '''
 The following functions are preprocessing functions.
@@ -52,7 +54,7 @@ def postprocess(opt, root_path):
     '''
     Convert relative paths into absolute path.
     '''
-    opt.data_path = os.path.join(root_path, 'data', 'inputs', opt.dataset_name)
+    opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.log = os.path.join(root_path, 'log', opt.dataset_name)
     opt.save_model = os.path.join(root_path, 'model', opt.dataset_name)
     opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None

@@ -21,7 +21,6 @@ class generic_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in train.py.
     But...what can we do if we need prediction? It is strange.
     '''
-
     def __init__(self, data, device, num_events, plot = False, shift = False, shift_time = False, input_norm_data = False):
         super(generic_dataset, self).__init__()
         self.data = data
@@ -61,6 +60,7 @@ class generic_dataset(utils.data.Dataset):
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
 
+
     def __getitem__(self, index):
         '''
         Synthetic dataloader is very simple. It doesn't have any event infomation at each timestamp,
@@ -81,8 +81,10 @@ class generic_dataset(utils.data.Dataset):
                        self.data.iloc[index].event, \
                        self.data.iloc[index].score
 
+
     def __len__(self):
         return self.data.shape[0]
+    
     
     def __call__(self, data):
         '''
@@ -118,18 +120,11 @@ class generic_dataset(utils.data.Dataset):
 
 def read_data(path, file_names):
     data_raw = {}
-    is_csv = file_names[0].split('.')[-1] == 'csv'
     try:
-        if is_csv:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_csv(
-                    os.path.join(path, file + '.' + type))
-        else:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_json(
-                    os.path.join(path, file + '.' + type))
+        for file_name in file_names:
+            file, _ = file_name.split('.')
+            data_raw[file] = pd.read_json(
+                os.path.join(path, file_name))
     except:
         raise TypeError(
             f"Wrong datafile format. Please check your data file in {path}")
