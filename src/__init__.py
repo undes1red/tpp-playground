@@ -1,1 +1,1 @@
-from .traininghost import TrainingHost
+from src.taskhost import TaskHost

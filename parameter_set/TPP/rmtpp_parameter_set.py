@@ -105,7 +105,7 @@ syn_training_hyperparameter_list = [
 ]
 
 retweet_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "rmtpp", \
     "--model_config", ["retweet/rmtpp.json"], \
@@ -126,7 +126,7 @@ retweet_plot_hyperparameter_list = [
 ]
 
 stackoverflow_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "rmtpp", \
     "--model_config", ["stackoverflow/rmtpp.json"], \
@@ -148,7 +148,7 @@ stackoverflow_plot_hyperparameter_list = [
 ]
 
 mimic_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "rmtpp", \
     "--model_config", ["mimic/rmtpp.json"], \
@@ -171,7 +171,7 @@ mimic_plot_hyperparameter_list = [
 ]
 
 bookorder_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "rmtpp", \
     "--model_config", ["bookorder/rmtpp.json"], \
@@ -193,7 +193,7 @@ bookorder_plot_hyperparameter_list = [
 ]
 
 syn_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "rmtpp", \
     "--model_config", ["syn/rmtpp.json"], \

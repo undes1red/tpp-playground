@@ -105,7 +105,7 @@ syn_training_hyperparameter_list = [
 ]
 
 retweet_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
     "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json"], \
@@ -126,7 +126,7 @@ retweet_plot_hyperparameter_list = [
 ]
 
 stackoverflow_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
     "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json"], \
@@ -148,7 +148,7 @@ stackoverflow_plot_hyperparameter_list = [
 ]
 
 mooc_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
     "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json"], \
@@ -171,7 +171,7 @@ mooc_plot_hyperparameter_list = [
 ]
 
 bookorder_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
     "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json"], \
@@ -193,25 +193,23 @@ bookorder_plot_hyperparameter_list = [
 ]
 
 syn_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json"], \
+    "--model_config", "syn/fullynn.json", \
     "--lr", "0.002", \
-    "--batch_size", "128", \
+    "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["intensity", "probability"], \
-    "--plot_type", ["debug"], \
+    "--plot_type", ['intensity', 'integral', 'probability', 'debug'],
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--synthetic_evaluation"
+    "--task_name", "graph"
 ]
 
 training_hyperparameter = {

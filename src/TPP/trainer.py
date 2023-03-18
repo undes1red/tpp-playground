@@ -32,7 +32,7 @@ class TPPTrainer:
         }
 
 
-    def train(self, rank, opt):
+    def work(self, rank, opt):
         '''
         Store required initial information
         '''
@@ -40,15 +40,22 @@ class TPPTrainer:
         self.rank = rank
 
         '''
-        ========= Loading Dataset =========
+        Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
         '''
-        if opt.data_path:
+        if not self.opt.log and not self.opt.save_model and rank == 0:
+            logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
+
+
+        '''
+        ========= Load Dataset =========
+        '''
+        if self.opt.data_path:
             self.training_data, self.evaluation_data, self.test_data = prepare_dataloaders(opt, rank = rank)
-            opt.training_size = len(self.training_data)
+            self.opt.training_size = len(self.training_data)
         else:
             raise logger.exception("Wrong input data path.")
     
-        model_param = read_json(opt.abs_model_config) if opt.abs_model_config else {}
+        model_param = read_json(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
         if rank == 0:
             logger.info(f'The input model hyperparameters are {model_param}')
@@ -56,17 +63,17 @@ class TPPTrainer:
         '''
         Load model
         '''
-        self.model_class = get_model(opt.model_name, rank = rank)
-        model = self.model_class(device = opt.device, num_events = opt.num_events,
+        self.model_class = get_model(self.opt.model_name, rank = rank)
+        model = self.model_class(device = self.opt.device, num_events = self.opt.num_events,
             **model_param
         )
     
-        if rank == 0:
-            logger.info(print_args(opt))
-            logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/len(self.training_data):5.5f}')
-            logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
-    
         self.opt.__dict__.update(model_param)
+
+        if rank == 0:
+            logger.info(print_args(self.opt))
+            logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/opt.training_size:5.5f}')
+            logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
         '''
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 

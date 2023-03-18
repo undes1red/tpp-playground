@@ -1,6 +1,6 @@
 import argparse
 
-class TransformersArguments:
+class TransformersTrainerArguments:
     def __init__(self, parser, root_path):
         self.parser = parser
         # identification mark

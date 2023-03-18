@@ -2,7 +2,7 @@ import os
 from src.arguments import BasicArguments
 
 
-class fakenewsArguments(BasicArguments):
+class fakenewsTrainerArguments(BasicArguments):
     def __init__(self, parser, root_path):
         super().__init__(parser)
 

@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import subprocess, os, argparse, itertools, math, importlib
-from src.traininghost import getLogger
+from src.taskhost import getLogger
 
 
 logger = getLogger(__name__)
@@ -62,7 +62,8 @@ def list_generator(hyperparameter_list):
         single_parameters[last_parameter] = ''
     
     # Now, map all fixed argument into a list.
-    fixed_arguments_part = [head] + [opt.procedure_name] + list(itertools.chain.from_iterable(single_parameters.items()))
+    fixed_arguments_part = [head] + [opt.procedure_name + '_' + opt.script_type] \
+                                  + list(itertools.chain.from_iterable(single_parameters.items()))
 
     # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
     # generation loop.

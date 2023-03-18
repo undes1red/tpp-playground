@@ -105,7 +105,7 @@ syn_training_hyperparameter_list = [
 ]
 
 retweet_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "thp", \
     "--model_config", ["retweet/thp.json"], \
@@ -126,7 +126,7 @@ retweet_plot_hyperparameter_list = [
 ]
 
 stackoverflow_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "thp", \
     "--model_config", ["stackoverflow/thp.json"], \
@@ -148,7 +148,7 @@ stackoverflow_plot_hyperparameter_list = [
 ]
 
 mimic_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "thp", \
     "--model_config", ["mimic/thp.json"], \
@@ -171,7 +171,7 @@ mimic_plot_hyperparameter_list = [
 ]
 
 bookorder_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "thp", \
     "--model_config", ["bookorder/thp.json"], \
@@ -193,7 +193,7 @@ bookorder_plot_hyperparameter_list = [
 ]
 
 syn_plot_hyperparameter_list = [
-    "graph.py", \
+    "train.py", \
     "--seed", "32", \
     "--model_name", "ifl", \
     "--model_config", ["syn/ifl.json"], \
