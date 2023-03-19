@@ -5,7 +5,7 @@
 from src.TPP.utils import suffix, read_json, getLogger, print_args
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
-from src.TPP.tpp_plotter import draw, spearman_and_l1
+from src.TPP.plotter_evaluation_functions import draw, spearman_and_l1
 import os, argparse, torch
 import pickle as pkl
 

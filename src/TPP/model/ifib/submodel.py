@@ -4,7 +4,7 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.ifib.utils import L1_distance
+from src.TPP.model.ifib.utils import L1_distance_across_events
 from src.TPP.model.ifib.nonneg import NonNegLinear
 from src.TPP.model.ifib.activate import *
 
@@ -388,7 +388,7 @@ class IFIB(nn.Module):
                 # r: pearson coefficient
                 pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                L1_matrix_per_seq = L1_distance(expand_probability_per_seq[:seq_len * resolution], 
+                L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
                                                 resolution = resolution, num_events = self.num_events,
                                                 time_next = time_next_per_seq[:seq_len])
 

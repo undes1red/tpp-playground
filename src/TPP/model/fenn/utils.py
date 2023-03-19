@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from einops import rearrange, reduce, repeat
 
@@ -27,7 +28,10 @@ def move_from_tensor_to_ndarray(*kwargs):
     return tmp_results
 
 
-def L1_distance(input, resolution, num_events, time_next):
+'''
+custom metrics
+'''
+def L1_distance_across_events(input, resolution, num_events, time_next):
     '''
     This function calculates the L^1 distance between two functions in scattered form.
     Input:
@@ -44,7 +48,7 @@ def L1_distance(input, resolution, num_events, time_next):
     input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
     intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
     intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    delta_intensity = torch.abs(intensity_1 - intensity_2)                     # [num_events, num_events, seq_len, resolution]
+    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
 
     gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
     gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
@@ -53,5 +57,30 @@ def L1_distance(input, resolution, num_events, time_next):
                                                                                # [num_events, num_events]
     # round off the value smaller than 1e-6
     L1[L1 < 1e-6] = 0
+
+    return L1
+
+
+def L1_distance_between_two_funcs(x, y, timestamp, resolution):
+    '''
+    This function calculates the L^1 distance between two functions.
+    Input:
+    1. x:          function values
+                   [seq_len * resolution, num_events]
+    2. y:          function values
+                   the number of points from [t_{i - 1}, t_i]
+    3. time:       \Delta t
+                   the number of event types
+    '''
+
+    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [seq_len, resolution - 1]
+    timestamp = timestamp.reshape(-1, resolution)                              # [seq_len, resolution]
+    timestamp = np.diff(timestamp, axis = -1)                                  # [seq_len, resolution - 1]
+
+    L1 = (function_interval * timestamp).sum()
+
+    # round up the value smaller than 1e-6
+    if L1 < 1e-6:
+        L1 = 0
 
     return L1

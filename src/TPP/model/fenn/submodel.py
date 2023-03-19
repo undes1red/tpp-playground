@@ -6,7 +6,7 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.fenn.nonneg import NonNegLinear
 from src.TPP.model.fenn.activate import *
-from src.TPP.model.fenn.utils import L1_distance
+from src.TPP.model.fenn.utils import L1_distance_across_events
 
 
 TA = {
@@ -511,7 +511,7 @@ class FENN(nn.Module):
                 # r: pearson coefficient
                 pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                L1_matrix_per_seq = L1_distance(probability_distribution[:seq_len * resolution], 
+                L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
                                                 resolution = resolution, num_events = self.num_events,
                                                 time_next = time_next_per_seq[:seq_len])
                 spearman_matrix.append(spearman_matrix_per_seq)

@@ -5,7 +5,7 @@
 from src.TPP.utils import suffix, read_json, getLogger, print_args
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
-from src.TPP.tpp_plotter import draw
+from src.TPP.plotter_evaluation_functions import draw
 import os, argparse, torch
 from tqdm import tqdm
 import matplotlib.pyplot as plt

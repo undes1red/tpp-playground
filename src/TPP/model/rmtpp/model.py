@@ -2,6 +2,7 @@ from einops import rearrange, reduce, repeat
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 import torch
 import numpy as np
+from scipy.stats import spearmanr
 
 from src.TPP.model.utils import BasicModule
 from src.TPP.model.rmtpp.rmtpp import RMTPPModule
@@ -630,6 +631,72 @@ class RMTPP(BasicModule):
         plots = plot_debug(data, timestamp, opt)
 
         return plots
+
+
+    '''
+    Evaluation over the entire dataset.
+    '''
+    def get_spearman_and_l1(self, input_data, opt):
+        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+
+        expand_integral, expand_intensity, timestamp = \
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
+
+        check_tensor(expand_integral)
+        check_tensor(expand_intensity)
+        assert expand_intensity.shape == expand_integral.shape
+        expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
+        true_probability = expand_true_probability(time_next, input_intensity, opt)
+                                                                               # [batch_size, seq_len, resolution] or batch_size * None
+        
+        expand_probability, true_probability, timestamp = move_from_tensor_to_ndarray(expand_probability, true_probability, timestamp)
+        zipped_data = zip(expand_probability, true_probability, timestamp, mask_next)
+
+        spearman = 0
+        l1 = 0
+        for expand_probability_per_seq, true_probability_per_seq, timestamp_per_seq, mask_next_per_seq in zipped_data:
+            seq_len = mask_next_per_seq.sum()
+
+            spearman_per_seq = \
+                spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
+
+            l1_per_seq = L1_distance_between_two_funcs(
+                                        x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                        timestamp = timestamp_per_seq, resolution = opt.resolution
+                                        )
+            spearman += spearman_per_seq
+            l1 += l1_per_seq
+
+        batch_size = mask_next.shape[0]
+        spearman /= batch_size
+        l1 /= batch_size
+
+        return spearman, l1
+    
+
+    def get_mae_and_f1(self, input_data, opt):
+        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                    time_next, mask_history, mask_next, mean, var)
+                                                                               # [batch_size, seq_len]
+        
+        return mae, f1_1
+
+    
+    def get_mae_e_and_f1(self, input_data, opt):
+        raise NotImplemented("RMTPP is a TPP model, so MAE-E is not supported.")
 
 
     def train_step(model, minibatch, device):

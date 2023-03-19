@@ -1,13 +1,8 @@
 import os, torch
-from tqdm import tqdm
-import pandas as pd
-from itertools import cycle
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.TPP.utils import print_performances, suffix, lst_add_lst, read_json, \
-                          lst_divide, evaluation, Metric, add_prefix_to_keys, \
-                          print_args, getLogger
-from src.TPP.tpp_plotter import draw
+from src.TPP.utils import read_json, print_args, getLogger
+from src.TPP.plotter_evaluation_functions import draw, spearman_and_l1, mae_and_f1, mae_e_and_f1
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
 
@@ -61,7 +56,6 @@ class TPPPlotter:
         model = self.model_class(device = self.opt.device, num_events = self.opt.num_events,
             **model_param
         )
-        model.eval()
 
         self.opt.__dict__.update(model_param)
 
@@ -82,6 +76,7 @@ class TPPPlotter:
 
 
         self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
+        self.model.eval()
         self.task()
     
 
@@ -90,8 +85,8 @@ class TPPPlotter:
             'best':{
             'graph': self.task_graph,
             'spearman_and_f1': self.task_spearman_and_f1,
-            'mae': self.task_mae,
-            'mae_e': self.task_mae_e
+            'mae_and_f1': self.task_mae_and_f1,
+            'mae_e_and_f1': self.task_mae_e_and_f1
         },
         'all':{
             'sample': self.task_sample,
@@ -123,14 +118,39 @@ class TPPPlotter:
 
 
     def task_spearman_and_f1(self):
-        pass
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.train:
+            spearman_and_l1(self.model.module, self.train_data, 'train', opt = self.opt)
+
+        if self.opt.evaluation:
+            spearman_and_l1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+
+        if self.opt.test:
+            spearman_and_l1(self.model.module, self.test_data, 'test', opt = self.opt)
 
 
-    def task_mae(self):
-        pass
+    def task_mae_and_f1(self):
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.train:
+            mae_and_f1(self.model.module, self.train_data, 'train', opt = self.opt)
 
-    def task_mae_e(self):
-        pass
+        if self.opt.evaluation:
+            mae_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+
+        if self.opt.test:
+            mae_and_f1(self.model.module, self.test_data, 'test', opt = self.opt)
+
+
+    def task_mae_e_and_f1(self):
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.train:
+            mae_e_and_f1(self.model.module, self.train_data, 'train', opt = self.opt)
+
+        if self.opt.evaluation:
+            mae_e_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+
+        if self.opt.test:
+            mae_e_and_f1(self.model.module, self.test_data, 'test', opt = self.opt)
 
 
     def task_sample(self):

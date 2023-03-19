@@ -1,148 +1,10 @@
 import numpy as np
 import pandas as pd
-
-from src.TPP.model.ifib.utils import move_from_tensor_to_ndarray
-from src.TPP.plotter_utils import expand_true_intensity, expand_true_probability
+from scipy.stats import spearmanr
 
 
-def plot_intensity(data, timestamp, opt):
-    '''
-    '''
-    plot_instruction = {}
-    '''
-    Part 1: the sum of intensity functions over all markers.
-    '''
-    expand_intensity = data['expand_intensity']                                # [batch_size, seq_len, resolution, num_events]
-    mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    events_next = data['events_next']                                          # [batch_size, seq_len]
-    time_next = data['time_next']                                              # [batch_size, seq_len]
-    input_intensity = data['input_intensity']                                  # [batch_size, seq_len + 1]
-
-
-    expand_intensity = expand_intensity.sum(dim = -1)                          # [batch_size, seq_len, resolution]
-    true_intensity = expand_true_intensity(time_next, input_intensity, opt)    # [batch_size, seq_len, resolution]
-
-    packed_data = zip(*move_from_tensor_to_ndarray(expand_intensity, events_next, time_next, mask_next, timestamp, true_intensity))
-    for idx, (expand_intensity_per_seq, events_next_per_seq, time_next_per_seq, mask_next_per_seq, timestamp_per_seq, true_intensity_per_seq) \
-        in enumerate(packed_data):
-        seq_len = mask_next_per_seq.sum()
-
-        df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in events_next_per_seq]}
-        )
-
-        if true_intensity_per_seq is not None:
-            df_intensity = pd.DataFrame.from_dict(
-                    {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
-                     'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
-                     'Truth': true_intensity_per_seq[:seq_len, :].flatten()}
-            )
-        else:
-            df_intensity = pd.DataFrame.from_dict(
-                    {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
-                     'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
-                     }
-            )
-
-        df_intensity_plot = pd.melt(df_intensity, 'Time')
-        df_intensity_plot.columns = ['Time', ' ', 'Intensity']
-
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'length': 20,
-                'height': 5,
-                'kwargs':
-                {
-                    'x':'Time',
-                    'y': 'Intensity',
-                    'hue': ' ',
-                    'data': df_intensity_plot
-                }
-            },
-            {
-                'plot_type': 'scatterplot',
-                'length': 20,
-                'height': 5,
-                'kwargs':
-                {
-                    'x': 'Time',
-                    'y': 'Point',
-                    'data': df_event,
-                    'palette': 'pastel',
-                    'hue': 'Event'
-                }
-            }
-        ]
-
-        plot_instruction[f'intensity_{idx}'] = subplot_instruction
-
-    return plot_instruction
-
-
-def plot_integral(data, timestamp, opt):
-    '''
-    '''
-    plot_instruction = {}
-    '''
-    Part 1: the sum of intensity integrals over all markers.
-    '''
-    expand_integral = data['expand_integral']                                  # [batch_size, seq_len, resolution]
-    mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    events_next = data['events_next']                                          # [batch_size, seq_len]
-    time_next = data['time_next']                                              # [batch_size, seq_len]
-    input_intensity = data['input_intensity']                                  # [batch_size, seq_len + 1]
-
-
-    expand_integral = expand_integral.sum(dim = -1)                            # [batch_size, seq_len, resolution]
-
-
-    packed_data = zip(*move_from_tensor_to_ndarray(expand_integral, events_next, time_next, mask_next, timestamp))
-    for idx, (expand_integral_per_seq, events_next_per_seq, time_next_per_seq, mask_next_per_seq, timestamp_per_seq) \
-        in enumerate(packed_data):
-        seq_len = mask_next_per_seq.sum()
-
-        df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in events_next_per_seq]}
-        )
-
-        df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
-                 'Integral': expand_integral_per_seq[:seq_len, :].flatten()}
-        )
-
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'length': 20,
-                'height': 5,
-                'kwargs':
-                {
-                    'x':'Time',
-                    'y': 'Integral',
-                    'data': df_integral
-                }
-            },
-            {
-                'plot_type': 'scatterplot',
-                'length': 20,
-                'height': 5,
-                'kwargs':
-                {
-                    'x': 'Time',
-                    'y': 'Point',
-                    'data': df_event,
-                    'palette': 'pastel',
-                    'hue': 'Event'
-                }
-            }
-        ]
-
-        plot_instruction[f'integral_{idx}'] = subplot_instruction
-
-    return plot_instruction
+from src.TPP.model.ifib.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.plotter_utils import expand_true_probability
 
 
 def plot_probability(data, timestamp, opt):
@@ -179,11 +41,24 @@ def plot_probability(data, timestamp, opt):
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten(),
                  'Truth': true_probability_per_seq[:seq_len, :].flatten()}
             )
+
+            # Spearman correlation
+            rho = spearmanr(a = true_probability_per_seq[:seq_len, :].flatten(), b = expand_probability_per_seq[:seq_len, :].flatten())[0]
+            # Pearson correlation
+            r = np.corrcoef(x = true_probability_per_seq[:seq_len, :].flatten(), y = expand_probability_per_seq[:seq_len, :].flatten())[0, 1]
+            # L1 distance
+            L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                               timestamp = timestamp_per_seq, resolution = opt.resolution)
+
+            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
         else:
             df = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten()}
             )
+            annotation = ''
+
+
         df_probability_plot = pd.melt(df, 'Time')
         df_probability_plot.columns = ['Time', ' ', 'Probability']
 
@@ -211,6 +86,18 @@ def plot_probability(data, timestamp, opt):
                     'data': df_event,
                     'palette': 'pastel',
                     'hue': 'Event'
+                }
+            },
+            {
+                'plot_type': 'text',
+                'kwargs':
+                {
+                    'x': -1, 
+                    'y': -0.75,
+                    'verticalalignment': 'top',
+                    'horizontalalignment': 'left',
+                    's': annotation,
+                    'fontsize': 12,
                 }
             }
         ]

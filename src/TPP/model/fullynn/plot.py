@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
-from src.TPP.model.fullynn.utils import move_from_tensor_to_ndarray
+
+from src.TPP.model.fullynn.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_intensity, expand_true_probability
 
 
@@ -38,12 +40,24 @@ def plot_intensity(data, timestamp, opt):
                      'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
                      'Truth': true_intensity_per_seq[:seq_len, :].flatten()}
             )
+
+            # Spearman correlation
+            rho = spearmanr(a = true_intensity_per_seq[:seq_len, :].flatten(), b = expand_intensity_per_seq[:seq_len, :].flatten())[0]
+            # Pearson correlation
+            r = np.corrcoef(x = true_intensity_per_seq[:seq_len, :].flatten(), y = expand_intensity_per_seq[:seq_len, :].flatten())[0, 1]
+            # L1 distance
+            L1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
+                                               timestamp = timestamp_per_seq, resolution = opt.resolution)
+
+            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
         else:
             df_intensity = pd.DataFrame.from_dict(
                     {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
                      'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
                      }
             )
+            annotation = ''
+
 
         df_intensity_plot = pd.melt(df_intensity, 'Time')
         df_intensity_plot.columns = ['Time', ' ', 'Intensity']
@@ -72,6 +86,18 @@ def plot_intensity(data, timestamp, opt):
                     'data': df_event,
                     'palette': 'pastel',
                     'hue': 'Event'
+                }
+            },
+            {
+                'plot_type': 'text',
+                'kwargs':
+                {
+                    'x': -1, 
+                    'y': -0.75,
+                    'verticalalignment': 'top',
+                    'horizontalalignment': 'left',
+                    's': annotation,
+                    'fontsize': 12,
                 }
             }
         ]
@@ -137,7 +163,7 @@ def plot_integral(data, timestamp, opt):
                     'palette': 'pastel',
                     'hue': 'Event'
                 }
-            }
+            },
         ]
 
         plot_instruction[f'integral_{idx}'] = subplot_instruction
@@ -179,11 +205,24 @@ def plot_probability(data, timestamp, opt):
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten(),
                  'Truth': true_probability_per_seq[:seq_len, :].flatten()}
             )
+
+            # Spearman correlation
+            rho = spearmanr(a = true_probability_per_seq[:seq_len, :].flatten(), b = expand_probability_per_seq[:seq_len, :].flatten())[0]
+            # Pearson correlation
+            r = np.corrcoef(x = true_probability_per_seq[:seq_len, :].flatten(), y = expand_probability_per_seq[:seq_len, :].flatten())[0, 1]
+            # L1 distance
+            L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                               timestamp = timestamp_per_seq, resolution = opt.resolution)
+
+            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
         else:
             df = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten()}
             )
+
+            annotation = ''
+
         df_probability_plot = pd.melt(df, 'Time')
         df_probability_plot.columns = ['Time', ' ', 'Probability']
 
@@ -211,6 +250,18 @@ def plot_probability(data, timestamp, opt):
                     'data': df_event,
                     'palette': 'pastel',
                     'hue': 'Event'
+                }
+            },
+            {
+                'plot_type': 'text',
+                'kwargs':
+                {
+                    'x': -1, 
+                    'y': -0.75,
+                    'verticalalignment': 'top',
+                    'horizontalalignment': 'left',
+                    's': annotation,
+                    'fontsize': 12,
                 }
             }
         ]

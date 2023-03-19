@@ -82,6 +82,6 @@ def Plotter_postprocess(opt, root_path):
     opt.checkpoint_folder = os.path.join(root_path, 'model', opt.dataset_name, folder_suffix)
 
     # where figures, records are stored.
-    opt.store_dir = os.path.join(root_path, 'output', 'output_' + model_hyperparameters)
+    opt.store_dir = os.path.join(root_path, 'output', opt.dataset_name, 'output_' + model_hyperparameters)
 
     return opt

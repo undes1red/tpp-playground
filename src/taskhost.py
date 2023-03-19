@@ -49,6 +49,12 @@ class TaskHost:
         Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for furhter information about
         reproducibility
         '''
+
+        # Prepare for multithreading
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
+
+
         random.seed(self.opt.seed)
         torch.manual_seed(self.opt.seed)
         np.random.seed(self.opt.seed)
@@ -56,10 +62,6 @@ class TaskHost:
         torch.use_deterministic_algorithms(True)
         # For debug usage
         # torch.autograd.set_detect_anomaly(True)
-
-        # Prepare for multithreading
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
 
         try:
             mp.set_start_method("forkserver")
