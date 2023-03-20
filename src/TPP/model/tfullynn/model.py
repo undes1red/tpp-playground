@@ -447,6 +447,8 @@ class TFullyNNModel(BasicModule):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
 
+        self.eval()
+
         '''
         Set the memory limit
         '''
@@ -460,21 +462,30 @@ class TFullyNNModel(BasicModule):
             max_ = time_next.mean() + 10 * time_next.var()
         else:
             max_ = mean + 10 * var
+
+        if mean == 0:
+            resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
+        else:
+            resolution_between_events = max(min(int(mean // 0.005), 500), 10)
         
         max_ = min(1e6, max_)
         time_next_inf = torch.ones_like(time_history, device = self.device) * max_
                                                                                # [batch_size, seq_len]
-        resolution = max(int(max_ // 0.005), 100)
+        resolution_inf = max(int(max_ // 0.005), 100)
 
-        _, seq_len = events_next.shape
-        if seq_len * resolution * self.num_events > memory_ceiling:
-            resolution = int(memory_ceiling // (seq_len * self.num_events))
+        # only works when batch_size = 1
+        batch_size, seq_len = events_next.shape
+        if batch_size * seq_len * resolution_inf * self.num_events > memory_ceiling:
+            resolution_inf = int(memory_ceiling // (seq_len * self.num_events * batch_size))
+        
+        if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
+            resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
         '''
         Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
         '''
         expand_integral_to_inf, expand_intensity_to_inf, time_interval \
-                = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution, mean, var)
+                = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         '''
@@ -532,7 +543,7 @@ class TFullyNNModel(BasicModule):
             resolution = max(min(int(mean // 0.005), 500), 10)
 
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, mask_history, p_m, \
-                                                                  resolution, mean, var, max_)
+                                                                  resolution_between_events, mean, var, max_)
                                                                                # [batch_size, seq_len, num_events]
         mae_per_event_with_predict_index = torch.abs(((tau_pred_all_event * predict_index_one_hot_mask).sum(dim = -1)) - time_next) * mask_next
                                                                                # [batch_size, seq_len]
@@ -902,6 +913,8 @@ class TFullyNNModel(BasicModule):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
+        _, maes = move_from_tensor_to_ndarray(*maes)
+
         return maes, f1_2
 
 

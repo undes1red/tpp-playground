@@ -120,7 +120,7 @@ class TPPPlotter:
     def task_spearman_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            spearman_and_l1(self.model.module, self.train_data, 'train', opt = self.opt)
+            spearman_and_l1(self.model.module, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
             spearman_and_l1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
@@ -132,7 +132,7 @@ class TPPPlotter:
     def task_mae_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            mae_and_f1(self.model.module, self.train_data, 'train', opt = self.opt)
+            mae_and_f1(self.model.module, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
             mae_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
@@ -144,7 +144,7 @@ class TPPPlotter:
     def task_mae_e_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            mae_e_and_f1(self.model.module, self.train_data, 'train', opt = self.opt)
+            mae_e_and_f1(self.model.module, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
             mae_e_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)

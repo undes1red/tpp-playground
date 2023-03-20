@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import numpy as np
 
 from einops import pack
 from tqdm import tqdm
@@ -131,7 +132,7 @@ def mae_and_f1(model, dataset, desc, opt):
 
 def mae_e_and_f1(model, dataset, desc, opt):
     mae_e = None
-    f1 = 0
+    f1 = []
     size_of_dataset = len(dataset)
     for minibatch in tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc}'):
         mae_e_per_seq, f1_per_seq = model.get_mae_e_and_f1(minibatch, opt)     # [batch_size, seq_len]
@@ -140,8 +141,8 @@ def mae_e_and_f1(model, dataset, desc, opt):
         else:
             mae_e, mae_e_ps = pack((mae_e, mae_e_per_seq), '* s')
         f1 += f1_per_seq
-    
-    f1 = f1 / size_of_dataset
+
+    f1 = np.array(f1).mean()
     mean_mae_e = mae_e.mean().item()
 
     if not os.path.exists(opt.store_dir):

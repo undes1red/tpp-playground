@@ -246,22 +246,42 @@ class THPWrapper(BasicModule):
 
 
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var):
+        self.eval()
+
+        '''
+        Set the memory limit
+        '''
+        memory_ceiling = 2e6
+
+        '''
+        set a relatively large number as the infinity and decide resolution based on this large value and
+        the memory_ceiling.
+        '''
         if mean == 0 and var == 1:
-            mean = time_next.mean()
-            var = time_next.var()
+            max_ = time_next.mean() + 10 * time_next.var()
+        else:
+            max_ = mean + 10 * var
+
+        if mean == 0:
+            resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
+        else:
+            resolution_between_events = max(min(int(mean // 0.005), 500), 10)
         
-        # Use a relatively large number as the positive infinity.
-        max_ = min(1e6, mean + 10 * var)
+        max_ = min(1e6, max_)
+        time_next_inf = torch.ones_like(time_history, device = self.device) * max_
+                                                                               # [batch_size, seq_len]
+        resolution_inf = max(int(max_ // 0.005), 100)
 
-        resolution = min(int(max_ * 100), 50000)
-
-        memory_ceiling = 7e8
-        _, seq_len = events_next.shape
-        if seq_len * resolution * self.num_events > memory_ceiling:
-            resolution = int(memory_ceiling // (seq_len * self.num_events))
+        # only works when batch_size = 1
+        batch_size, seq_len = events_next.shape
+        if batch_size * seq_len * resolution_inf * self.num_events > memory_ceiling:
+            resolution_inf = int(memory_ceiling // (seq_len * self.num_events * batch_size))
+        
+        if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
+            resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, resolution_inf, mean, var)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         probabilty_expanded_events = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -308,7 +328,7 @@ class THPWrapper(BasicModule):
         # top_k_acc: [batch_size, num_events]
         resolution = max(min(int(mean * 200), 1000), 1)
         
-        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, probability, resolution, \
+        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, probability, resolution_between_events, \
                                                                   mask_history, mean, var, max_)
                                                                                # [batch_size, seq_len, num_events]
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
@@ -655,6 +675,8 @@ class THPWrapper(BasicModule):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
+        _, maes = move_from_tensor_to_ndarray(*maes)
+
         return maes, f1_2
 
 

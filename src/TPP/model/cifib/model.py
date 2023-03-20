@@ -4,13 +4,13 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.TPP.model.ifib.submodel import IFIB
+from src.TPP.model.cifib.submodel import IFIB
 from src.TPP.model.utils import BasicModule
-from src.TPP.model.ifib.utils import *
-from src.TPP.model.ifib.plot import *
+from src.TPP.model.cifib.utils import *
+from src.TPP.model.cifib.plot import *
 
 
-class IFIBModel(BasicModule):
+class CIFIBModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
@@ -23,7 +23,7 @@ class IFIBModel(BasicModule):
                  history_module = 'LSTM',
                  event_toggle = False, additional_event_loss = False,
                  denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
-        super(IFIBModel, self).__init__()
+        super(CIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = num_events
@@ -626,8 +626,6 @@ class IFIBModel(BasicModule):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
-        _, maes = move_from_tensor_to_ndarray(*maes)
-
         return maes, f1_2
 
 
