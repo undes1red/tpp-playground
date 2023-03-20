@@ -87,15 +87,15 @@ bookorder_training_hyperparameter_list = [
 syn_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--n_training_steps", "10000", \
     "--n_evaluation_steps", "100", \
     "--n_report_steps", "100", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "fullynn_probability", \
-    "--model_config", ["syn/fullynn.json"],
+    "--model_name", "ifib", \
+    "--model_config", ["syn/ifib.json"],
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \

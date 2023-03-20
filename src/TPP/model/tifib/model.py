@@ -24,7 +24,7 @@ class TIFIBModel(BasicModule):
                  num_events,
                  device,
                  event_toggle = False, additional_event_loss = False,
-                 denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
+                 denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.25):
         super(TIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold

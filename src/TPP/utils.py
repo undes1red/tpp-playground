@@ -58,7 +58,7 @@ def evaluation(data, model, model_class, device, output_length, desc):
     sum_ = [0] * output_length
     dataset_size = len(data)
     
-    for minibatch in tqdm(data, desc, leave = False):
+    for minibatch in tqdm(data, desc):
         batch_sum = model_class.evaluation_step(model, minibatch, device)
         sum_ = lst_add_lst(sum_, lst_divide(batch_sum, dataset_size))
 

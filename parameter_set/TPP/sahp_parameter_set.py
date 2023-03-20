@@ -95,7 +95,7 @@ syn_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1000", \
     "--model_name", "sahp", \
-    "--model_config", ["syn/sahp.json"],
+    "--model_config", "syn/sahp.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \

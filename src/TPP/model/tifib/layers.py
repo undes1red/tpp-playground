@@ -14,6 +14,7 @@ class TransformerLayer(nn.Module):
                                        d_v = d_v, device = self.device, dropout = dropout)
         self.ffn = FFN(d_input = d_input, d_hidden = d_hidden, device = self.device, dropout = dropout)
 
+
     def forward(self, q, k, v, self_attn_mask, non_pad_mask):
         '''
         Args:
@@ -114,6 +115,7 @@ class FFN(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         self.norm = nn.LayerNorm(d_input, eps = 1e-6, device = self.device)
+
 
     def forward(self, x):
         '''
