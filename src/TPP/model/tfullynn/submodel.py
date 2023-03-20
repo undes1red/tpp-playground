@@ -60,7 +60,6 @@ class TFullyNN(nn.Module):
         FullyNN can not distinguish different markers because of computation graph overlap.
         It is expected that the original FullyNN achieves very inferior marker prediction performance in spite of the model size.
         '''
-        
         self.his_encoder = TransEncoder(num_events, d_history, d_hidden, n_layers, \
                                         n_head, d_qk, d_v, dropout, event_toggle, device = self.device)
 

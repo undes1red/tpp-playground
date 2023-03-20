@@ -766,20 +766,13 @@ class SAHPWrapper(BasicModule):
         return train() if procedure == 'Training' else evaluate()
 
     format_dict_length = 8
-    
-    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f', 'events loss': ':8.5f'}
 
-    def logfile_print_format(input):
-        format_dict = {}
-        format_dict['absolute loss'] = input[0]
-        format_dict['relative loss'] = input[1]
-        format_dict['events loss'] = input[2]
-        return format_dict
     
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset]
+        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report[0], test_report[0]]
+        return [evaluation_report_format_dict['NLL loss at given time'], test_report_format_dict['NLL loss at given time']], \
+               ['evaluation NLL loss at given time', 'test NLL loss at given time']
     
     metric_number = 2 # metric number is the length of the output of choose_metric

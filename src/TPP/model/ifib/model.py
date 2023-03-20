@@ -564,16 +564,12 @@ class IFIBModel(BasicModule):
                                                                                # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
-        expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
-                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
+        expand_probability, timestamp = \
+            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+                                                                               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution] + [batch_size, seq_len, resolution]
 
-        check_tensor(expand_integral)
-        check_tensor(expand_intensity)
-        assert expand_intensity.shape == expand_integral.shape
-        expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
+        if opt.event_toggle:
+            expand_probability = expand_probability.sum(dim = -1)              # [batch_size, seq_len, resolution]
         true_probability = expand_true_probability(time_next, input_intensity, opt)
                                                                                # [batch_size, seq_len, resolution] or batch_size * None
         
@@ -590,8 +586,7 @@ class IFIBModel(BasicModule):
 
             l1_per_seq = L1_distance_between_two_funcs(
                                         x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution
-                                        )
+                                        timestamp = timestamp_per_seq, resolution = opt.resolution)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 

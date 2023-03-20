@@ -3,26 +3,29 @@ import numpy as np
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 
-from src.TPP.model.ifib.submodel import IFIB
+from src.TPP.model.tifib.submodel import TIFIB
 from src.TPP.model.utils import BasicModule
-from src.TPP.model.ifib.utils import *
-from src.TPP.model.ifib.plot import *
+from src.TPP.model.tifib.utils import *
+from src.TPP.model.tifib.plot import *
 
 
-class IFIBModel(BasicModule):
+class TIFIBModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
-                 history_module_layers,
+                 d_hidden,
+                 n_layers,
+                 n_head,
+                 d_qk,
+                 d_v,
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
                  num_events,
                  device,
-                 history_module = 'LSTM',
                  event_toggle = False, additional_event_loss = False,
                  denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
-        super(IFIBModel, self).__init__()
+        super(TIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = num_events
@@ -30,10 +33,11 @@ class IFIBModel(BasicModule):
         self.additional_event_loss = additional_event_loss
         self.zero_shift_factor = 1e-12
 
-        self.model = IFIB(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
-                          dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                          mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle,
-                          denominator_shift = denominator_shift, pretrain = pretrain, alpha = alpha, beta = beta, device = device)
+        self.model = TIFIB(d_history = d_history, d_intensity = d_intensity, num_events = num_events, \
+                           dropout = dropout, d_hidden = d_hidden, n_layers = n_layers, n_head = n_head, \
+                           d_qk = d_qk, d_v = d_v, mlp_layers = mlp_layers, nonlinear = nonlinear, \
+                           event_toggle = event_toggle, denominator_shift = denominator_shift, pretrain = pretrain, \
+                           alpha = alpha, beta = beta, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -76,7 +80,7 @@ class IFIBModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         if self.event_toggle:
             time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
@@ -86,7 +90,7 @@ class IFIBModel(BasicModule):
         '''
         \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
         '''
-        probability_integral_from_t_to_infinite = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        probability_integral_from_t_to_infinite = self.model(events_history, time_history, time_next, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
         '''
@@ -117,7 +121,7 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.sum()
 
         time_loss = self.nll_loss(probability = probability_for_each_event, mask_next = mask_next, events_next = events_next)
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         if self.event_toggle and self.additional_event_loss:
             loss = time_loss + events_loss
@@ -131,12 +135,14 @@ class IFIBModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        the_number_of_events = mask_next.sum().item()
         
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                                  time_next = time_next, mask_next = mask_next, mean = mean, var = var)
+                                                  time_next = time_next, mask_history = mask_history, \
+                                                  mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
-        mae = mae.sum() / mask_next.sum()
+        mae = mae.sum().item() / the_number_of_events
 
         if self.event_toggle:
             time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
@@ -146,9 +152,9 @@ class IFIBModel(BasicModule):
 
         time_next.requires_grad = True                                         # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         
-        probability_integral_from_zero_to_infinite = self.model(events_history, time_history, time_zero, mean = mean, var = var)
+        probability_integral_from_zero_to_infinite = self.model(events_history, time_history, time_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        probability_integral_from_time_next_to_infinite = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        probability_integral_from_time_next_to_infinite = self.model(events_history, time_history, time_next, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
         probability_for_each_event_at_time_next = - torch.autograd.grad(
@@ -191,7 +197,6 @@ class IFIBModel(BasicModule):
             events_loss = events_loss.sum()
     
         time_loss = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next, events_next = events_next)
-        the_number_of_events = mask_next.sum()
 
         return time_loss, events_loss, mae, f1_pred, f1_pred_at_time_next, the_number_of_events
 
@@ -220,7 +225,7 @@ class IFIBModel(BasicModule):
 
 
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
+        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_history, mask_next, mean, var)
         if self.event_toggle:
             time_next_pred = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
@@ -242,7 +247,7 @@ class IFIBModel(BasicModule):
         return mae, f1
 
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -250,7 +255,7 @@ class IFIBModel(BasicModule):
         def evaluate(integral_from_zero_to_inf, taus):
             if self.event_toggle:
                 taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)     # [batch_size, seq_len, num_events]
-            probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mean, var)
+            probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mask_history, mean, var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
@@ -278,7 +283,7 @@ class IFIBModel(BasicModule):
         if self.event_toggle:
             time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
+        integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         tau_pred = median_prediction(integral_from_zero_to_inf, l, r)          # [batch_size, seq_len]
         gap = (tau_pred - time_next) * mask_next                               # [batch_size, seq_len]
@@ -287,7 +292,7 @@ class IFIBModel(BasicModule):
         return gap, tau_pred
 
 
-    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var):
+    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
         '''
         Well...We will do something totally different by performing event-wise MAE.
         First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
@@ -300,7 +305,7 @@ class IFIBModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
         probability_integral_from_zero_to_infinite = \
-            self.model(events_history, time_history, time_zero, mean = mean, var = var)
+            self.model(events_history, time_history, time_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
         probability_integral_sum = reduce(probability_integral_from_zero_to_infinite, 'b s ne -> b s', 'sum')
@@ -338,8 +343,8 @@ class IFIBModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
 
         # step 2: get the time prediction for that kind of event
-        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
-                                                                  probability_integral_from_zero_to_infinite, mean, var)
+        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, probability_integral_from_zero_to_infinite, \
+                                                                  mask_history, mean, var)
                                                                                # [batch_size, seq_len, num_events]
         mae_per_event_pure_predict = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - time_next) * mask_next
                                                                                # [batch_size, seq_len, num_events]
@@ -353,7 +358,7 @@ class IFIBModel(BasicModule):
                (mae_per_event_pure_predict, mae_per_event)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, p_m, mean, var):
+    def prediction_with_all_event_types(self, events_history, time_history, p_m, mask_history, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -361,7 +366,7 @@ class IFIBModel(BasicModule):
         '''
         def evaluate_all_event(taus):
             # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
-            probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mean = mean, var = var)
+            probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             # \int_{0}^{tau}{p(m, \tau|\mathcal{H})d\tau}
             probability_from_zero_to_t = p_m - probability_integral_from_t_to_infinite
@@ -478,10 +483,10 @@ class IFIBModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.probability(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution] + [batch_size, seq_len, resolution]
 
         data = {
@@ -517,9 +522,10 @@ class IFIBModel(BasicModule):
                                                                                # [batch_size, seq_len]
         
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var)
 
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, \
+                                                          mask_next, opt.resolution, mean, var)
 
         '''
         Append additional info into the data dict.
@@ -551,16 +557,12 @@ class IFIBModel(BasicModule):
                                                                                # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
-        expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
-                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
+        expand_probability, timestamp = \
+            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+                                                                               # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution] + [batch_size, seq_len, resolution]
 
-        check_tensor(expand_integral)
-        check_tensor(expand_intensity)
-        assert expand_intensity.shape == expand_integral.shape
-        expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
+        if opt.event_toggle:
+            expand_probability = expand_probability.sum(dim = -1)              # [batch_size, seq_len, resolution]
         true_probability = expand_true_probability(time_next, input_intensity, opt)
                                                                                # [batch_size, seq_len, resolution] or batch_size * None
         
@@ -577,8 +579,7 @@ class IFIBModel(BasicModule):
 
             l1_per_seq = L1_distance_between_two_funcs(
                                         x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution
-                                        )
+                                        timestamp = timestamp_per_seq, resolution = opt.resolution)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
@@ -611,8 +612,10 @@ class IFIBModel(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var)
         
+        _, maes = move_from_tensor_to_ndarray(*maes)
+
         return maes, f1_2
 
 
@@ -642,7 +645,7 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss]
+        return time_loss, fact, events_loss
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
@@ -658,7 +661,7 @@ class IFIBModel(BasicModule):
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss, mae, f1_pred, f1_pred_at_time_next]
+        return time_loss, fact, events_loss, mae, f1_pred, f1_pred_at_time_next
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -704,29 +707,12 @@ class IFIBModel(BasicModule):
 
     format_dict_length = 6
     
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f', 'mae': ':2.8f', 'f1_value': ':2.8f'}
-
-    def logfile_print_format(input):
-        if len(input) == 3:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = 0
-            format_dict['f1_value'] = 0
-        else:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = input[3]
-            format_dict['f1_value'] = input[4]
-        return format_dict
     
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [test_report[0],]
+        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
     
-    metric_number = 1 # metric number is the length of the output of choose_metric
+    metric_number = 2 # metric number is the length of the output of choose_metric

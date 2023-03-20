@@ -1002,29 +1002,12 @@ class TFENNModel(BasicModule):
 
     format_dict_length = 5
     
-    logfile_format = {'step': '', 'absolute loss': ':6.5f', 'relative loss': ':6.5f', 'events loss': ':6.5f', 'mae': ':2.8f', 'f1_value': ':2.8f'}
 
-    def logfile_print_format(input):
-        if len(input) == 3:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = 0
-            format_dict['f1_value'] = 0
-        else:
-            format_dict = {}
-            format_dict['absolute loss'] = input[0]
-            format_dict['relative loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['mae'] = input[3]
-            format_dict['f1_value'] = input[4]
-        return format_dict
-    
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [test_report[0],]
+        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
     
-    metric_number = 1 # metric number is the length of the output of choose_metric
+    metric_number = 2 # metric number is the length of the output of choose_metric

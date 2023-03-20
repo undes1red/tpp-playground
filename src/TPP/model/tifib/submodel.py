@@ -4,9 +4,10 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.ifib.utils import L1_distance
-from src.TPP.model.ifib.nonneg import NonNegLinear
-from src.TPP.model.ifib.activate import *
+from src.TPP.model.tifib.utils import L1_distance_across_events
+from src.TPP.model.tifib.transformers import TransEncoder
+from src.TPP.model.tifib.nonneg import NonNegLinear
+from src.TPP.model.tifib.activate import *
 
 
 TA = {
@@ -30,7 +31,7 @@ TA = {
 }
 
 
-class IFIB(nn.Module):
+class TIFIB(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -41,9 +42,9 @@ class IFIB(nn.Module):
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
+    def __init__(self, d_history, d_intensity, num_events, dropout, d_hidden, n_layers, n_head, d_qk, d_v,
                  mlp_layers, nonlinear, event_toggle, denominator_shift, pretrain, alpha, beta, device):
-        super(IFIB, self).__init__()
+        super(TIFIB, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
@@ -54,11 +55,8 @@ class IFIB(nn.Module):
         else:
             self.events = None
 
-        try:
-            self.his_encoder = getattr(nn, history_module)(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
-                        batch_first = True, dropout = dropout, device = device)
-        except:
-            raise Exception(f'Unknown history module {history_module}.')
+        self.his_encoder = TransEncoder(num_events, d_history, d_hidden, n_layers, \
+                                        n_head, d_qk, d_v, dropout, event_toggle, device = self.device)
 
 
         self.weight_for_t = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
@@ -91,7 +89,7 @@ class IFIB(nn.Module):
         self.nonneg_integral = nn.Sigmoid()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mask_history, mean, var):
         '''
         Args:
             events_history: [batch_size, seq_len]
@@ -113,7 +111,8 @@ class IFIB(nn.Module):
             history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
 
         if self.event_toggle:
             hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
@@ -170,7 +169,7 @@ class IFIB(nn.Module):
         return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.denominator_shift)
 
 
-    def probability(self, events_history, time_history, time_next, resolution, mean, var):
+    def probability(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -192,7 +191,8 @@ class IFIB(nn.Module):
         else:
             history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
 
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         if self.event_toggle:
@@ -266,7 +266,7 @@ class IFIB(nn.Module):
         return expand_probability, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -287,7 +287,8 @@ class IFIB(nn.Module):
         else:
             history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
 
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         if self.event_toggle:
@@ -377,9 +378,9 @@ class IFIB(nn.Module):
             spearman_matrix = []
             pearson_matrix = []
             L1_matrix = []
-            for idx, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in \
-                                                  enumerate(zip(probability_for_each_event, mask, time_next)):
-                seq_len = mask_per_seq.sum()
+            for idx, (expand_probability_per_seq, mask_next_per_seq, time_next_per_seq) in \
+                                                  enumerate(zip(probability_for_each_event, mask_next, time_next)):
+                seq_len = mask_next_per_seq.sum()
                 # rho: spearman coefficient
                 spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
                 if self.num_events == 2:
@@ -388,7 +389,7 @@ class IFIB(nn.Module):
                 # r: pearson coefficient
                 pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
                 # L^1 metric
-                L1_matrix_per_seq = L1_distance(expand_probability_per_seq[:seq_len * resolution], 
+                L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
                                                 resolution = resolution, num_events = self.num_events,
                                                 time_next = time_next_per_seq[:seq_len])
 
