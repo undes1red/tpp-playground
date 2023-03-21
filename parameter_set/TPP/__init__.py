@@ -34,6 +34,10 @@ from parameter_set.TPP.sahp_parameter_set import plot_hyperparameter as sahp_p
 from parameter_set.TPP.ifib_parameter_set import training_hyperparameter as ifps_t
 from parameter_set.TPP.ifib_parameter_set import plot_hyperparameter as ifps_p
 
+# transformer-based fullynn_probability(IBIF) parameter set
+from parameter_set.TPP.tifib_parameter_set import training_hyperparameter as tifps_t
+from parameter_set.TPP.tifib_parameter_set import plot_hyperparameter as tifps_p
+
 
 plot_parameter_set = {
     'fenn': {'train': feps_t, 'plot': feps_p},
@@ -45,6 +49,7 @@ plot_parameter_set = {
     'lognormmix': {'train': ifl_t, 'plot': ifl_p},
     'sahp': {'train': sahp_t, 'plot': sahp_p},
     'ifib': {'train': ifps_t, 'plot': ifps_p},
+    'tifib': {'train': tifps_t, 'plot': tifps_p},
 }
 
 def parameter_retriver(opt):
