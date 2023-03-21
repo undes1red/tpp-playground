@@ -87,7 +87,7 @@ class SAHPWrapper(BasicModule):
              events_next = events_next, mask_next = mask_next
         )
 
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         return log_likeli_loss, marker_loss, the_number_of_events
 
@@ -108,14 +108,14 @@ class SAHPWrapper(BasicModule):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        the_number_of_events = mask_next.sum()
+        the_number_of_events = mask_next.sum().item()
 
         mae, pred_time = \
                     self.mean_absolute_error(time_history = time_history, time_next = time_next, events_history = events_history, \
                                              mask_history = mask_history, mask_next = mask_next)
                                                                                # [batch_size, seq_len] * 2
         
-        mae = mae.sum() / the_number_of_events
+        mae = mae.sum().item() / the_number_of_events
 
         integral_all_events_time_next, intensity_all_events_time_next \
             = self.model(time_history, time_next, events_history, mask_history)# 2 * [batch_size, seq_len, num_events]

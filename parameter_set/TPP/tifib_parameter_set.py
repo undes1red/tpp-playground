@@ -1,87 +1,87 @@
-# parameter sets of model tfenn
+# parameter sets of model tifib
 
 stackoverflow_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "stackoverflow/tfenn_dl.json",
+    "--dataloader_config", "stackoverflow/tifib_dl.json",
     "--dataset_name", "stackoverflow", \
     "--n_training_steps", "50000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "10000", \
-    "--model_name", "tfenn", \
-    "--model_config", "stackoverflow/tfenn.json",
+    "--model_name", "tifib", \
+    "--model_config", "stackoverflow/tifib.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
     "--optim_json", "optimizer.json", \
-    "--n_cycles", "0.5",
+    "--n_cycles", "0.5",\
 ]
 
 retweet_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "retweet/tfenn_dl.json",
+    "--dataloader_config", "retweet/tifib_dl.json",
     "--dataset_name", "retweet", \
     "--n_training_steps", "100000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "20000", \
-    "--model_name", "tfenn", \
-    "--model_config", "retweet/tfenn.json",
+    "--model_name", "tifib", \
+    "--model_config", "retweet/tifib.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
     "--optim_json", "optimizer.json", \
-    "--n_cycles", "0.5",
+    "--n_cycles", "0.5",\
 ]
 
 mooc_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "mooc/tfenn_dl.json",
+    "--dataloader_config", "mooc/tifib_dl.json",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "5000", \
     "--n_report_steps", "5000", \
     "--b", "32", \
     "--n_warmup_steps", "80000", \
-    "--model_name", "tfenn", \
-    "--model_config", "mooc/tfenn.json",
+    "--model_name", "tifib", \
+    "--model_config", "mooc/tifib.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
     "--optim_json", "optimizer.json", \
-    "--n_cycles", "0.5",
+    "--n_cycles", "0.5",\
 ]
 
 bookorder_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "bookorder/tfenn_dl.json",
+    "--dataloader_config", "bookorder/tifib_dl.json",
     "--dataset_name", "bookorder", \
     "--n_training_steps", "20000", \
-    "--n_evaluation_steps", "100", \
-    "--n_report_steps", "100", \
+    "--n_evaluation_steps", "500", \
+    "--n_report_steps", "500", \
     "--b", "8", \
     "--n_warmup_steps", "4000", \
-    "--model_name", "tfenn", \
-    "--model_config", "bookorder/tfenn.json",
+    "--model_name", "tifib", \
+    "--model_config", "bookorder/tifib.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
     "--optim_json", "optimizer.json", \
-    "--n_cycles", "0.5",
+    "--n_cycles", "0.5",\
 ]
 
 syn_training_hyperparameter_list = [
@@ -94,33 +94,32 @@ syn_training_hyperparameter_list = [
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "tfenn", \
-    "--model_config", "syn/tfenn.json",
+    "--model_name", "tifib", \
+    "--model_config", "syn/tifib.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
     "--optim_json", "optimizer.json", \
-    "--n_cycles", "0.5",
+    "--n_cycles", "0.5",\
 ]
 
 retweet_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "6000", \
+    "--model_name", "tifib", \
+    "--model_config", "retweet/tifib.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "128", \
+    "--n_training_steps", "100000", \
     "--dataset_name", "retweet", \
     "--dataloader_name", "syn", \
-    "--figure_count", "1", \
+    "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tifib_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200"
 ]
@@ -128,77 +127,73 @@ retweet_plot_hyperparameter_list = [
 stackoverflow_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "3000", \
+    "--model_name", "tifib", \
+    "--model_config", "stackoverflow/tifib.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "128", \
+    "--n_training_steps", "50000", \
     "--dataset_name", "stackoverflow", \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", ["shift.json"], \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tifib_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 mooc_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "10000", \
-    "--dataset_name", "mimic", \
-    "--dataloader_name", "syn", \
+    "--model_name", "tifib", \
+    "--model_config", "mooc/tifib.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "32", \
+    "--n_training_steps", "400000", \
+    "--dataset_name", "mooc", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "no_norm.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
-    # "--plot_type", ["intensity", "probability"], \
-    "--dataloader_config", "mimic/plot.json", \
-    "--resolution", "200"
+    "--used_dataloader_config", "tifib_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    "--dataloader_config", "mooc/plot.json", \
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 bookorder_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "64", \
-    "--n_training_steps", "1000", \
+    "--model_name", "tifib", \
+    "--model_config", "bookorder/tifib.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "8", \
+    "--n_training_steps", "20000", \
     "--dataset_name", "bookorder", \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tifib_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "bookorder/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json"], \
+    "--model_name", "tifib", \
+    "--model_config", ["syn/fullynn.json"], \
     "--lr", "0.002", \
-    "--batch_size", "128", \
+    "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--dataloader_name", "syn", \
@@ -211,7 +206,7 @@ syn_plot_hyperparameter_list = [
     "--plot_type", ["debug"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--synthetic_evaluation"
+    "--task_name", ['graph']
 ]
 
 training_hyperparameter = {

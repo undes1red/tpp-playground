@@ -1,4 +1,4 @@
-# parameter sets of model thp
+# parameter sets of model lognormmix
 
 stackoverflow_training_hyperparameter_list = [
     "train.py", \

@@ -107,111 +107,108 @@ syn_training_hyperparameter_list = [
 retweet_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["retweet/fullynn.json", "retweet/fullynn_no_split.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "6000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "retweet/tfullynn.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "128", \
+    "--n_training_steps", "100000", \
     "--dataset_name", "retweet", \
-    "--dataloader_name", "syn", \
-    "--figure_count", "1", \
+    "--dataloader_name", "generic", \
+    "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "retweet/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 stackoverflow_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["stackoverflow/fullynn.json", "stackoverflow/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "3000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "stackoverflow/tfullynn.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "128", \
+    "--n_training_steps", "50000", \
     "--dataset_name", "stackoverflow", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", ["shift.json"], \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "stackoverflow/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 mooc_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["mimic/fullynn.json", "mimic/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "128", \
-    "--n_training_steps", "10000", \
-    "--dataset_name", "mimic", \
+    "--model_name", "tfullynn", \
+    "--model_config", "mooc/tfullynn.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "32", \
+    "--n_training_steps", "400000", \
+    "--dataset_name", "mooc", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "no_norm.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
-    # "--plot_type", ["intensity", "probability"], \
-    "--dataloader_config", "mimic/plot.json", \
-    "--resolution", "200"
+    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    "--dataloader_config", "mooc/tfullynn_dl.json", \
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 bookorder_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["bookorder/fullynn.json", "bookorder/fullynn_no_split.json"], \
-    # "--model_config", ["bookorder/fullynn_zero_shift.json"], \
-    "--lr", "0.001", \
-    "--batch_size", "64", \
-    "--n_training_steps", "1000", \
+    "--model_name", "tfullynn", \
+    "--model_config", "bookorder/tfullynn.json", \
+    "--lr", "0.002", \
+    "--used_batch_size", "8", \
+    "--n_training_steps", "20000", \
     "--dataset_name", "bookorder", \
     "--dataloader_name", "syn", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "shift.json", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", ["debug"], \
+    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--plot_type", ["intensity", "probability", "debug"], \
     "--dataloader_config", "bookorder/plot.json", \
-    "--resolution", "200"
+    "--resolution", "200", \
+    "--task_name", ['graph']
 ]
 
 syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", ["syn/fullynn.json", "syn/fullynn_no_split.json"], \
+    "--model_name", "tfullynn", \
+    "--model_config", "syn/tfullynn.json", \
     "--lr", "0.002", \
-    "--batch_size", "128", \
+    "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    # "--plot_type", ["intensity", "probability"], \
-    "--plot_type", ["debug"], \
+    # "--plot_type", ['intensity', 'integral', 'probability', 'debug'],
+    "--plot_type", ['intensity'], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--synthetic_evaluation"
+    "--task_name", ['graph']
+    # "--task_name", ['graph', 'spearman_and_f1', 'mae_and_f1', 'mae_e_and_f1']
+    # "--task_name", ['mae_e_and_f1']
 ]
 
 training_hyperparameter = {

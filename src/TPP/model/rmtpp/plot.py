@@ -354,213 +354,39 @@ def plot_debug(data, timestamp, opt):
             ]
             plot_instruction[f'sub{y.lower()}_{idx}'] = subplot_instruction
 
-    if not opt.original_mark_generation:
-        '''
-        Part 2: plot for spearman, pearson, and L1 distance matrix
-        Required plots: heatmap
-        '''
-        def matrix_to_pd(matrix, index_name, column_name, value_name):
-            index, column = matrix.shape
-        
-            # The index and column list
-            index_list = [ele for ele in range(index) for _ in range(column)]
-            column_list = list(range(column)) * index
-        
-            df = pd.DataFrame.from_dict({
-                index_name: index_list,
-                column_name: column_list,
-                value_name: matrix.flatten()
-            })
-        
-            df = df.pivot(index = index_name, columns = column_name, values = value_name)
-        
-            return df
-    
-        for value in ['spearman', 'pearson', 'L1']:
-            selected_matrices = data[f'{value}_matrix']
-            for idx, each_matrix in enumerate(selected_matrices):
-                df_matrix = \
-                    matrix_to_pd(each_matrix, index_name = 'Event type', column_name = 'Event type ', value_name = value)
-                subplot_instruction = [
-                    {
-                        'plot_type': 'heatmap',
-                        'kwargs':
-                        {
-                            'data': df_matrix,
-                            'cmap': "YlGnBu",
-                            'vmin': 0,
-                            'vmax': max(1, np.max(df_matrix.values)),
-                            'annot': True
-                        }
-                    },
-                ]
-                plot_instruction[f'{value}_matrix_{idx}'] = subplot_instruction
 
+    '''
+    Only MAE is available.
+    '''
+    mae = data['mae_before_event']                                     # [batch_size, seq_len]
+    mask_next = data['mask_next']                                      # [batch_size, seq_len]
 
-        '''
-        Part 3: plot for Top-K accuracy
-        Required plots: lineplot
-        '''
-        top_k = data['top_k']                                                  # [batch_size, num_events - 1]
-        for idx, top_k_per_seq in enumerate(top_k):
-            data_top_k_per_seq = {
-                'x': np.arange(1, num_events),
-                'y': top_k_per_seq,
-                'marks': 'Top-K accuracy'
-            }
-            df_data_top_k_per_seq = pd.DataFrame.from_dict(data_top_k_per_seq)
-            sub_plot_instruction = [
+    packed_data = zip(*move_from_tensor_to_ndarray(mae, mask_next))
+
+    for idx, (mae_per_seq, mask_next_per_seq) in enumerate(packed_data):
+        seq_len = mask_next_per_seq.sum()
+
+        data_maes_per_seq = {
+            'x': list(range(seq_len)),
+            'y': np.log(1 + mae_per_seq[:seq_len]),
+            'marks': ['MAE'] * seq_len
+        }
+        df_data_maes_per_seq = pd.DataFrame.from_dict(data_maes_per_seq)
+
+        sub_plot_instruction = [
+            {
+                'plot_type': 'lineplot',
+                'kwargs':
                 {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x': 'x',
-                        'y': 'y',
-                        'hue': 'marks',
-                        'data': df_data_top_k_per_seq,
-                        'markers': True
-                    }
+                    'x': 'x',
+                    'y': 'y',
+                    'hue': 'marks',
+                    'data': df_data_maes_per_seq,
+                    'markers': True
                 }
-            ]
-            plot_instruction[f'top_k_accuracy_{idx}'] = sub_plot_instruction
-
-
-        '''
-        Part 4: Logarithm of MAE-E and MAE at each event
-        '''
-        mae_per_event_with_predict_index, mae_per_event_with_event_next = data['maes_after_event']
-                                                                               # [batch_size, seq_len]
-        mae = data['mae_before_event']                                         # [batch_size, seq_len]
-        mask_next = data['mask_next']                                          # [batch_size, seq_len]
-    
-        packed_data = zip(*move_from_tensor_to_ndarray(mae, mae_per_event_with_predict_index, mae_per_event_with_event_next, mask_next))
-    
-        for idx, (mae_per_seq, mae_per_event_with_predict_index_per_seq, mae_per_event_with_event_next_per_seq, mask_next_per_seq) in enumerate(packed_data):
-            seq_len = mask_next_per_seq.sum()
-    
-            data_maes_per_seq = {
-                'x': list(range(seq_len)) * 3,
-                'y': np.concatenate(
-                    (np.log(1 + mae_per_event_with_predict_index_per_seq[:seq_len]),
-                     np.log(1 + mae_per_event_with_event_next_per_seq[:seq_len]),
-                     np.log(1 + mae_per_seq[:seq_len]))
-                ),
-                'marks': ['MAE_k against prediction'] * seq_len +  ['MAE_k against real events'] * seq_len + ['MAE'] * seq_len
             }
-            df_data_maes_per_seq = pd.DataFrame.from_dict(data_maes_per_seq)
-    
-            sub_plot_instruction = [
-                {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x': 'x',
-                        'y': 'y',
-                        'hue': 'marks',
-                        'data': df_data_maes_per_seq,
-                        'markers': True
-                    }
-                }
-            ]
-            plot_instruction[f'log_mae_k_{idx}'] = sub_plot_instruction
-    
+        ]
+        plot_instruction[f'log_mae_k_{idx}'] = sub_plot_instruction
 
-        '''
-        Part 5: the value of \sum_{m \in M}{p^*(m)} given different history.
-        '''
-        probability_sum = data['probability_sum']                              # [batch_size, seq_len]
-        mask_next = data['mask_next']                                          # [batch_size, seq_len]
-    
-        packed_data = zip(*move_from_tensor_to_ndarray(probability_sum, mask_next))
-    
-        for idx, (probability_sum_per_seq, mask_next_per_seq) in enumerate(packed_data):
-            seq_len = mask_next_per_seq.sum()
-    
-            data_probability_sum_per_seq = {
-                'x': np.arange(1, seq_len + 1),
-                'y': probability_sum_per_seq[:seq_len]
-            }
-            df_data_probability_sum_per_seq = pd.DataFrame.from_dict(data_probability_sum_per_seq)
-    
-            sub_plot_instruction = [
-                {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x': 'x',
-                        'y': 'y',
-                        'data': df_data_probability_sum_per_seq,
-                        'markers': True
-                    }
-                }
-            ]
-            plot_instruction[f'probability_sum_{idx}'] = sub_plot_instruction
-
-
-        '''
-        Part 6: The Logarithm of time prediction against all events
-    
-        '''
-        tau_pred_all_event = data['tau_pred_all_event']                        # [batch_size, seq_len, num_events]
-        mask_next = data['mask_next']                                          # [batch_size, seq_len]
-        tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
-                                                                               # [batch_size, seq_len, num_events] + [batch_size, seq_len]
-    
-        for idx, (tau_pred_all_event_per_seq, mask_next) in enumerate(zip(tau_pred_all_event, mask_next)):
-            seq_len = mask_next_per_seq.sum()
-    
-            data_tau_pred_all_event_per_seq = {
-                'x': [ele for ele in range(seq_len) for _ in range(num_events)],
-                'y': np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
-                'marks': [f'Event {i}' for i in range(num_events)] * seq_len
-            }
-            df_data_tau_pred_all_event_per_seq = pd.DataFrame.from_dict(data_tau_pred_all_event_per_seq)
-            sub_plot_instruction = [
-                {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x': 'x',
-                        'y': 'y',
-                        'hue': 'marks',
-                        'data': df_data_tau_pred_all_event_per_seq,
-                        'markers': True
-                    }
-                }
-            ]
-            plot_instruction[f't_pred_all_event_{idx}'] = sub_plot_instruction
-    else:
-        '''
-        Only MAE is available.
-        '''
-        mae = data['mae_before_event']                                     # [batch_size, seq_len]
-        mask_next = data['mask_next']                                      # [batch_size, seq_len]
-    
-        packed_data = zip(*move_from_tensor_to_ndarray(mae, mask_next))
-    
-        for idx, (mae_per_seq, mask_next_per_seq) in enumerate(packed_data):
-            seq_len = mask_next_per_seq.sum()
-    
-            data_maes_per_seq = {
-                'x': list(range(seq_len)),
-                'y': np.log(1 + mae_per_seq[:seq_len]),
-                'marks': ['MAE'] * seq_len
-            }
-            df_data_maes_per_seq = pd.DataFrame.from_dict(data_maes_per_seq)
-    
-            sub_plot_instruction = [
-                {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x': 'x',
-                        'y': 'y',
-                        'hue': 'marks',
-                        'data': df_data_maes_per_seq,
-                        'markers': True
-                    }
-                }
-            ]
-            plot_instruction[f'log_mae_k_{idx}'] = sub_plot_instruction
 
     return plot_instruction

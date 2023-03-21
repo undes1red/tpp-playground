@@ -117,7 +117,7 @@ class THPWrapper(BasicModule):
         '''
         the_number_of_events = mask_next.sum().item()
         gap, tau_pred = self.mean_absolute_error(time_history, time_next, events_history, mask_history, mask_next)
-        gap_mean = (gap * mask_next).sum() / the_number_of_events
+        gap_mean = gap.sum().item() / the_number_of_events
 
 
         integral_all_events_time_next, intensity_all_events_time_next \
@@ -771,7 +771,7 @@ class THPWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['NLL loss at given time'], test_report_format_dict['NLL loss at given time']], \
+        return [evaluation_report_format_dict['NLL Loss at given timestamps'], test_report_format_dict['NLL Loss at given timestamps']], \
                ['evaluation NLL loss at given time', 'test NLL loss at given time']
     
     metric_number = 2 # metric number is the length of the output of choose_metric
