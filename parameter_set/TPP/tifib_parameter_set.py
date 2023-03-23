@@ -113,7 +113,7 @@ retweet_plot_hyperparameter_list = [
     "--used_batch_size", "128", \
     "--n_training_steps", "100000", \
     "--dataset_name", "retweet", \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
@@ -191,12 +191,12 @@ syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
     "--model_name", "tifib", \
-    "--model_config", ["syn/fullynn.json"], \
+    "--model_config", "syn/tifib.json", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
-    "--dataloader_name", "syn", \
+    "--dataloader_name", "generic", \
     "--figure_count", "10", \
     "--train", \
     "--test", \
@@ -206,7 +206,7 @@ syn_plot_hyperparameter_list = [
     "--plot_type", ["debug"], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", ['spearman_and_l1']
 ]
 
 training_hyperparameter = {

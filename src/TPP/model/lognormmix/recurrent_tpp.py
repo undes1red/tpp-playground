@@ -112,7 +112,7 @@ class RecurrentTPP(nn.Module):
         raise NotImplementedError()
 
 
-    def log_prob(self, input_events, input_time, input_mask, mean, var) -> torch.Tensor:
+    def log_prob(self, input_events, input_time, mean, var) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences.
 
         Args:
@@ -156,22 +156,21 @@ class RecurrentTPP(nn.Module):
         for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         but the difference shouldn't be significant if you are working with long sequences.
         '''
+        '''
         last_event_idx = input_mask.sum(-1, keepdim=True).long()               # [batch_size, 1]
         log_surv_all = inter_time_dist.log_survival_function(input_time)       # [batch_size, seq_len]
         log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
                                                                                # [batch_size]
+        '''
 
         log_p_event = 0
         if self.num_marks > 1:
             mark_logits = torch.log_softmax(self.mark_linear(context_history), dim = -1)
-                                                                               # [batch_size, seq_len, num_marks]
+                                                                               # [batch_size, seq_len + 1, num_marks]
             mark_dist = Categorical(logits = mark_logits)
-            log_p_event = mark_dist.log_prob(input_events)                     # [batch_size, seq_len]
+            log_p_event = mark_dist.log_prob(input_events)                     # [batch_size, seq_len + 1]
         
-        log_p_event = log_p_event * input_mask                                 # [batch_size, seq_len]
-        the_number_of_events = input_mask.sum()
-        # return log_p.sum(-1) + log_surv_last, the_number_of_events
-        return log_p.sum(-1), the_number_of_events
+        return log_p, log_p_event
 
 
     def event_prober(self, event, time_interval, mask, mean_and_var) -> torch.Tensor:

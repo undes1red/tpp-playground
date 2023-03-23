@@ -4,9 +4,9 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.ifib.utils import L1_distance_across_events
-from src.TPP.model.ifib.nonneg import NonNegLinear
-from src.TPP.model.ifib.activate import *
+from src.TPP.model.cifib.utils import L1_distance_across_events
+from src.TPP.model.cifib.nonneg import NonNegLinear
+from src.TPP.model.cifib.activate import *
 
 
 TA = {

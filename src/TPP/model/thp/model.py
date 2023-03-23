@@ -611,10 +611,10 @@ class THPWrapper(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)

@@ -22,7 +22,7 @@ def find_dataset(name, rank):
         return dataloader_combo
     except:
         if rank == 0:
-            logger.exception(f"Dataloader named {name} is not found! Please register your dataset in src/data/__init__.py and try again.")
+            logger.exception(f"Dataloader named {name} is not found! Please try again.")
 
 
 def prepare_dataloaders(opt, rank = 0):

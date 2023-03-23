@@ -69,7 +69,16 @@ class LogNormMixWrapper(BasicModule):
         ]
         '''
 
-        return self.model.log_prob(input_events, input_time, input_mask, mean, var)
+        the_number_of_events = input_mask.sum().item()
+        log_prob, log_p_event = self.model.log_prob(input_events, input_time, mean, var)
+                                                                               # [batch_size, seq_len + 1]
+        log_prob = log_prob * input_mask                                       # [batch_size, seq_len + 1]
+        log_p_event = log_p_event * input_mask                                 # [batch_size, seq_len + 1]
+        
+        time_loss = self.loss_f(log_prob)
+        event_loss = self.loss_f(log_p_event)
+
+        return time_loss, event_loss, the_number_of_events
 
 
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, var):
@@ -88,11 +97,26 @@ class LogNormMixWrapper(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-        mae = 0
-        if evaluate:
-            mae = self.mean_absolute_error(minibatch)
 
-        return self.model.log_prob(minibatch), mae
+        the_number_of_events = input_mask.sum().item()
+        log_prob, log_p_event = self.model.log_prob(input_events, input_time, mean, var)
+                                                                               # [batch_size, seq_len + 1]
+        log_prob = log_prob * input_mask                                       # [batch_size, seq_len + 1]
+        log_p_event = log_p_event * input_mask                                 # [batch_size, seq_len + 1]
+        
+        time_loss = self.loss_f(log_prob)
+        event_loss = self.loss_f(log_p_event)
+
+        mae, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
+
+        return time_loss, event_loss, mae, the_number_of_events
+
+
+    def loss_f(self, loglik):
+        '''
+        The definition of loss.
+        '''
+        return (-loglik).sum()
 
 
     def evaluate(self, minibatch, taus):
@@ -101,11 +125,9 @@ class LogNormMixWrapper(BasicModule):
 
 
     def mean_absolute_error_and_f1(self, input_events, input_time, mask, mean, var):
-        # where should be padded scores is now an empty list. 
-        minibatch = [[input_events, input_time, mask], [], [mean, var]]
 
         # Obtain dedicated MAE and predicted time.
-        gap, pred_time = self.mean_absolute_error(minibatch, sum = False, output_pred = True)
+        gap, pred_time = self.mean_absolute_error(minibatch)
                                                                                # [batch_size, seq_len + 1]
         predicted_events  = self.model.event_prober(input_events, input_time, mask, [mean, var])
                                                                                # [batch_size, seq_len + 1]
@@ -119,7 +141,7 @@ class LogNormMixWrapper(BasicModule):
         return gap, f1
 
 
-    def mean_absolute_error(self, minibatch, sum = True, output_pred = False):
+    def mean_absolute_error(self, minibatch):
         '''
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
@@ -146,18 +168,7 @@ class LogNormMixWrapper(BasicModule):
         gap = (tau_pred - time_interval) * mask                                # [batch_size, seq_len]
         gap = torch.abs(gap)                                                   # [batch_size, seq_len]
 
-        if sum:
-            gap_mean = torch.sum(gap) / mask.sum()
-            if output_pred:
-                return gap_mean.item(), tau_pred
-            else:
-                gap_mean = torch.sum(gap) / mask.sum()
-                return gap_mean.item()
-        else:
-            if output_pred:
-                return gap, tau_pred
-            else:
-                return gap
+        return gap, tau_pred
     
 
     def function_prober(self, data, resolution):
@@ -168,39 +179,49 @@ class LogNormMixWrapper(BasicModule):
     def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
     
+        def extract_minibatch(minibatch):
+            (input_events, input_time, input_mask), padded_score, (mean, var) = minibatch
+            return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
+
         model.train()
-            
-        (log_likelihood, the_number_of_events), mae = model(minibatch)
-    
-        loss = loss_f(log_likelihood)
+        time_loss, event_loss, the_number_of_events = model(**extract_minibatch(minibatch), evaluate = False)
+
+        loss = time_loss + event_loss
         loss.backward()
     
         loss = loss.item() / the_number_of_events
-        fact = minibatch[1].sum() / the_number_of_events
+        time_loss = time_loss.item() / the_number_of_events
+        event_loss = event_loss.item() / the_number_of_events
+        fact = minibatch[1].sum().item() / the_number_of_events
     
-        return loss, fact
+        return loss, time_loss, event_loss, fact
     
 
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
+        def extract_minibatch(minibatch):
+            (input_events, input_time, input_mask), padded_score, (mean, var) = minibatch
+            return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
+
         model.eval()
-        (log_likelihood, the_number_of_events), mae = model(minibatch, evaluate = True)
-    
-        loss = loss_f(log_likelihood)
-    
+        time_loss, event_loss, mae, the_number_of_events = model(**extract_minibatch(minibatch), evaluate = True)
+        loss = time_loss + event_loss
+
         loss = loss.item() / the_number_of_events
-        fact = minibatch[1].sum() / the_number_of_events
+        time_loss = time_loss.item() / the_number_of_events
+        event_loss = event_loss.item() / the_number_of_events
+        fact = minibatch[1].sum().item() / the_number_of_events
     
-        return loss, fact, mae
+        return loss, time_loss, event_loss, fact, mae
 
 
     def postprocess(input, procedure):
         def train(input):
-            return [input[0], input[0] - input[1]]
+            return [input[0], input[0] - input[-1], input[1], input[2]]
 
         def evaluate(input):
-            return [input[0], input[0] - input[1], input[2]]
+            return [input[0], input[0] - input[-2], input[1], input[2], input[3]]
         
         return train(input) if procedure == 'Training' else evaluate(input)
 
@@ -210,45 +231,35 @@ class LogNormMixWrapper(BasicModule):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f'}
+            format_dict['time_loss'] = input[2]
+            format_dict['event_loss'] = input[3]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f',\
+                                         'time_loss': ':8.5f', 'event_loss': ':8.5f'}
             return format_dict
         
         def evaluate(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
-            format_dict['MAE'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'MAE': ':2.8f'}
+            format_dict['time_loss'] = input[2]
+            format_dict['event_loss'] = input[3]
+            format_dict['MAE'] = input[4]
+            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'time_loss': ':8.5f', \
+                                         'event_loss': ':8.5f', 'MAE': ':2.8f'}
             return format_dict
         
         return train(input) if procedure == 'Training' else evaluate(input)
 
 
-    format_dict_length = 3
-    
-    
-    logfile_format = {'step': '', 'absolute loss': ':8.5f', 'relative loss': ':8.5f'}
-
-
-    def logfile_print_format(input):
-        format_dict = {}
-        format_dict['absolute loss'] = input[0]
-        format_dict['relative loss'] = input[1]
-        return format_dict
+    format_dict_length = 5
     
 
-    def choose_metric(evaluation_report, test_report):
+    def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
-        return [test_report[1],]
+        return [evaluation_report_format_dict['loss_time_next'], test_report_format_dict['loss_time_next']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
     
 
     metric_number = 1 # metric number is the length of the output of choose_metric
-
-
-def loss_f(loglik):
-    '''
-    The definition of loss.
-    '''
-    return (-loglik).sum()

@@ -78,6 +78,7 @@ class IflDataset(utils.data.Dataset):
         if self.has_intensity:
             self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
 
+
     def __getitem__(self, index):
         # score is the global fact. So we need to modify the first part of the minibatch
         if isinstance(index, slice):
@@ -105,8 +106,10 @@ class IflDataset(utils.data.Dataset):
             else:
                 return event_tensor, time_tensor, score
 
+
     def __len__(self):
         return self.data.shape[0]
+
 
     def __call__(self, data):
         '''

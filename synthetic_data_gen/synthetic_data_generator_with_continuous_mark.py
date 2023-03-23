@@ -4,9 +4,12 @@
 import numpy as np
 import pandas as pd
 import argparse, os
+from functools import partial
+
 
 from scipy.stats import lognorm
 from scipy.special import erf
+
 
 ######################################################
 ### homogeneous possion process
@@ -17,6 +20,7 @@ def generate_poisson(n):
     intensity = np.ones_like(T)
     return T, tau, intensity
 
+
 ######################################################
 ### hawkes process
 ######################################################
@@ -25,10 +29,12 @@ def generate_hawkes1(n):
     score = - LL
     return T, score, intensity
 
+
 def generate_hawkes2(n):
     [T,LL], intensity = simulate_hawkes(n,0.2,[0.4,0.4],[1.0,20.0])
     score = - LL
     return T, score, intensity
+
 
 def simulate_hawkes(n,mu,alpha,beta):
     T = []
@@ -71,46 +77,6 @@ def simulate_hawkes(n,mu,alpha,beta):
         
     return [np.array(T),np.array(LL)], np.array(Intensity)
 
-def simulate_multi_hawkes(n,mu,alpha,beta,head):
-    T = head.tolist()
-    LL = []
-
-    event_gap = head[1] - head[0]
-    x = head[1]
-    l_trg1 = 0
-    l_trg2 = 0
-    l_trg_Int1 = 0
-    l_trg_Int2 = 0
-    mu_Int = 0
-    count = 0
-    
-    while 1:
-        l = mu + l_trg1 + l_trg2
-        step = np.random.exponential()/l
-        x = x + step
-        
-        l_trg_Int1 += l_trg1 * ( 1 - np.exp(-beta[0]*(step+event_gap)) ) / beta[0]
-        l_trg_Int2 += l_trg2 * ( 1 - np.exp(-beta[1]*step) ) / beta[1]
-        mu_Int += mu * step
-        l_trg1 *= np.exp(-beta[0]*(step+event_gap))
-        l_trg2 *= np.exp(-beta[1]*step)
-        l_next = mu + l_trg1 + l_trg2
-        
-        if np.random.rand() < l_next/l: #accept
-            T.append(x)
-            LL.append( np.log(l_next) - l_trg_Int1 - l_trg_Int2 - mu_Int )
-            l_trg1 += alpha[0]*beta[0]
-            l_trg2 += alpha[1]*beta[1]
-            l_trg_Int1 = 0
-            l_trg_Int2 = 0
-            mu_Int = 0
-            count += 1
-            event_gap = T[-1] - T[-2]
-            
-            if count == n:
-                break
-        
-    return [np.array(T[-n:]),np.array(LL)]
 
 ######################################################
 ### stationary renewal process
@@ -143,9 +109,7 @@ def generate_stationary_renewal_intensity(n):
 ### self-correcting process
 ######################################################
 def generate_self_correcting(n):
-    
     def self_correcting_process(mu,alpha,n):
-    
         t, x = 0, 0
         T = []
         log_l = []
@@ -169,52 +133,6 @@ def generate_self_correcting(n):
     score = -(log_l - Int_l)
     
     return T, score, intensity
-
-######################################################
-### hawkes process + self-correcting process
-######################################################
-def generate_hawkes_and_self_correcting(n):
-    '''
-    2022-03-04
-    Now, the true intensity and score for all mixed temporal point processes is not available.
-    '''
-    T_self_correcting, score_self_correcting, intensity_self_correcting = generate_self_correcting(n//2)
-    T_hawkes, score_hawkes, intensity_hawkes = generate_hawkes1(n//2)
-    event = np.concatenate((np.zeros(n//2), np.ones(n//2)), axis = -1)
-
-    # sort the array
-    T_original = np.concatenate((T_self_correcting, T_hawkes), axis = -1)
-    index = np.argsort(T_original)
-
-    T = T_original[index]
-    event = event[index]
-    score = np.zeros_like(T)
-    intensity = np.zeros_like(T)
-
-    return T, score, intensity, event
-
-######################################################
-### hawkes process + poisson process
-######################################################
-def generate_hawkes_and_poisson(n):
-    '''
-    2022-03-04
-    Now, the true intensity and score for all mixed temporal point processes is not available.
-    '''
-    T_self_correcting, score_self_correcting, intensity_self_correcting = generate_self_correcting(n//2)
-    T_hawkes, score_hawkes, intensity_hawkes = generate_poisson(n//2)
-    event = np.concatenate((np.zeros(n//2), np.ones(n//2)), axis = -1)
-
-    # sort the array
-    T_original = np.concatenate((T_self_correcting, T_hawkes), axis = -1)
-    index = np.argsort(T_original)
-
-    T = T_original[index]
-    event = event[index]
-    score = np.zeros_like(T)
-    intensity = np.zeros_like(T)
-
-    return T, score, intensity, event
 
 def transform_autoregression(data_input, max_seq):
     data = np.array([[]])
@@ -261,73 +179,72 @@ def transform_autoregression(data_input, max_seq):
 
     return pd.DataFrame.from_dict({'data': data, 'result': result, 'score': score, 'event': event, 'intensity': intensity})
 
+
 dataset_dict = {
     'hawkes_1': generate_hawkes1,
     'hawkes_2': generate_hawkes2,
     'self_correct': generate_self_correcting,
     'stationary_renewal': generate_stationary_renewal_intensity,
-    'poisson': generate_poisson,
-    'hawkes_and_self_correcting': generate_hawkes_and_self_correcting,
-    'hawkes_and_poisson': generate_hawkes_and_poisson
+    'poisson': generate_poisson
 }
 
-def data_gen(name, dataset, data_size, seq_len, autoregression = False, data_with_event = False):
+
+def map_event_to_locations(num_classes, gen_seq_len, ndim):
+    def event_gen_ex():    
+        return np.random.randint(num_classes, size = gen_seq_len)
+
+    # copied from neural_stpp by Chen et al.
+    def pinwheel(num_samples, num_classes):
+        radial_std = 0.3
+        tangential_std = 0.1
+        num_per_class = num_samples
+        rate = 0.25
+        rads = np.linspace(0, 2 * np.pi, num_classes, endpoint=False)
+    
+        features = np.random.randn(num_classes * num_per_class, 2) \
+            * np.array([radial_std, tangential_std])
+        features[:, 0] += 1.
+        labels = np.repeat(np.arange(num_classes), num_per_class)
+    
+        angles = rads[labels] + rate * np.exp(features[:, 0])
+        rotations = np.stack([np.cos(angles), -np.sin(angles), np.sin(angles), np.cos(angles)])
+        rotations = np.reshape(rotations.T, (-1, 2, 2))
+    
+        return 2 * np.einsum("ti,tij->tj", features, rotations)
+
+    event = event_gen_ex()
+    location_generation = partial(pinwheel, num_classes=num_classes)
+    location_seq = location_generation(gen_seq_len)
+    seq = np.zeros((gen_seq_len, ndim))
+    for i, data_i in enumerate(np.split(location_seq, num_classes, axis=0)):
+        seq = seq + data_i * np.expand_dims(i == event, axis = -1)
+    
+    return seq.tolist()
+
+
+def data_gen(name, dataset, data_size, seq_len, num_classes, ndim, autoregression = False, data_with_event = False):
+
     data = {'time_seq': [], 'score': [], 'event': [], 'intensity': []}
     if autoregression:
         gen_seq_len = seq_len * 2
     else:
         gen_seq_len = seq_len
-    for i in range(data_size):
-        if data_with_event:
-            '''
-            Event distribution is time-aware.
-            '''
-            time, score, intensity, event = dataset_dict[dataset](gen_seq_len)
-            data['time_seq'].append(time.tolist())
-            data['score'].append(score.tolist())
-            data['intensity'].append(intensity.tolist())
-            data['event'].append(event.tolist())
-        else:
-            '''
-            Event distribution is time-agnostic.
-            '''
-            # data['index'].append(i)
-            time, score, intensity = dataset_dict[dataset](gen_seq_len)
-            data['time_seq'].append(time.tolist())
-            data['score'].append(score.tolist())
-            data['intensity'].append(intensity.tolist())
-            data['event'].append(event_gen(size = gen_seq_len, time = time))
-    
+    for _ in range(data_size):
+        '''
+        Event distribution is time-agnostic.
+        '''
+        # data['index'].append(i)
+        time, score, intensity = dataset_dict[dataset](gen_seq_len)
+        data['time_seq'].append(time.tolist())
+        data['score'].append(score.tolist())
+        data['intensity'].append(intensity.tolist())
+        data['event'].append(map_event_to_locations(num_classes, gen_seq_len, ndim))
+
     final = pd.DataFrame.from_dict(data)
     if autoregression:
         final = transform_autoregression(final, seq_len)
-    final.to_json(os.path.join('.', opt.dataset_name, name + ('_auto' if autoregression else '') + '.json'))
+    final.to_json(os.path.join('.', f'{opt.dataset_name}_continuous', name + ('_auto' if autoregression else '') + '.json'))
 
-def event_gen_ex(size, time):    
-    return np.random.randint(5, size = size)
-
-def event_gen(size, time):
-    time_diff = np.diff(np.concatenate([np.array([0]), time]))
-    time_diff_mean = time_diff.mean()
-    time_diff_std = time_diff.std()
-
-    '''
-    the length of intervals smaller than time_average - time_standard_variance: type 0
-    [time_average - time_standard_variance, time_average - 0.5 * time_standard_variance]: type 1
-    [time_average - 0.5 time_standard_variance, time_average]: type 2
-    [time_average, time_average + 0.5 * time_standard_variance]: type 3
-    [time_average + 0.5 * time_standard_variance, time_average + time_standard_variance]: type 4
-    the length of intervals larger than time_average + time_variance: type 5
-    '''
-    events = np.zeros(size)
-    events[time_diff < time_diff_mean - time_diff_std] = 0
-    events[((time_diff_mean - time_diff_std) <= time_diff) & (time_diff < (time_diff_mean - 0.5 * time_diff_std))] = 1
-    events[((time_diff_mean - 0.5 * time_diff_std) <= time_diff) & (time_diff < time_diff_mean)] = 2
-    events[(time_diff_mean < time_diff) & (time_diff <= (time_diff_mean + 0.5 * time_diff_std))] = 3
-    events[((time_diff_mean + 0.5 * time_diff_std) <= time_diff) & (time_diff < (time_diff_mean + time_diff_std))] = 4
-    events[time_diff_mean + time_diff_std <= time_diff] = 5
-
-    return events
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -345,29 +262,25 @@ if __name__ == '__main__':
     parser.add_argument('--train_size', type=int, help='The size of training dataset')
     parser.add_argument('--eva_size', type=int, help='The size of evaluation dataset')
     parser.add_argument('--test_size', type=int, help='The size of test dataset')
-
+    parser.add_argument('--num_classes', type=int, help='The number of available classes.')
+    parser.add_argument('--ndim', type = int, help='How many dimension the continuous marker space would have.')
     parser.add_argument('--random_seed', type=int, help='Global random seed.')
 
     opt = parser.parse_args()
 
-    data_with_event = ['hawkes_and_self_correcting', 'hawkes_and_poisson']
-    data_with_event_mark = False
-    if opt.dataset_name in data_with_event:
-        data_with_event_mark = True
-
-    if not os.path.exists(os.path.join('.', opt.dataset_name)):
-        os.mkdir(os.path.join('.', opt.dataset_name))
+    if not os.path.exists(os.path.join('.', f'{opt.dataset_name}_continuous')):
+        os.mkdir(os.path.join('.', f'{opt.dataset_name}_continuous'))
     
-    with open(f'./{opt.dataset_name}/num_events.txt', 'w') as f:
-        f.write(str(2) if data_with_event else str(6))
+    with open(f'./{opt.dataset_name}_continuous/num_events.txt', 'w') as f:
+        f.write(str(opt.ndim))
 
     np.random.seed(opt.random_seed)
 
     if opt.data_type == 'autoregression':
-        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length, True, data_with_event = data_with_event_mark)
-        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length, True, data_with_event = data_with_event_mark)
-        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length, True, data_with_event = data_with_event_mark)
+        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length, opt.num_classes, opt.ndim, True)
+        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length, opt.num_classes, opt.ndim, True)
+        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length, opt.num_classes, opt.ndim, True)
     else:
-        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length, data_with_event = data_with_event_mark)
-        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length, data_with_event = data_with_event_mark)
-        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length, data_with_event = data_with_event_mark)
+        data_gen('train', opt.dataset_name, opt.train_size, opt.seq_length, opt.num_classes, opt.ndim)
+        data_gen('evaluate', opt.dataset_name, opt.eva_size, opt.seq_length, opt.num_classes, opt.ndim)
+        data_gen('test', opt.dataset_name, opt.test_size, opt.seq_length, opt.num_classes, opt.ndim)

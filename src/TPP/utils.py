@@ -72,6 +72,8 @@ def restore_dataset_name(name):
     name = name[:-1]
     if name.endswith('_new'):
         name = name[:-4]
+    if name.endswith('_continuous'):
+        name = name[:-11]
     return name
 
 

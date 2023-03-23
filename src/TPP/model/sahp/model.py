@@ -153,7 +153,8 @@ class SAHPWrapper(BasicModule):
         """ Log-likelihood of sequence. """
             
         if events_next is not None:
-            type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)# [batch_size, seq_len, num_events]
+            type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
         else:
             type_mask = 1
 
@@ -169,8 +170,7 @@ class SAHPWrapper(BasicModule):
         '''
         Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
         '''
-        events_prediction_probability \
-            = torch.log(intensity_all_events + self.zero_shift_factor) / torch.log(intensity_all_events.sum(dim = -1, keepdim = True) + self.zero_shift_factor)
+        events_prediction_probability = torch.log(intensity_all_events + self.zero_shift_factor)
                                                                                # [batch_size, seq_len, num_events]
         events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
@@ -609,10 +609,10 @@ class SAHPWrapper(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -698,7 +698,7 @@ class SAHPWrapper(BasicModule):
         loss.backward()
 
         log_likeli_loss, mark_loss = log_likeli_loss.item() / the_number_of_events, mark_loss.item() / the_number_of_events
-        fact = fact.sum() / the_number_of_events
+        fact = fact.sum().item() / the_number_of_events
     
         return log_likeli_loss, mark_loss, fact
     
@@ -725,7 +725,7 @@ class SAHPWrapper(BasicModule):
             = log_likeli_loss_pred_time.item() / the_number_of_events, \
               marker_loss_pred_time.item() / the_number_of_events, \
               f1_pred_time.item()
-        fact = fact.sum() / the_number_of_events
+        fact = fact.sum().item() / the_number_of_events
 
         return fact, log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, \
                log_likeli_loss_pred_time, marker_loss_pred_time, f1_pred_time, mae

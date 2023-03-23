@@ -191,8 +191,8 @@ bookorder_plot_hyperparameter_list = [
 syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "fullynn", \
-    "--model_config", "syn/fullynn.json", \
+    "--model_name", "tfenn", \
+    "--model_config", "syn/tfenn.json", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
@@ -202,11 +202,11 @@ syn_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--synthetic_evaluation", \
-    "--task_name", ['graph']
+    "--task_name", ['spearman_and_l1']
 ]
 
 training_hyperparameter = {

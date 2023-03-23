@@ -84,7 +84,7 @@ class TPPPlotter:
         task_dict = {
             'best':{
             'graph': self.task_graph,
-            'spearman_and_f1': self.task_spearman_and_f1,
+            'spearman_and_l1': self.task_spearman_and_l1,
             'mae_and_f1': self.task_mae_and_f1,
             'mae_e_and_f1': self.task_mae_e_and_f1
         },
@@ -117,7 +117,7 @@ class TPPPlotter:
                     break
 
 
-    def task_spearman_and_f1(self):
+    def task_spearman_and_l1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
             spearman_and_l1(self.model.module, self.training_data, 'train', opt = self.opt)

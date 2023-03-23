@@ -555,10 +555,10 @@ class TIFIBModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.probability(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution] + [batch_size, seq_len, resolution]
 
         if opt.event_toggle:

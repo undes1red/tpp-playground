@@ -206,7 +206,7 @@ syn_plot_hyperparameter_list = [
     "--plot_type", ['intensity'], \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", ['spearman_and_l1']
     # "--task_name", ['graph', 'spearman_and_f1', 'mae_and_f1', 'mae_e_and_f1']
     # "--task_name", ['mae_e_and_f1']
 ]

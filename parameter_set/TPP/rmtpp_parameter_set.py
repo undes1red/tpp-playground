@@ -202,10 +202,11 @@ syn_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", ['spearman_and_l1']
 ]
 
 training_hyperparameter = {
