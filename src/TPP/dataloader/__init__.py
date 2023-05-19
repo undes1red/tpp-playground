@@ -27,38 +27,45 @@ def find_dataset(name, rank):
 
 def prepare_dataloaders(opt, rank = 0):
     file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
-    if len(file_names) == 0:
-        logger.exception(f'No appropriate data file in {opt.data_path}! Please check the training script.')
-    else:
-        logger.info(f'There are {len(file_names)} appropriate files in {opt.data_path}. Format: {opt.dataset_type}. Is that expected?')
+
+    if rank == 0:
+        if len(file_names) == 0:
+            logger.exception(f'No available dataset file in {opt.data_path}! Please check your bootstrap script.')
+        else:
+            logger.info(f'We are going to read {len(file_names)} files in {opt.data_path}. They are {opt.dataset_type} files. Is that expected?')
     
     dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
-    logger.info(f"Additional dataloader settings from config files: {dataloader_config_dict}")
+
+    if rank == 0:
+        if opt.abs_dataloader_config is None:
+            logger.info(f"No additional dataloader settings! We will use the default dataloader settings.")
+        else:
+            logger.info(f"Additional dataloader settings are loaded from the config file {opt.abs_dataloader_config}.")
+            logger.info(f"Additional settings are: {dataloader_config_dict}.")
 
     dataset, read_data = find_dataset(opt.dataloader_name, rank)
     data_raw = read_data(opt.data_path, file_names)
-    try:
-        with open(os.path.join(opt.data_path, 'num_events.txt'), 'r') as f:
-            opt.num_events = int(f.read())
-    except:
-        '''
-        Assume that no event information is available.
-        '''
-        opt.num_events = 1
+
+    '''
+    Now, dataset_card.json is mandatory for every dataset.
+    This json file should contain useful information about this dataset, like the number of classes it has.
+    '''
+    opt.info_dict = read_json(os.path.join(opt.data_path, 'dataset_card.json'))
 
     #========= Preparing dataloaders =========#
-    train_dataset = dataset(data_raw['train'], device = opt.device, num_events = opt.num_events, **dataloader_config_dict)
-    evaluate_dataset = dataset(data_raw['evaluate'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
-    test_dataset = dataset(data_raw['test'], num_events = opt.num_events, device = opt.device, **dataloader_config_dict)
+    train_dataset = dataset(data_raw['train'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
+    evaluate_dataset = dataset(data_raw['evaluate'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
+    test_dataset = dataset(data_raw['test'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
 
-    try:
-        data_collator = getattr(train_dataset, '__call__')
-    except:
-        '''
-        This data collator is for data evaluation.
-        '''
-        data_collator = move_data_to_the_correct_device(device = opt.device)
+    data_collator = getattr(train_dataset, '__call__')
 
+    # try:
+    #     data_collator = getattr(train_dataset, '__call__')
+    # except:
+    #     '''
+    #     This data collator is for data evaluation.
+    #     '''
+    #     data_collator = move_data_to_the_correct_device(device = opt.device)
 
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()

@@ -4,9 +4,9 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.TPP.model.ifib.submodel import IFIB
+from src.TPP.model.ifib_c.submodel import IFIB
 from src.TPP.model.utils import *
-from src.TPP.model.ifib.plot import *
+from src.TPP.model.ifib_c.plot import *
 
 
 class IFIBModel(BasicModule):

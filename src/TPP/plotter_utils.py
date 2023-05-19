@@ -8,7 +8,7 @@ Intensity function drawing utils
 '''
 def expand_true_intensity(time, intensity, opt):
     try:
-        return true_intensity_dict[restore_dataset_name(opt.dataset_name)](time, intensity, opt.resolution, device = opt.device)
+        return true_intensity_dict[restore_dataset_name(opt.dataset_name)](time, intensity, opt, device = opt.device)
                                                                                # [batch_size, seq_len, resolution]
     except:
         return [None] * intensity.shape[0]                                     # [batch_size]
@@ -43,7 +43,7 @@ def expand_true_probability(time, intensity, opt):
         return expand_true_probability
 
 
-def hawkes_1(time, intensity, resolution, device):
+def hawkes_1(time, intensity, opt, device):
     '''
     Hawkes_1 process: \lambda(t) = \mu + a * b * exp(-b(t - t_l))
     In this case, \mu = 0.2, a = 0.8, b = 1, and all past events affect the intensity.
@@ -59,6 +59,7 @@ def hawkes_1(time, intensity, resolution, device):
     mu = 0.2
     a = 0.8
     b = 1.0
+    resolution = opt.resolution
 
     batch_size = time.shape[0]
     intensity = torch.cat(

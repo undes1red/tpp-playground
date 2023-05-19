@@ -5,8 +5,8 @@ import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.utils import L1_distance_across_events
-from src.TPP.model.ifib.nonneg import NonNegLinear
-from src.TPP.model.ifib.activate import *
+from src.TPP.model.ifib_c.nonneg import NonNegLinear
+from src.TPP.model.ifib_c.activate import *
 
 
 TA = {

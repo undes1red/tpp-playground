@@ -1,18 +1,18 @@
-# parameter sets of model ifib
+# parameter sets of model ifib_n
 
 citibike_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic_continuous", \
-    "--dataloader_config", "citibike/cifib_dl.json",
+    "--dataloader_config", "citibike/ifib_n_dl.json",
     "--dataset_name", "citibike", \
     "--n_training_steps", "100000", \
     "--n_evaluation_steps", "2000", \
     "--n_report_steps", "2000", \
     "--b", "32", \
     "--n_warmup_steps", "20000", \
-    "--model_name", "cifib", \
-    "--model_config", "citibike/cifib.json",
+    "--model_name", "ifib_n", \
+    "--model_config", "citibike/ifib_n.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -25,15 +25,15 @@ covid19_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic_continuous", \
-    "--dataloader_config", "covid19/cifib_dl.json",
+    "--dataloader_config", "covid19/ifib_n_dl.json",
     "--dataset_name", "covid19", \
     "--n_training_steps", "100000", \
     "--n_evaluation_steps", "2000", \
     "--n_report_steps", "2000", \
     "--b", "32", \
     "--n_warmup_steps", "20000", \
-    "--model_name", "cifib", \
-    "--model_config", "covid19/cifib.json",
+    "--model_name", "ifib_n", \
+    "--model_config", "covid19/ifib_n.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -46,15 +46,15 @@ earthquakes_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic_continuous", \
-    "--dataloader_config", "earthquakes/cifib_dl.json",
+    "--dataloader_config", "earthquakes/ifib_n_dl.json",
     "--dataset_name", "earthquakes", \
     "--n_training_steps", "100000", \
     "--n_evaluation_steps", "2000", \
     "--n_report_steps", "2000", \
     "--b", "32", \
     "--n_warmup_steps", "20000", \
-    "--model_name", "cifib", \
-    "--model_config", "earthquakes/cifib.json",
+    "--model_name", "ifib_n", \
+    "--model_config", "earthquakes/ifib_n.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -73,8 +73,8 @@ syn_training_hyperparameter_list = [
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "cifib", \
-    "--model_config", "syn/cifib.json",
+    "--model_name", "ifib_n", \
+    "--model_config", "syn/ifib_n.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -86,8 +86,8 @@ syn_training_hyperparameter_list = [
 citibike_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "cifib", \
-    "--model_config", "citibike/cifib.json", \
+    "--model_name", "ifib_n", \
+    "--model_config", "citibike/ifib_n.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "100000", \
@@ -95,7 +95,7 @@ citibike_plot_hyperparameter_list = [
     "--dataloader_name", "generic_continuous", \
     "--figure_count", "10", \
     "--test", \
-    "--used_dataloader_config", "cifib_dl.json", \
+    "--used_dataloader_config", "ifib_n_dl.json", \
     "--plot_type", "intensity", \
     "--dataloader_config", "citibike/plot.json", \
     "--resolution", "200", \
@@ -106,8 +106,8 @@ citibike_plot_hyperparameter_list = [
 covid19_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "cifib", \
-    "--model_config", "covid19/cifib.json", \
+    "--model_name", "ifib_n", \
+    "--model_config", "covid19/ifib_n.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "100000", \
@@ -115,7 +115,7 @@ covid19_plot_hyperparameter_list = [
     "--dataloader_name", "generic_continuous", \
     "--figure_count", "10", \
     "--test", \
-    "--used_dataloader_config", "cifib_dl.json", \
+    "--used_dataloader_config", "ifib_n_dl.json", \
     "--plot_type", "intensity", \
     "--dataloader_config", "covid19/plot.json", \
     "--resolution", "200", \
@@ -125,8 +125,8 @@ covid19_plot_hyperparameter_list = [
 earthquakes_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "cifib", \
-    "--model_config", "earthquakes/cifib.json", \
+    "--model_name", "ifib_n", \
+    "--model_config", "earthquakes/ifib_n.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "100000", \
@@ -134,7 +134,7 @@ earthquakes_plot_hyperparameter_list = [
     "--dataloader_name", "generic_continuous", \
     "--figure_count", "10", \
     "--test", \
-    "--used_dataloader_config", "cifib_dl.json", \
+    "--used_dataloader_config", "ifib_n_dl.json", \
     "--plot_type", "intensity", \
     "--dataloader_config", "earthquakes/plot.json", \
     "--resolution", "200", \
@@ -144,8 +144,8 @@ earthquakes_plot_hyperparameter_list = [
 syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "cifib", \
-    "--model_config", "syn/cifib.json", \
+    "--model_name", "ifib_n", \
+    "--model_config", "syn/ifib_n.json", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \

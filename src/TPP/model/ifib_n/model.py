@@ -3,10 +3,10 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.TPP.model.cifib.submodel import CIFIB
+from src.TPP.model.ifib_n.submodel import CIFIB
 from src.TPP.model.utils import BasicModule
-from src.TPP.model.cifib.utils import *
-from src.TPP.model.cifib.plot import *
+from src.TPP.model.ifib_n.utils import *
+from src.TPP.model.ifib_n.plot import *
 
 
 class CIFIBModel(BasicModule):

@@ -1,4 +1,4 @@
-'''A wrapper class for scheduled optimizer '''
+'''A wrapper for a scheduled optimizer '''
 
 import math
 from src.TPP.utils import mean, read_json, getLogger
@@ -9,20 +9,29 @@ logger = getLogger(__name__)
 
 class ScheduledOptim():
     '''
-    A simple wrapper for using various optimizers to train models without any code modification.
-    Currently, only LambdaLR learning rate scheduler is supported.
+    A simple wrapper for using various optimizers to train models.
+    We only support LambdaLR learning rate scheduler.
     '''
     def __init__(self, opt, model, rank):
         if opt.custom_op:
+            '''
+            torch_optimizer is a supplementary optimizer collection compatible with pytorch.
+            Visit https://github.com/jettify/pytorch-optimizer for more information about torch_optimizer.
+            '''
             import torch_optimizer as top
             if not hasattr(top, opt.op_name) and not hasattr(optim, opt.op_name):
                 raise logger.exception(f'The given optimizer {opt.op_name} is not found in neither PyTorch nor pytorch_optimizer. Please check your optimizer settings and try again.')
         else:
             if not hasattr(optim, opt.op_name):
                 raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
-    
+            
+        '''
+        Read in optimizer configurations.
+        '''
         param = read_json(opt.optim_json)
-        self._model = None
+        
+        # Will be removed
+        # self._model = None
 
         if rank == 0:
             logger.info(f'The additional input optimizer hyperparameters are {param}')
@@ -63,18 +72,18 @@ class ScheduledOptim():
 
         return mean(lr)
 
-
-    def get_model(self):
-        if self._model == None:
-            raise Exception('Only with mixed precision training enabled you can get model from optimizer.')
-        else:
-            return self._model
+    # Will be removed
+    # def get_model(self):
+    #     if self._model == None:
+    #         raise Exception('Only with mixed precision training enabled you can get model from optimizer.')
+    #     else:
+    #         return self._model
     
 
     def state_dict(self):
         return {'optimizer': self._optimizer.state_dict(), 'scheduler': self._scheduler.state_dict()}
     
-    
+
     def load_state_dict(self, state_dict):
         self._optimizer.load_state_dict(state_dict['optimizer'])
         self._scheduler.load_state_dict(state_dict['scheduler'])

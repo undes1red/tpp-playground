@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.cifib.nonneg import NonNegLinear
-from src.TPP.model.cifib.activate import *
+from src.TPP.model.ifib_n.nonneg import NonNegLinear
+from src.TPP.model.ifib_n.activate import *
 
 
 TA = {

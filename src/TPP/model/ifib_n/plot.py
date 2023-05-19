@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 
-from src.TPP.model.cifib.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.model.ifib_n.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_probability
 
 

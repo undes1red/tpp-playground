@@ -21,12 +21,12 @@ class generic_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in train.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, num_events, plot = False, shift = False, shift_time = False, input_norm_data = False):
+    def __init__(self, data, device, property_dict, plot = False, shift = False, shift_time = False, input_norm_data = False):
         super(generic_dataset, self).__init__()
         self.data = data
         self.device = device
         self.plot = plot
-        self.number_of_events = num_events
+        self.number_of_events = property_dict['num_events']
         self.mean = 0
         self.var = 1
 
@@ -111,9 +111,9 @@ class generic_dataset(utils.data.Dataset):
         
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
-        if self.plot:
-            move = move_data_to_the_correct_device(device = self.device)
-            padded_data = move.move_to_device(padded_data)
+        # if self.plot:
+        #     move = move_data_to_the_correct_device(device = self.device)
+        #     padded_data = move.move_to_device(padded_data)
         
         return padded_data, (self.mean, self.var)
 
