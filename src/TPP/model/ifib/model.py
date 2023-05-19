@@ -5,8 +5,7 @@ from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
 from src.TPP.model.ifib.submodel import IFIB
-from src.TPP.model.utils import BasicModule
-from src.TPP.model.ifib.utils import *
+from src.TPP.model.utils import *
 from src.TPP.model.ifib.plot import *
 
 
@@ -607,7 +606,8 @@ class IFIBModel(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
+        mae = move_from_tensor_to_ndarray(mae)
+
         return mae, f1_1
 
     
@@ -621,9 +621,9 @@ class IFIBModel(BasicModule):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
-        _, maes = move_from_tensor_to_ndarray(*maes)
+        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return maes, f1_2
+        return maes, f1_2, probability_sum
 
 
     '''
@@ -723,6 +723,6 @@ class IFIBModel(BasicModule):
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
         return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
-               ['evaluation_absolute_loss', 'test_absolute_loss']
+               ['evaluation_absolute_loss', 'test_f1_absolute_loss']
     
     metric_number = 2 # metric number is the length of the output of choose_metric

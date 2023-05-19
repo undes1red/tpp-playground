@@ -6,7 +6,7 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.fenn.nonneg import NonNegLinear
 from src.TPP.model.fenn.activate import *
-from src.TPP.model.fenn.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events
 
 
 TA = {

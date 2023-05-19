@@ -915,7 +915,7 @@ class TFullyNNModel(BasicModule):
         
         _, maes = move_from_tensor_to_ndarray(*maes)
 
-        return maes, f1_2
+        return maes, f1_2, probability_sum
 
 
     '''

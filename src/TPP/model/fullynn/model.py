@@ -4,10 +4,10 @@ from einops import rearrange, repeat, reduce
 import numpy as np
 from scipy.stats import spearmanr
 
+from src.TPP.model import memory_ceiling
 from src.TPP.plotter_utils import expand_true_probability
 from src.TPP.model.fullynn.submodel import FullyNN
-from src.TPP.model.utils import BasicModule
-from src.TPP.model.fullynn.utils import *
+from src.TPP.model.utils import *
 from src.TPP.model.fullynn.plot import *
 
 
@@ -445,11 +445,6 @@ class FullyNNModel(BasicModule):
         '''
 
         '''
-        Set the memory limit
-        '''
-        memory_ceiling = 1e7
-
-        '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
         '''
@@ -476,6 +471,10 @@ class FullyNNModel(BasicModule):
         if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
+        '''
+        Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
+        '''
+        # resolution_inf = 2500
 
         '''
         Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
@@ -521,7 +520,7 @@ class FullyNNModel(BasicModule):
                 top_k_acc_single_event_seq.append(
                     accuracy_score(
                         y_true = events_next_per_seq.detach().cpu(),
-                        y_pred = p_m_per_seq.detach().cpu()
+                        y_pred = torch.argmax(p_m_per_seq, dim = -1).detach().cpu()
                     )
                 )
             top_k_acc.append(top_k_acc_single_event_seq)
@@ -552,8 +551,6 @@ class FullyNNModel(BasicModule):
     def prediction_with_all_event_types(self, events_history, time_history, p_m, resolution, mean, var, max_val):
         '''
         The time prediction of every marker whose probability is not 0.
-
-        Still, this function is currently buggy.
 
         Args:
         * events_history  type: torch.tensor shape: [batch_size, seq_len]
@@ -891,7 +888,8 @@ class FullyNNModel(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
+        mae = move_from_tensor_to_ndarray(mae)
+
         return mae, f1_1
 
     
@@ -905,9 +903,9 @@ class FullyNNModel(BasicModule):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
-        _, maes = move_from_tensor_to_ndarray(*maes)
+        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return maes, f1_2
+        return maes, f1_2, probability_sum
 
 
     '''

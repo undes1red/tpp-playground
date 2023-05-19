@@ -118,7 +118,7 @@ class IflDataset(utils.data.Dataset):
         '''
         max_length_of_this_batch = max([item[0].size for item in data])
         mask = []
-        padded_data, padded_score = [], []
+        padded_data = []
 
         if self.plot:
             intensity = []
@@ -131,26 +131,20 @@ class IflDataset(utils.data.Dataset):
             mask = np.array([1] * (item[0].size - 1) + [0] * (pad_length + 1))
             padded_time_seq = np.pad(item[1], (0, pad_length), mode = 'mean')
             padded_event = np.pad(item[0], (0, pad_length), mode = 'minimum')
-            padded_score.append(np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0))
-            padded_item = [padded_event, padded_time_seq, mask]
+            padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
+            padded_item = [padded_event, padded_time_seq, padded_score, mask]
             if self.plot:
-                intensity.append(np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0))
-            
+                intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
+                padded_item.append(intensity)
+
             padded_data.append(tuple(padded_item))
             
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
-        padded_score = default_collate(padded_score)
+        move = move_data_to_the_correct_device(device = self.device)
+        padded_data = move.move_to_device(padded_data)
 
-        if self.plot:
-            move = move_data_to_the_correct_device(device = self.device)
-            padded_data = move.move_to_device(padded_data)
-            score = padded_score.to(self.device)
-            intensity = default_collate(intensity)
-            intensity = intensity.to(self.device)
-            return padded_data, padded_score, (self.mean, self.var) if self.input_norm_data else None, intensity
-        else:
-            return padded_data, padded_score, (self.mean, self.var) if self.input_norm_data else None
+        return padded_data, (self.mean, self.var) if self.input_norm_data else None
 
 
 def read_data(path, file_names):

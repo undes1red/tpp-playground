@@ -6,11 +6,11 @@ stackoverflow_training_hyperparameter_list = [
     "--dataloader_name", "generic", \
     "--dataloader_config", "stackoverflow/thp_dl.json",
     "--dataset_name", "stackoverflow", \
-    "--n_training_steps", "100000", \
-    "--n_evaluation_steps", "1000", \
-    "--n_report_steps", "1000", \
-    "--b", "64", \
-    "--n_warmup_steps", "20000", \
+    "--n_training_steps", "200000", \
+    "--n_evaluation_steps", "2000", \
+    "--n_report_steps", "2000", \
+    "--b", "32", \
+    "--n_warmup_steps", "40000", \
     "--model_name", "thp", \
     "--model_config", "stackoverflow/thp.json",
     "--lr", "0.002", \
@@ -27,11 +27,11 @@ retweet_training_hyperparameter_list = [
     "--dataloader_name", "generic", \
     "--dataloader_config", "retweet/thp_dl.json",
     "--dataset_name", "retweet", \
-    "--n_training_steps", "100000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
-    "--b", "128", \
-    "--n_warmup_steps", "20000", \
+    "--n_training_steps", "400000", \
+    "--n_evaluation_steps", "4000", \
+    "--n_report_steps", "4000", \
+    "--b", "32", \
+    "--n_warmup_steps", "80000", \
     "--model_name", "thp", \
     "--model_config", "retweet/thp.json",
     "--lr", "0.002", \
@@ -49,8 +49,8 @@ mooc_training_hyperparameter_list = [
     "--dataloader_config", "mooc/thp_dl.json",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
-    "--n_evaluation_steps", "5000", \
-    "--n_report_steps", "5000", \
+    "--n_evaluation_steps", "4000", \
+    "--n_report_steps", "4000", \
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "thp", \
@@ -110,19 +110,20 @@ retweet_plot_hyperparameter_list = [
     "--model_name", "thp", \
     "--model_config", "retweet/thp.json", \
     "--lr", "0.002", \
-    "--used_batch_size", "128", \
-    "--n_training_steps", "100000", \
+    "--used_batch_size", "32", \
+    "--n_training_steps", "400000", \
     "--dataset_name", "retweet", \
     "--dataloader_name", "generic", \
     "--figure_count", "10", \
-    "--train", \
+    # "--train", \
+    # "--evaluation", \
     "--test", \
-    "--evaluation", \
     "--used_dataloader_config", "thp_dl.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", 'mae_e_and_f1'
 ]
 
 stackoverflow_plot_hyperparameter_list = [
@@ -131,19 +132,20 @@ stackoverflow_plot_hyperparameter_list = [
     "--model_name", "thp", \
     "--model_config", "stackoverflow/thp.json", \
     "--lr", "0.002", \
-    "--used_batch_size", "64", \
-    "--n_training_steps", "100000", \
+    "--used_batch_size", "32", \
+    "--n_training_steps", "200000", \
     "--dataset_name", "stackoverflow", \
     "--dataloader_name", "generic", \
     "--figure_count", "10", \
-    "--train", \
+    # "--train", \
+    # "--evaluation", \
     "--test", \
-    "--evaluation", \
     "--used_dataloader_config", "thp_dl.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", 'mae_e_and_f1'
 ]
 
 mooc_plot_hyperparameter_list = [
@@ -157,14 +159,15 @@ mooc_plot_hyperparameter_list = [
     "--dataset_name", "mooc", \
     "--dataloader_name", "generic", \
     "--figure_count", "10", \
-    "--train", \
+    # "--train", \
+    # "--evaluation", \
     "--test", \
-    "--evaluation", \
     "--used_dataloader_config", "thp_dl.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "mooc/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", 'mae_e_and_f1'
 ]
 
 bookorder_plot_hyperparameter_list = [
@@ -178,14 +181,15 @@ bookorder_plot_hyperparameter_list = [
     "--dataset_name", "bookorder", \
     "--dataloader_name", "generic", \
     "--figure_count", "10", \
-    "--train", \
+    # "--train", \
+    # "--evaluation", \
     "--test", \
-    "--evaluation", \
     "--used_dataloader_config", "thp_dl.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", 'mae_e_and_f1'
 ]
 
 syn_plot_hyperparameter_list = [
@@ -198,15 +202,15 @@ syn_plot_hyperparameter_list = [
     "--n_training_steps", "10000", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--dataloader_name", "generic", \
-    "--figure_count", "10", \
+    "--figure_count", "1", \
     "--train", \
     "--test", \
     "--evaluation", \
-    # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", "intensity", \
+    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", "intensity", \
     "--dataloader_config", "syn/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['spearman_and_l1']
+    "--task_name", ['graph']
 ]
 
 training_hyperparameter = {

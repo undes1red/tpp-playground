@@ -5,7 +5,7 @@ from einops import rearrange, repeat, reduce, pack
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model.thp.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events
 from src.TPP.model.thp.utils import softplus_ext
 from src.TPP.model.thp.transformers import TransformerTPP
 

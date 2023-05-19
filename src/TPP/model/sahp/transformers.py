@@ -82,7 +82,7 @@ class Encoder(nn.Module):
         """
 
         # prepare attention masks
-        # slf_attn_mask is where we cannot look, i.e., the future and the padding
+        # self_attn_mask is where we cannot look, i.e., the future and the padding
         _, seq_len = event_type.shape
         self_attn_mask_subseq = get_subsequent_mask(event_time)
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask

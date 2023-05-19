@@ -90,7 +90,7 @@ class TransEncoder(nn.Module):
                     non_pad_mask = non_pad_mask,
                     self_attn_mask = self_attn_mask)                           # [batch_size, seq_len, d_input]
         else:
-            for enc_layer in self.time_encoder:
+            for enc_layer in self.encoder:
                 '''
                 history event sequence
                 '''

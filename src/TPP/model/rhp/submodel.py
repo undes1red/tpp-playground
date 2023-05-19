@@ -6,19 +6,19 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from src.TPP.model.utils import L1_distance_across_events
-from src.TPP.model.sahp.transformers import TransformerEncoder
 
 
-class SAHP(nn.Module):
-    def __init__(self, device, num_events, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk, d_v, dropout, monte_carlo_resolution):
-        super(SAHP, self).__init__()
+class RHPModule(nn.Module):
+    def __init__(self, device, num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
+                 history_encoder_layers, dropout, monte_carlo_resolution):
+        '''
+        A CTLSTM implementation, based on existing SAHP codes.
+        '''
+        super(RHPModule, self).__init__()
         self.num_events = num_events
         self.device = device
         self.resolution = monte_carlo_resolution
 
-        # The original paper makes people believe SAHP is a RMTPP-like model.
-        # However, this model in fact decays the hidden embedding so it is akin to CTLSTM.
-        # The following three layers find the \eta_{u, i+1}, \mu_{u, i+1}, and \gamma_{u i+1}
         self.gelu = nn.GELU()
 
         self.start_layer = nn.Sequential(
@@ -32,22 +32,29 @@ class SAHP(nn.Module):
         )
 
         self.decay_layer = nn.Sequential(
-            nn.Linear(d_input, d_input, bias = True, device = self.device)
-            ,nn.Softplus(beta = 10.0)
+            nn.Linear(d_input, d_input, bias = True, device = self.device),
+            nn.Softplus(beta = 10.0)
         )
 
         # This layer translates decayed hidden states into intensity function values.
         self.intensity_layer = nn.Sequential(
-            nn.Linear(d_input, self.num_events, bias = True, device = self.device)
-            ,nn.Softplus(beta = 1.)
+            nn.Linear(d_input, self.num_events, bias = True, device = self.device),
+            nn.Softplus(beta = 1.)
         )
 
-        # History encoder. SAHP employs a plain transformer to encode marked temporal history
-        self.history_encoder = TransformerEncoder(num_events, device = self.device, \
-                                                  d_input = d_input, d_rnn = d_rnn, \
-                                                  d_hidden = d_hidden, n_layers = n_layers, \
-                                                  n_head = n_head, d_qk = d_qk, d_v = d_v, \
-                                                  dropout = dropout)
+        # mark embedding layer.
+        self.events_embedding = nn.Embedding(num_events + 1, d_mark_embedding, padding_idx = num_events, device = device)
+
+        # History encoder.
+        try:
+            self.history_encoder = getattr(nn, history_module_name)(device = self.device, \
+                                           input_size = d_mark_embedding + 1, hidden_size = d_hidden, \
+                                           dropout = dropout, num_layers = history_encoder_layers, batch_first = True)
+        except Exception as e:
+            print(e)
+            raise Exception("Unrecognized history module name!")
+        
+        self.history_mapper = nn.Linear(d_hidden, d_input, device = self.device)
 
 
     def state_decay(self, mu, eta, gamma, duration_t):
@@ -71,9 +78,13 @@ class SAHP(nn.Module):
         return cell_t
 
     
-    def monte_carlo_integration_estimator(self, time_history, time_next, events_history, mask_history):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
+    def monte_carlo_integration_estimator(self, time_history, time_next, events_history):
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -101,8 +112,12 @@ class SAHP(nn.Module):
 
 
     def forward(self, time_history, time_next, events_history, mask_history):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -111,17 +126,22 @@ class SAHP(nn.Module):
                                                                                # [batch_size, seq_len, d_input]
         intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [batch_size, seq_len, num_events]
 
-        integral_all_events = self.monte_carlo_integration_estimator(time_history = time_history, \
-                                                                     time_next = time_next, events_history = events_history, \
-                                                                     mask_history = mask_history)
+        integral_all_events = self.monte_carlo_integration_estimator(time_history = time_history,\
+                                                                     time_next = time_next, \
+                                                                     events_history = events_history)
                                                                                # [batch_size, seq_len, num_events]
 
         return integral_all_events, intensity_all_events
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+        
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+
+
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -153,8 +173,12 @@ class SAHP(nn.Module):
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+        
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -186,7 +210,7 @@ class SAHP(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
-        history = self.history_encoder(time_history, events_history, mask_history)
+        history, (_, _) = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]

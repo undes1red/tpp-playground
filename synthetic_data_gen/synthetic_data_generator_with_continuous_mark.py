@@ -210,7 +210,7 @@ def map_event_to_locations(num_classes, gen_seq_len, ndim):
         rotations = np.stack([np.cos(angles), -np.sin(angles), np.sin(angles), np.cos(angles)])
         rotations = np.reshape(rotations.T, (-1, 2, 2))
     
-        return 2 * np.einsum("ti,tij->tj", features, rotations)
+        return 2 * np.einsum("ti, tij -> tj", features, rotations)
 
     event = event_gen_ex()
     location_generation = partial(pinwheel, num_classes=num_classes)

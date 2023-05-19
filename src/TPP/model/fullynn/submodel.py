@@ -6,7 +6,7 @@ from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.fullynn.nonneg import NonNegLinear
 from src.TPP.model.fullynn.activate import *
-from src.TPP.model.fullynn.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events
 
 
 TA = {

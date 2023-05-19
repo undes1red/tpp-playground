@@ -4,7 +4,7 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.ifib.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events
 from src.TPP.model.ifib.nonneg import NonNegLinear
 from src.TPP.model.ifib.activate import *
 
@@ -77,9 +77,9 @@ class IFIB(nn.Module):
         # We might need these two factors to control the vector's norm.
         if pretrain:
             # alpha
-            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device))
+            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device, requires_grad = True))
             # beta
-            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device))
+            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device, requires_grad = True))
         else:
             # alpha
             self.output_factor = torch.tensor(alpha,  device = self.device)

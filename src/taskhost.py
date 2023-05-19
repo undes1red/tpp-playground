@@ -52,7 +52,7 @@ class TaskHost:
 
         # Prepare for multithreading
         os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = str(int(np.random.randint(10000, 20000)))
+        os.environ['MASTER_PORT'] = str(int(np.random.randint(30000, 65535)))
 
 
         random.seed(self.opt.seed)
@@ -80,13 +80,15 @@ class TaskHost:
 
         procedure = importlib.import_module('src.' + self.opt.procedure)
         self.worker = getattr(procedure, self.opt.procedure + self.opt.task_category)()
-    
-        '''
-        Avoid pytorch issue #36313
-        '''
-        if torch.__version__ == '1.4.0' and rank == 0:
-            raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313),\
-            several learning rate schedulers including LambdaLR used by this architecture fail to run. Please update PyTorch to 1.5.0 or above.')
+
+        if rank == 0:
+            logger.info(f'PyTorch Version: {torch.__version__}.')
+            '''
+            Avoid pytorch issue #36313
+            '''
+            if torch.__version__ == '1.4.0':
+                raise logger.exception('Due to the pytorch issue #36313(https://github.com/pytorch/pytorch/issues/36313),\
+                several learning rate schedulers including LambdaLR used by this architecture fail to run. Please update PyTorch to 1.5.0 or above.')
     
         '''
         Report device status

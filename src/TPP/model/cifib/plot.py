@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 
-from src.TPP.model.ifib.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.model.cifib.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_probability
 
 
@@ -21,8 +21,6 @@ def plot_probability(data, timestamp, opt):
     time_next = data['time_next']                                              # [batch_size, seq_len]
     input_intensity = data['input_intensity']                                  # [batch_size, seq_len + 1]
 
-    if opt.event_toggle:
-        expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
     true_probability = expand_true_probability(time_next, input_intensity, opt)# [batch_size, seq_len, resolution] or batch_size * None
 
     packed_data = zip(*move_from_tensor_to_ndarray(expand_probability, events_next, time_next, mask_next, timestamp, true_probability))
@@ -125,12 +123,14 @@ def plot_debug(data, timestamp, opt):
     '''
 
     plot_instruction = {}
-    num_events = data['expand_probability_for_each_event'].shape[-1]
-    resolution = data['expand_probability_for_each_event'].shape[-2]
+    dim_events = data['dim_events']
+    resolution = opt.resolution
 
     '''
-    Part 1: expand intensity and expand integral
-    Required plots: lineplot and scatterplot
+    Part 1: multi-dimensional probability distribution cloud.
+    This part requires the tensor probed_probability_distribution, whose shape is [batch_size, seq_len, resolution, sample_resolution ** dim_events].
+    Which graph should we use to exhibit it?
+    
     '''
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]

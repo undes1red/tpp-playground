@@ -4,9 +4,8 @@ import torch
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model.utils import BasicModule
+from src.TPP.model.utils import *
 from src.TPP.model.rmtpp.rmtpp import RMTPPModule
-from src.TPP.model.rmtpp.utils import *
 from src.TPP.model.rmtpp.plot import *
 
 
@@ -441,7 +440,8 @@ class RMTPP(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
+        mae = move_from_tensor_to_ndarray(mae)
+
         return mae, f1_1
 
     

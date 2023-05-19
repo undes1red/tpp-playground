@@ -30,9 +30,17 @@ from parameter_set.TPP.lognormmix_parameter_set import plot_hyperparameter as if
 from parameter_set.TPP.sahp_parameter_set import training_hyperparameter as sahp_t
 from parameter_set.TPP.sahp_parameter_set import plot_hyperparameter as sahp_p
 
+# Recurrent Hawkes Process(RHP) parameter set
+from parameter_set.TPP.rhp_parameter_set import training_hyperparameter as rhp_t
+from parameter_set.TPP.rhp_parameter_set import plot_hyperparameter as rhp_p
+
 # fullynn_probability(IBIF) parameter set
 from parameter_set.TPP.ifib_parameter_set import training_hyperparameter as ifps_t
 from parameter_set.TPP.ifib_parameter_set import plot_hyperparameter as ifps_p
+
+# continuous fullynn_probability(CIBIF) parameter set
+from parameter_set.TPP.cifib_parameter_set import training_hyperparameter as cifps_t
+from parameter_set.TPP.cifib_parameter_set import plot_hyperparameter as cifps_p
 
 # transformer-based fullynn_probability(IBIF) parameter set
 from parameter_set.TPP.tifib_parameter_set import training_hyperparameter as tifps_t
@@ -48,8 +56,10 @@ plot_parameter_set = {
     'rmtpp': {'train': rmtpp_t, 'plot': rmtpp_p},
     'lognormmix': {'train': ifl_t, 'plot': ifl_p},
     'sahp': {'train': sahp_t, 'plot': sahp_p},
+    'rhp': {'train': rhp_t, 'plot': rhp_p},
     'ifib': {'train': ifps_t, 'plot': ifps_p},
     'tifib': {'train': tifps_t, 'plot': tifps_p},
+    'cifib': {'train': cifps_t, 'plot': cifps_p},
 }
 
 def parameter_retriver(opt):

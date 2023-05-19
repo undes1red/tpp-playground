@@ -10,9 +10,18 @@ def check_tensor(x):
 
 
 def move_from_tensor_to_ndarray(*kwargs):
-    tmp_results = []
-    for tensor in kwargs:
-        tmp_results.append(tensor.detach().cpu().numpy())
+    def move_tensor(x):
+        if torch.is_tensor(x):
+            return x.detach().cpu().numpy()
+        else:
+            return x
+
+    if len(kwargs) == 1:
+        tmp_results = move_tensor(kwargs[0])
+    else:
+        tmp_results = []
+        for object in kwargs:
+            tmp_results.append(move_tensor(object))
     
     return tmp_results
 
@@ -62,9 +71,8 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
                    the number of event types
     '''
 
-    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [seq_len, resolution - 1]
-    timestamp = timestamp.reshape(-1, resolution)                              # [seq_len, resolution]
-    timestamp = np.diff(timestamp, axis = -1)                                  # [seq_len, resolution - 1]
+    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [batch_size * seq_len, resolution - 1]
+    timestamp = timestamp.reshape(-1, resolution)[:, 1:]                       # [batch_size * seq_len, resolution - 1]
 
     L1 = (function_interval * timestamp).sum()
 

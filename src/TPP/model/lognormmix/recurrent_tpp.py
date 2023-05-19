@@ -87,13 +87,13 @@ class RecurrentTPP(nn.Module):
                 shape (batch_size, seq_len + 1, context_size) if remove_last == True
 
         """
-        batch_size, _, _ = context.shape
+        batch_size, _, _ = features.shape
 
         context = self.rnn(features)[0]                                        # [batch_size, seq_len + 1, context_size]
         context_init = repeat(self.context_init, 'c -> b 1 c', b = batch_size) # [batch_size, 1, context_size]
         # Shift the context by vectors by 1: context embedding after event i is used to predict event i + 1
         context_history = context[:, :-1, :]                                   # [batch_size, seq_len, context_size]
-        context_history = torch.cat([context_init, context_history], dim=1)    # [batch_size, seq_len + 1, context_size]
+        context_history = torch.cat([context_init, context_history], dim = 1)  # [batch_size, seq_len + 1, context_size]
         return context_history
 
 
@@ -147,6 +147,7 @@ class RecurrentTPP(nn.Module):
         '''
         context_history = self.get_context(features)                           # [batch_size, seq_len + 1, context_size]
         inter_time_dist = self.get_inter_time_dist(context_history)            # [batch_size, seq_len + 1, context_size]
+        input_time = input_time.clamp(1e-10)                                   # [batch_size, seq_len + 1]
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
         log_p = inter_time_dist.log_prob(input_time)                           # [batch_size, seq_len + 1]
 
@@ -155,8 +156,7 @@ class RecurrentTPP(nn.Module):
         You can comment this section of the code out if you don't want to implement the log_survival_function
         for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         but the difference shouldn't be significant if you are working with long sequences.
-        '''
-        '''
+
         last_event_idx = input_mask.sum(-1, keepdim=True).long()               # [batch_size, 1]
         log_surv_all = inter_time_dist.log_survival_function(input_time)       # [batch_size, seq_len]
         log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
@@ -173,7 +173,7 @@ class RecurrentTPP(nn.Module):
         return log_p, log_p_event
 
 
-    def event_prober(self, event, time_interval, mask, mean_and_var) -> torch.Tensor:
+    def event_prober(self, input_events, input_time, input_mask, mean, var) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences with a group of given timestamps.
 
         Args:
@@ -194,10 +194,8 @@ class RecurrentTPP(nn.Module):
             log_p: shape (batch_size,)
 
         """
-        features = self.get_features(event, time_interval, mean_and_var)       # [batch_size, seq_len + 1, mark_embedding_size + 1]
-        # I think this statement is for debugging.
-        # if features.isnan().any():
-        #     print(batch)
+        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
+
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
@@ -210,23 +208,16 @@ class RecurrentTPP(nn.Module):
 
         context = self.get_context(features)                                   # [batch_size, seq_len + 1, context_size]
         '''
-        Not used in this function. LogNormMix does not predict the next marker by probability.
 
         inter_time_dist = self.get_inter_time_dist(context)
         inter_times = time_interval.clamp(1e-10)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
         log_p = inter_time_dist.log_prob(inter_times)                          # [batch_size, seq_len + 1]
-        '''
 
-        '''
         Survival probability of the last interval (from t_N to t_end).
         You can comment this section of the code out if you don't want to implement the log_survival_function
         for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         but the difference shouldn't be significant if you are working with long sequences.
-        '''
-
-        '''
-        Also, for the same reason, not used in this function.
 
         last_event_idx = mask.sum(-1, keepdim=True).long()                     # [batch_size, 1]
         log_surv_all = inter_time_dist.log_survival_function(inter_times)      # [batch_size, seq_len]
@@ -236,17 +227,17 @@ class RecurrentTPP(nn.Module):
         if self.num_marks > 1:
             mark_logits = torch.log_softmax(self.mark_linear(context), dim = -1)
                                                                                # [batch_size, seq_len + 1, num_marks]
-            mark_dist = Categorical(logits=mark_logits)
-            log_probe = mark_dist.log_prob(mark_dist.enumerate_support()).transpose(0, 1).transpose(1, 2)
-                                                                               # [num_marks, batch_size + 1, seq_len]
-            predicted_events = torch.argmax(log_probe, dim = -1)               # [num_marks, batch_size + 1, seq_len]
+            mark_dist = Categorical(logits = mark_logits)
+            log_probe = mark_dist.log_prob(mark_dist.enumerate_support())      # [num_marks, batch_size, seq_len + 1]
+            log_probe = rearrange(log_probe, 'n b s -> b s n')                 # [batch_size, seq_len + 1, num_marks]
+            predicted_events = torch.argmax(log_probe, dim = -1)               # [batch_size, seq_len + 1]
 
             return predicted_events
         else:
             return 0
 
 
-    def log_prob_prober(self, batch, resolution) -> torch.Tensor:
+    def probability_prober(self, input_events, input_time, input_mask, resolution, mean, var) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences.
         Args:
             batch: the input minibatch
@@ -268,14 +259,10 @@ class RecurrentTPP(nn.Module):
 
         """
         # extract features from minibatch, data normalization applies here.
-        sequences, _, mean_and_var, _ = batch
-        event, time_interval, mask = sequences
-        batch_size, seq_len = time_interval.shape
+        batch_size, seq_len = input_time.shape
         seq_len -= 1
 
-        features = self.get_features(event, time_interval, mean_and_var)       # [batch_size, seq_len + 1, mark_embedding_size + 1]
-        # if features.isnan().any():
-        #     print(batch)
+        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -289,20 +276,18 @@ class RecurrentTPP(nn.Module):
         
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
-        expanded_inter_times = time_interval.unsqueeze(-1) * time_multiplier   # [batch_size, seq_len + 1, resolution]
+        expanded_inter_times = input_time.unsqueeze(-1) * time_multiplier      # [batch_size, seq_len + 1, resolution]
         # Avoid the 0 in time_multiplier as LogNormMix does not like it.
         expanded_inter_times[:, :, 0] = expanded_inter_times[:, :, 0] + 1e-15  # [batch_size, seq_len + 1, resolution]
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
         expanded_log_p = inter_time_dist.log_prob(expanded_inter_times)        # [batch_size, seq_len + 1, resolution]
 
         # drop probability predictions between the last event and end_time.
-        probability = torch.exp(expanded_log_p[:, :-1, :]).reshape(batch_size, -1)
-                                                                               # [batch_size, seq_len * resolution]
+        probability = torch.exp(expanded_log_p[:, :-1, :])                     # [batch_size, seq_len, resolution]
 
         timestamp = torch.cat(
             (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_inter_times[:, :-1, :].diff(dim = -1)),
             dim = -1)                                                          # [batch_size, seq_len, resolution]
-        timestamp = timestamp.reshape(batch_size, seq_len * resolution)        # [batch_size, seq_len * resolution]
 
         '''
         # Survival probability of the last interval (from t_N to t_end).
@@ -310,16 +295,11 @@ class RecurrentTPP(nn.Module):
         # for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         # but the difference shouldn't be significant if you are working with long sequences.
         '''
-        # last_event_idx = mask.sum(-1, keepdim=True).long()                     # [batch_size, 1]
-        # log_surv_all = inter_time_dist.log_survival_function(expanded_inter_times)
-        #                                                                        # [batch_size, seq_len, resolution]
-        # log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx.unsqueeze(-1)).squeeze(-1)
-        #                                                                        # [batch_size]
 
         return probability, timestamp
 
 
-    def log_cdf(self, batch, taus) -> torch.Tensor:
+    def log_cdf(self, input_events, input_time, input_mask, taus, mean, var) -> torch.Tensor:
         """Compute the log-cdf for a batch of sequences.
 
         Args:
@@ -340,13 +320,8 @@ class RecurrentTPP(nn.Module):
             log_p: shape (batch_size,)
 
         """
-        # extract features from minibatch, data normalization applies here.
-        sequences, _, mean_and_var = batch
-        event, time_interval, mask = sequences
-        features = self.get_features(event, time_interval, mean_and_var)       # [batch_size, seq_len, mark_embedding_size + 1]
-        # I think this statement is for debugging.
-        # if features.isnan().any():
-        #     print(batch)
+        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len, mark_embedding_size + 1]
+
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
@@ -355,32 +330,29 @@ class RecurrentTPP(nn.Module):
         '''
         context = self.get_context(features)
         inter_time_dist = self.get_inter_time_dist(context)
-        inter_times = time_interval.clamp(1e-10)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
-        log_cdf = inter_time_dist.log_cdf(taus)                                # [batch_size, seq_len]
-        cdf_from_0_to_t = torch.exp(log_cdf)                                   # [batch_size, seq_len]
+        log_cdf = inter_time_dist.log_cdf(taus)                                # [batch_size, seq_len + 1]
+        cdf_from_0_to_t = torch.exp(log_cdf)                                   # [batch_size, seq_len + 1]
 
         '''
         Survival probability of the last interval (from t_N to t_end).
         You can comment this section of the code out if you don't want to implement the log_survival_function
         for the distribution that you are using. This will make the likelihood computation slightly inaccurate,
         but the difference shouldn't be significant if you are working with long sequences.
-        '''
-        # last_event_idx = mask.sum(-1, keepdim=True).long()                   # [batch_size, 1]
-        # log_surv_all = inter_time_dist.log_survival_function(inter_times)
-        #                                                                      # [batch_size, seq_len]
-        # log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
-                                                                               # [batch_size]
 
-        # if self.num_marks > 1:
-        #     mark_logits = torch.log_softmax(self.mark_linear(context), dim=-1)
-        #                                                                      # [batch_size, seq_len, num_marks]
-        #     mark_dist = Categorical(logits=mark_logits)
-        #     log_p += mark_dist.log_prob(event)                               # [batch_size, seq_len]
-        # log_p *= mask                                                        # [batch_size, seq_len]
-        
-        the_number_of_events = mask.sum()
+        last_event_idx = mask.sum(-1, keepdim=True).long()                     # [batch_size, 1]
+        log_surv_all = inter_time_dist.log_survival_function(inter_times)
+                                                                               # [batch_size, seq_len]
+        log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
+                                                                               # [batch_size]
+        '''
+
+        the_number_of_events = input_mask.sum().item()
         return cdf_from_0_to_t, the_number_of_events
+    
+
+    def sample_event_at_a_given_timestamp(self):
+        pass
 
 
     # def sample(self, t_end: float, batch_size: int = 1, context_init: torch.Tensor = None):

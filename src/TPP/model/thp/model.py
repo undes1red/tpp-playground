@@ -4,9 +4,10 @@ from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 import numpy as np
 
+from src.TPP.model import memory_ceiling
 from src.TPP.model.thp.plot import *
 from src.TPP.model.thp.submodel import THP
-from src.TPP.model.utils import BasicModule
+from src.TPP.model.utils import *
 from src.TPP.model.thp.utils import *
 
 
@@ -248,10 +249,6 @@ class THPWrapper(BasicModule):
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var):
         self.eval()
 
-        '''
-        Set the memory limit
-        '''
-        memory_ceiling = 2e6
 
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -280,8 +277,13 @@ class THPWrapper(BasicModule):
         if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
+        '''
+        Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
+        '''
+        # resolution_inf = 2500
+
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, resolution_inf, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         probabilty_expanded_events = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -318,7 +320,7 @@ class THPWrapper(BasicModule):
                 top_k_acc_per_seq.append(
                     accuracy_score(
                         y_true = ground_truth_per_seq.detach().cpu(),
-                        y_pred = probability_integral_per_seq.detach().cpu()
+                        y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
                     )
                 )
                 top_k_acc.append(1.0)
@@ -661,7 +663,8 @@ class THPWrapper(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
+        mae = move_from_tensor_to_ndarray(mae)
+
         return mae, f1_1
 
     
@@ -673,11 +676,12 @@ class THPWrapper(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, \
+                                         events_next, mask_history, mask_next, mean, var)
         
-        _, maes = move_from_tensor_to_ndarray(*maes)
+        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return maes, f1_2
+        return maes, f1_2, probability_sum
 
 
     '''

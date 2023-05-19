@@ -17,7 +17,13 @@ class move_data_to_the_correct_device:
     def move_to_device(self, data):
         data_in_correct_location = []
         for item in data:
-            data_in_correct_location.append(item.to(self.device))
+            if type(item) == list:
+                dimension = []
+                for sub_dimension in item:
+                    dimension.append(sub_dimension.to(self.device))
+                data_in_correct_location.append(dimension)
+            else:
+                data_in_correct_location.append(item.to(self.device))
         return data_in_correct_location
 
 

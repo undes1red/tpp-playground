@@ -24,7 +24,7 @@ class TIFIBModel(BasicModule):
                  num_events,
                  device,
                  event_toggle = False, additional_event_loss = False,
-                 denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.25):
+                 denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
         super(TIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
@@ -231,7 +231,7 @@ class TIFIBModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         time_next_pred.requires_grad = True                                    # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
 
-        probability_integral_from_pred_to_infinite = self.model(events_history, time_history, time_next_pred, mean = mean, var = var)
+        probability_integral_from_pred_to_infinite = self.model(events_history, time_history, time_next_pred, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral_from_pred_to_infinite,
@@ -616,7 +616,7 @@ class TIFIBModel(BasicModule):
         
         _, maes = move_from_tensor_to_ndarray(*maes)
 
-        return maes, f1_2
+        return maes, f1_2, probability_sum
 
 
     '''

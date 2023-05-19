@@ -26,9 +26,9 @@ class generic_continuous_dataset(utils.data.Dataset):
         self.data = data
         self.device = device
         self.plot = plot
-        self.number_of_events = num_events
-        self.mean = 0
-        self.var = 1
+        self.num_events = num_events
+        self.mean_time = 0
+        self.var_time = 1
 
         # Data preprocessing
         if shift_time:
@@ -45,20 +45,24 @@ class generic_continuous_dataset(utils.data.Dataset):
         # if input_norm_data:
         #     self.data.time_seq = self.data.time_seq.apply(math.log)
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
-        self.data.event = self.data.event.apply(insert, number = [0, 0])
+        self.data.event = self.data.event.apply(insert, number = [0] * num_events)
 
         # Data normalization
         # We need it because several datasets' inputs are just so huge that several model can never handle it.
+        self.mean_events = np.concatenate(self.data.event.values, axis = 0).mean(axis = 0).astype(np.float32)
+        self.var_events = np.concatenate(self.data.event.values, axis = 0).var(axis = 0).astype(np.float32)
         if input_norm_data:
+            # The average of time.
             regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())
             regenerated_data = (regenerated_data + 1e-8).stack()
-            self.mean = regenerated_data.mean()
-            self.var = regenerated_data.std()
+            self.mean_time = regenerated_data.mean()
+            self.var_time = regenerated_data.std()
+            # The average of continuous markers
 
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.float32)
 
 
     def __getitem__(self, index):
@@ -100,9 +104,9 @@ class generic_continuous_dataset(utils.data.Dataset):
             pad_length = max_length_of_this_batch - item[0].size
             mask = np.array([1] * item[0].size + [0] * pad_length)
             padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'mean')
-            padded_event = np.pad(item[1], (0, pad_length), mode = 'minimum')
+            padded_event = np.pad(item[1], ((0, pad_length), (0, 0)), mode = 'constant', constant_values = [0] * self.num_events)
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
-            padded_item = [padded_time_seq, padded_event, padded_score, mask]
+            padded_item = [padded_time_seq, np.array_split(padded_event, self.num_events, axis = -1), padded_score, mask]
             if self.plot:
                 padded_intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
                 padded_item.append(padded_intensity)
@@ -115,7 +119,7 @@ class generic_continuous_dataset(utils.data.Dataset):
             move = move_data_to_the_correct_device(device = self.device)
             padded_data = move.move_to_device(padded_data)
         
-        return padded_data, (self.mean, self.var)
+        return padded_data, (self.mean_events, self.var_events), (self.mean_time, self.var_time)
 
 
 def read_data(path, file_names):

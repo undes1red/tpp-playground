@@ -1,10 +1,8 @@
+import torch.nn.functional as F
 import torch.nn as nn
 import torch
-from scipy.stats import spearmanr
-import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.cifib.utils import L1_distance_across_events
 from src.TPP.model.cifib.nonneg import NonNegLinear
 from src.TPP.model.cifib.activate import *
 
@@ -16,6 +14,7 @@ TA = {
     # We have vanilla version and symmetrical version of softplus
     'softplus': nn.Softplus,
     'sym_softplus': sym_softplus,
+    'multi_d': Multi_d,
 
     # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
     # analysis, we argue that this feature is required by approaches like FullyNN to fit long-tail functions like Hawkes intensity function.
@@ -26,378 +25,993 @@ TA = {
     # This activation can perfectly show why FullyNN needs tanh to attain a trade-off between intensity function regression ability and extrapolation 
     'identity': nn.Identity,
     # Might be the redeemer, but I'm not sure.
+    # No, he is not.
     'ploy': sym_Polynomial
 }
 
 
-class IFIB(nn.Module):
+class CIFIB(nn.Module):
     '''
-    This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
-    Hope it can work properly.
-
-    Currently, normalization is disabled.
-    Update: 2022-01-19: Now you can use data normalization via synthetic dataloader.
-
-    Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
+    The CIFIB, defined on continuous time line and marks.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, event_toggle, denominator_shift, pretrain, alpha, beta, device):
-        super(IFIB, self).__init__()
+    def __init__(self, d_history, d_expression, d_pro_integral, dim_events, dropout, history_module,
+                 history_module_layers, mlp_layers, nonlinear, continuous_mark_upperbound, continuous_mark_lowerbound, 
+                 denominator_shift, sample_resolution, pretrain, alpha, beta, device):
+        super(CIFIB, self).__init__()
         self.device = device
-        self.num_events = num_events
-        self.event_toggle = event_toggle
+        self.dim_events = dim_events
         self.denominator_shift = denominator_shift
+        self.sample_resolution = sample_resolution
+        self.continuous_mark_upperbound = torch.tensor(continuous_mark_upperbound, device = self.device)
+        self.continuous_mark_lowerbound = torch.tensor(continuous_mark_lowerbound, device = self.device)
+        self.mask_out_time = torch.tensor([1]*self.dim_events + [0], device = self.device)
+                                                                               # [dim_events + 1]
 
-        if self.event_toggle:
-            self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
-        else:
-            self.events = None
+        assert self.continuous_mark_upperbound.shape[0] == self.dim_events, 'unmatched continuous_mark_upperbound with dim_events!'
+        assert self.continuous_mark_lowerbound.shape[0] == self.dim_events, 'unmatched continuous_mark_lowerbound with dim_events!'
 
+        '''
+        Here we prepare the embedding vectors for continuous markers.
+        We consider time as a special continuous marker.
+        '''
+
+        '''
+        Embedding continuous historical events into a hidden space by multiplying input values with
+        learned weights. Nothing special here.
+        '''
+        self.embedding_matrix_history = nn.Parameter(torch.zeros(dim_events + 1, d_history, device = self.device))
+                                                                               # [dim_events + 1, d_history]
+        nn.init.xavier_uniform_(self.embedding_matrix_history)
+        self.location_emb_to_single_emb_his = nn.Linear((dim_events + 1) * d_history, d_history, device = self.device)
+        
+        '''
+        Here we expect the model to encode the expression of sub-intergals regarding each dimension into these vectors.
+        As these expressions are, in fact conditional probability distributions, sequential models may apply.
+        '''
+        self.embedding_base_expression = nn.Parameter(torch.zeros(dim_events + 1, d_expression, device = self.device))
+                                                                               # [dim_events + 1, d_history]
+
+        nn.init.xavier_uniform_(self.embedding_base_expression)
+        '''
+        We use this module to propagate expression infomation among different conditional probability distribution p(x_i|x_{i-1}, ..., x_1)
+        '''
+        self.let_expression_outer_variables_aware = nn.LSTM(
+            input_size = d_expression, hidden_size = d_expression, num_layers = 1, batch_first = True, device = self.device)
+
+
+        '''
+        History embedding module.
+        '''
         try:
-            self.his_encoder = getattr(nn, history_module)(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
+            self.his_encoder = getattr(nn, history_module)(input_size = d_history, hidden_size = d_history, num_layers = history_module_layers,\
                         batch_first = True, dropout = dropout, device = device)
         except:
             raise Exception(f'Unknown history module {history_module}.')
 
+        '''
+        We map the history and current event embedding into the same hidden space.
+        '''
+        self.history_mapper = nn.Linear(d_history, d_pro_integral, device = self.device)
+        self.time_mapper = NonNegLinear(d_expression, d_pro_integral, device = self.device)
 
-        self.weight_for_t = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
-        nn.init.xavier_uniform_(self.weight_for_t)
-
-        self.history_mapper = nn.Linear(d_history, d_intensity, bias = True, device = device)
-        self.time_mapper = NonNegLinear(d_intensity, d_intensity, device = self.device)
-
-        self.mlp = nn.ModuleList([
-            NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
+        '''
+        self.mlp -> self.mlp_time and self.mlp_event
+        '''
+        self.mlp_time = nn.ModuleList([
+            NonNegLinear(d_pro_integral, d_pro_integral, bias = True, device = device) for _ in range(mlp_layers)
         ])
 
-        self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
+        self.mlp_event = nn.ModuleList([
+            NonNegLinear(d_pro_integral, d_pro_integral, bias = True, device = device) for _ in range(mlp_layers)
+        ])
+
+        '''
+        self.aggregate -> self.aggregate_time and self.aggregate_event
+        '''
+        self.aggregate_time = NonNegLinear(d_pro_integral, 1, bias = True, device = device)
+        self.aggregate_events = NonNegLinear(d_pro_integral, 1, bias = True, device = device)
+
         self.layer_activation = TA[nonlinear]()
 
         # We might need these two factors to control the vector's norm.
         if pretrain:
             # alpha
-            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device))
+            self.output_factor_time = nn.Parameter(torch.tensor(alpha, device = self.device, requires_grad = True))
             # beta
-            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device))
+            self.residual_factor_time = nn.Parameter(torch.tensor(beta, device = self.device, requires_grad = True))
+            # alpha
+            self.output_factor_events = nn.Parameter(torch.tensor(alpha, device = self.device, requires_grad = True))
+            # beta
+            self.residual_factor_events = nn.Parameter(torch.tensor(beta, device = self.device, requires_grad = True))
         else:
             # alpha
-            self.output_factor = torch.tensor(alpha,  device = self.device)
+            self.output_factor_time = torch.tensor(alpha,  device = self.device)
             # beta
-            self.residual_factor = torch.tensor(beta, device = self.device)
+            self.residual_factor_time = torch.tensor(beta, device = self.device)
+            # alpha
+            self.output_factor_events = torch.tensor(alpha,  device = self.device)
+            # beta
+            self.residual_factor_events = torch.tensor(beta, device = self.device)
 
         self.nonneg_activation = nn.Softplus()
         self.nonneg_factor = nn.ReLU()
         self.nonneg_integral = nn.Sigmoid()
 
+    
+    def events_normalize(self, events, mean_and_var_events):
+        mean_events, var_events = mean_and_var_events
+        events = (events - \
+                  rearrange(torch.from_numpy(mean_events).to(self.device), 'de -> 1 1 de')) / \
+                  rearrange(torch.from_numpy(var_events).to(self.device), 'de -> 1 1 de')
+                                                                               # [batch_size, seq_len, dim_events]
+        events = torch.tanh(events)                                            # [batch_size, seq_len, dim_events]
+        
+        return events
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+
+    def events_restore(self, events, mean_and_var_events):
+        mean_events, var_events = mean_and_var_events
+        restored_events = torch.atanh(events)                                  # [batch_size, seq_len, dim_events]
+
+        restored_events = (restored_events * \
+                  rearrange(torch.from_numpy(var_events).to(self.device), 'de -> 1 1 de')) +  \
+                  rearrange(torch.from_numpy(mean_events).to(self.device), 'de -> 1 1 de')
+                                                                               # [batch_size, seq_len, dim_events]
+        
+        return restored_events
+
+
+    def embed_time_and_events_history(self, time, events, mean_and_var_events):
+        normed_events = self.events_normalize(events, mean_and_var_events)     # [batch_size, seq_len, dim_events]
+        normed_events_and_time, normed_events_and_time_ps = pack([normed_events, time], 'b s *')
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        emb_normed_events_and_time = self.embedding_matrix_history * normed_events_and_time.unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_history]
+        emb_normed_events_and_time \
+            = self.location_emb_to_single_emb_his(rearrange(emb_normed_events_and_time, 'b s de dh -> b s (de dh)'))
+                                                                               # [batch_size, seq_len, d_history]
+
+        return emb_normed_events_and_time
+
+
+    '''
+    These functions combine time and event information into one tensor.
+    You should call different embed functions depending on your purpose and the shape of tensor "time" and "events".
+    '''
+    def embed_time_and_events_nonneg(self, time, events, mean_and_var_events, no_norm = False):
+        '''
+        When should one use no_norm?
+        Input events are the upperbound or lowerbound itself.
+        '''
+        if no_norm:
+            normed_events = events
+        else:
+            normed_events = self.events_normalize(events, mean_and_var_events) # [batch_size, seq_len, dim_events]
+
+        normed_events_and_time, normed_events_and_time_ps = pack([normed_events, time], 'b s *')
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        
+        fused_embedding_base_expression, _ = self.let_expression_outer_variables_aware(self.embedding_base_expression)
+                                                                               # [dim_events + 1, d_expression]
+        fused_embedding_base_expression = rearrange(fused_embedding_base_expression, 'd_ev d_ex -> 1 1 d_ev d_ex')
+                                                                               # [1, 1, dim_events + 1, d_expression]
+
+        emb_normed_events_and_time = F.softplus(fused_embedding_base_expression) * normed_events_and_time.unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        return emb_normed_events_and_time
+
+
+    def embed_time_and_events_nonneg_sample_on_time(self, time, events, mean_and_var_events, no_norm = False):
+        '''
+        time: [batch_size, seq_len, resolution]
+        '''
+        resolution = time.shape[-1]
+
+        if no_norm:
+            normed_events = events
+        else:
+            normed_events = self.events_normalize(events, mean_and_var_events) # [batch_size, seq_len, dim_events]
+
+        normed_events = repeat(normed_events, 'b s de -> b s r de', r = resolution)
+                                                                               # [batch_size, seq_len, resolution, dim_events]
+        normed_events_and_time, normed_events_and_time_ps = pack([normed_events, time], 'b s r *')
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1]
+        
+        fused_embedding_base_expression, _ = self.let_expression_outer_variables_aware(self.embedding_base_expression)
+                                                                               # [dim_events + 1, d_expression]
+        fused_embedding_base_expression = rearrange(fused_embedding_base_expression, 'd_ev d_ex -> 1 1 d_ev d_ex')
+                                                                               # [1, 1, dim_events + 1, d_expression]
+
+        emb_normed_events_and_time = F.softplus(fused_embedding_base_expression) * normed_events_and_time.unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        return emb_normed_events_and_time
+
+
+    def embed_time_and_events_nonneg_sample(self, time, events):
+        '''
+        The input events of this function always get normed elsewhere beforehand.
+        '''
+
+        normed_events_and_time, normed_events_and_time_ps = pack([events, time], 'b s sample *')
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        
+        fused_embedding_base_expression, _ = self.let_expression_outer_variables_aware(self.embedding_base_expression)
+                                                                               # [dim_events + 1, d_expression]
+        fused_embedding_base_expression = rearrange(fused_embedding_base_expression, 'd_ev d_ex -> 1 1 1 d_ev d_ex')
+                                                                               # [1, 1, 1, dim_events + 1, d_expression]
+
+        emb_normed_events_and_time = F.softplus(fused_embedding_base_expression) * normed_events_and_time.unsqueeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_expression]
+
+        return emb_normed_events_and_time
+
+
+    def go_through_nonneg_mlps(self, input_vecs):
+        '''
+        Toolset function for mapping vectors into nonnegative numbers.
+        '''
+        '''
+        Changes: We separate mlp as mlp_time and mlp_events. Credits to MFullyNN and DHP by Okawa et al.
+        '''
+        input_vecs_events, input_vecs_time = torch.split(input_vecs, (self.dim_events, 1), dim = -2)
+                                                                               # [batch_size, seq_len, dim_events, d_pro_integral] + [batch_size, seq_len, 1, d_pro_integral]
+        for layer in self.mlp_time:
+            residual_input_vecs_time = input_vecs_time                         # [batch_size, seq_len, 1, d_pro_integral]
+            input_vecs_time = layer(input_vecs_time)                           # [batch_size, seq_len, 1, d_pro_integral]
+            input_vecs_time = self.layer_activation(input_vecs_time)           # [batch_size, seq_len, 1, d_pro_integral]
+            input_vecs_time = self.nonneg_factor(self.residual_factor_time) * residual_input_vecs_time + \
+                              self.nonneg_factor(self.output_factor_time) * input_vecs_time
+                                                                               # [batch_size, seq_len, 1, d_pro_integral]
+
+        for layer in self.mlp_event:
+            residual_input_vecs_events = input_vecs_events                     # [batch_size, seq_len, dim_events, d_pro_integral]
+            input_vecs_events = layer(input_vecs_events)                       # [batch_size, seq_len, dim_events, d_pro_integral]
+            input_vecs_events = self.layer_activation(input_vecs_events)       # [batch_size, seq_len, dim_events, d_pro_integral]
+            input_vecs_events = self.nonneg_factor(self.residual_factor_events) * residual_input_vecs_events + \
+                                self.nonneg_factor(self.output_factor_events) * input_vecs_events
+                                                                               # [batch_size, seq_len, dim_events, d_pro_integral]
+        
+        unnormalised_probability_integral_time = self.nonneg_integral(-self.aggregate_time(input_vecs_time))
+                                                                               # [batch_size, seq_len, 1, 1]
+        unnormalised_probability_integral_events = self.nonneg_integral(-self.aggregate_events(input_vecs_events))
+                                                                               # [batch_size, seq_len, dim_events, 1]
+        
+        unnormalised_probability_integral = torch.cat(
+            (unnormalised_probability_integral_events, unnormalised_probability_integral_time),
+            dim = -2)                                                          # [batch_size, seq_len, dim_events + 1, 1]
+        
+        return unnormalised_probability_integral
+
+    def forward(self, events_history_set, events_next_set, time_history, time_next, mean_and_var_events, mean_and_var_time):
         '''
         Args:
-            events_history: [batch_size, seq_len]
+            events_history: [batch_size, seq_len, dim_events]
+            events_next:    [batch_size, seq_len, dim_events]
             time_history:   [batch_size, seq_len]
-            time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+            time_next:      [batch_size, seq_len]
             mask:           [batch_size, seq_len]
         '''
 
         '''
-        Obtain historical embeddings.
-        '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
+        '''
+
+        '''
+        All continuous dimensions EXCEPT time should get normalised.
+        This tensor is used to exclude time from the explicit normalisation.
+        '''
+
+        '''
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
+        '''
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
+        events_next, events_next_ps = pack(events_next_set, 'b s *')           # [batch_size, seq_len, dim_events]
+
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
+
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
         
         # Reshape hidden output for full connection layers.
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
-
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events, d_history]
-
-        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
 
         '''
-        Obtain timestamp embeddings.
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
+
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
         '''
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-
-        time_embedding = time_next.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        time_zero_embedding = time_next_zero.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        time_next_zero = (- mean_time / var_time) * torch.ones_like(time_next) # [batch_size, seq_len]
+        time_next = (time_next - mean_time) / var_time                         # [batch_size, seq_len]
         
-        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        '''
+        Events embedding for events_next
+
+        Different from time which starts from 0 and never ends, normal continuous marks always have lower and higher bounds.
+        Therefore, we need to remove the meaningless integral from upper bound to infinity from emb_events_lower_anchor, otherwise
+        CIFIB might introduce wrong normalization factors in the last step.
+        '''
+        emb_events_next = self.embed_time_and_events_nonneg(time_next, events_next, mean_and_var_events)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_upper = self.embed_time_and_events_nonneg(time_next, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_next = self.time_mapper(emb_events_next)                    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper = self.time_mapper(emb_events_upper)                  # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        output_events_next = emb_events_next + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper = emb_events_upper + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
         
-        output = time_embedding + hidden_history                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-        output_zero = time_zero_embedding + hidden_history                     # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+        unnormalised_probability_integral_output_events_next = self.go_through_nonneg_mlps(output_events_next).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper = self.go_through_nonneg_mlps(output_events_upper).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        
+        unnormalised_probability_integral = unnormalised_probability_integral_output_events_next - unnormalised_probability_integral_output_events_upper * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_factor = unnormalised_probability_integral_output_events_lower_anchor - unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        
+        normalised_subprobability_integrals = unnormalised_probability_integral / (normalised_factor + self.denominator_shift)
+                                                                               # [batch_size, seq_len, dim_events + 1]
 
-        for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-
-            residual_zero = output_zero                                        # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output_zero = layer(output_zero)                                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output_zero = self.layer_activation(output_zero)                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-            output_zero = self.nonneg_factor(self.residual_factor) * residual_zero + self.nonneg_factor(self.output_factor) * output_zero
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
-
-        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
-                                                                               # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
-        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
-                                                                               # [batch_size, seq_len, num_events, 1] if we need events else [batch_size, seq_len, 1]
-
-        if self.event_toggle:
-            probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
-                                                                               # [batch_size, seq_len, num_events]
-            probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... ne 1 -> ... ()', 'sum')
-                                                                               # [batch_size, seq_len, 1]
-        else:
-            probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
+        normalised_probability_integral = normalised_subprobability_integrals.prod(dim = -1)
                                                                                # [batch_size, seq_len]
-            probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... 1 -> ...', 'sum')
+
+        return normalised_probability_integral
+
+
+    def probability_integral_from_t_all_markers(self, events_history_set, time_history, tau, mean_and_var_events, mean_and_var_time):
+        '''
+        Args:
+            events_history: [batch_size, seq_len, dim_events]
+            events_next:    [batch_size, seq_len, dim_events]
+            time_history:   [batch_size, seq_len]
+            time_next:      [batch_size, seq_len]
+            mask:           [batch_size, seq_len]
+        '''
+
+        '''
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
+
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
+        '''
+
+        '''
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
+        '''
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
+
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
+
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
+        
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
+
+        '''
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
+
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
+        '''
+        time_next_zero = (- mean_time / var_time) * torch.ones_like(tau)       # [batch_size, seq_len]
+        tau = (tau - mean_time) / var_time                                     # [batch_size, seq_len]
+        
+        '''
+        Events embedding for events_next
+
+        Different from time which starts from 0 and never ends, normal continuous marks always have lower and higher bounds.
+        Therefore, we need to remove the meaningless integral from upper bound to infinity from emb_events_lower_anchor, otherwise
+        CIFIB might introduce wrong normalization factors in the last step.
+        '''
+        emb_events_lower_bound = self.embed_time_and_events_nonneg(tau, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_upper_bound = self.embed_time_and_events_nonneg(tau, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_lower_bound = self.time_mapper(emb_events_lower_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_bound = self.time_mapper(emb_events_upper_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        output_events_lower_bound = emb_events_lower_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_bound = emb_events_upper_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        
+        unnormalised_probability_integral_output_events_lower_bound = self.go_through_nonneg_mlps(output_events_lower_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_bound = self.go_through_nonneg_mlps(output_events_upper_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        unnormalised_probability_integral = unnormalised_probability_integral_output_events_lower_bound - unnormalised_probability_integral_output_events_upper_bound * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_factor = unnormalised_probability_integral_output_events_lower_anchor - unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_subprobability_integrals = (unnormalised_probability_integral / (normalised_factor + self.denominator_shift))
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_probability_integral = normalised_subprobability_integrals.prod(dim = -1)
                                                                                # [batch_size, seq_len]
 
-        return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.denominator_shift)
+        return normalised_probability_integral
 
 
-    def probability(self, events_history, time_history, time_next, resolution, mean, var):
+    def probability_integral_from_t_given_marker_space(self, events_history_set, time_history, tau, \
+                                                       space_point_at_bottom_left, space_point_at_up_right, \
+                                                       mean_and_var_events, mean_and_var_time):
         '''
-        Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
-        events_history:[batch_size, seq_len]
-        time_history:  [batch_size, seq_len]
-        time_next:     [batch_size, seq_len]
-        resolution:    int
+            events_history: [batch_size, seq_len, dim_events]
+            events_next:    [batch_size, seq_len, dim_events]
+            time_history:   [batch_size, seq_len]
+            space_point_at_bottom_left: 
+            space_point_at_up_right: 
+            mask:           [batch_size, seq_len]
         '''
 
         '''
-        History embeddings
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
+
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
-        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
-
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r di', r = resolution)
-                                                                               # [batch_size, seq_len, resolution, d_intensity]
-
 
         '''
-        Expanded time embedding 
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
         '''
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-                                                                               # [resolution]
-        original_time_expand = time_multiplier * time_next.unsqueeze(dim = -1) # [batch_size, seq_len, resolution]
-        time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_expand = repeat(time_expand, 'b s r -> b s r ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
 
-        time_expand.requires_grad = True
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events] is we need events else [batch_size, seq_len, resolution]
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
 
-        emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] is we need events else [batch_size, seq_len, resolution, d_intensity]
-
-        emb_time_expand = self.time_mapper(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = emb_time_expand + hidden_history                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-
-        for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-
-        expand_integral = self.nonneg_integral(-self.aggregate(output))        # [batch_size, seq_len, resolution, num_events, 1] if we need events else [batch_size, seq_len, resolution, 1]
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
         
-        if self.event_toggle:
-            integral_from_zero_to_inf = expand_integral[:, :, 0, :, :].detach()# [batch_size, seq_len, num_events, 1]
-            integral_sum = reduce(integral_from_zero_to_inf, 'b s ne 1 -> b s 1 1 1', 'sum')
-                                                                               # [batch_size, seq_len, 1, 1, 1]
-            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
-                                                                               # [batch_size, seq_len, resolution, num_events, 1]
-        else:
-            integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, 1]
-            integral_sum = rearrange(integral_from_zero_to_inf, 'b s 1 -> b s 1 1')
-                                                                               # [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
-                                                                               # [batch_size, seq_len, resolution, 1]
-
-        expand_probability = - torch.autograd.grad(
-            outputs=expand_integral,
-            inputs=time_expand,
-            grad_outputs=torch.ones_like(expand_integral),
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-        time_expand.requires_grad = False
-
-        expand_probability = expand_probability.detach()                       # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
 
         '''
-        Restore the original timestamp
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
+
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
         '''
-        batch_size, seq_len = events_history.shape[0], events_history.shape[1]
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-
-        return expand_probability, timestamp
-
-
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
+        time_next_zero = (- mean_time / var_time) * torch.ones_like(tau)       # [batch_size, seq_len]
+        tau = (tau - mean_time) / var_time                                     # [batch_size, seq_len]
+        
         '''
-        We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
+        Events embedding for events_next
+
+        Different from time which starts from 0 and never ends, normal continuous marks always have lower and higher bounds.
+        Therefore, we need to remove the meaningless integral from upper bound to infinity from emb_events_lower_anchor, otherwise
+        CIFIB might introduce wrong normalization factors in the last step.
+        '''
+        emb_events_lower_bound = self.embed_time_and_events_nonneg(tau, \
+                                                       space_point_at_bottom_left, \
+                                                       mean_and_var_events)    # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_bound = self.embed_time_and_events_nonneg(tau, \
+                                                       space_point_at_up_right, \
+                                                       mean_and_var_events)    # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       space_point_at_bottom_left, \
+                                                       mean_and_var_events)    # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       space_point_at_up_right, \
+                                                       mean_and_var_events)    # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_lower_bound = self.time_mapper(emb_events_lower_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_bound = self.time_mapper(emb_events_upper_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        output_events_lower_bound = emb_events_lower_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_bound = emb_events_upper_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        
+        unnormalised_probability_integral_output_events_lower_bound = self.go_through_nonneg_mlps(output_events_lower_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_bound = self.go_through_nonneg_mlps(output_events_upper_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        unnormalised_probability_integral = unnormalised_probability_integral_output_events_lower_bound - unnormalised_probability_integral_output_events_upper_bound * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_factor = unnormalised_probability_integral_output_events_lower_anchor - unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_subprobability_integrals = (unnormalised_probability_integral / (normalised_factor + self.denominator_shift))
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_probability_integral = normalised_subprobability_integrals.prod(dim = -1)
+                                                                               # [batch_size, seq_len]
+
+        return normalised_probability_integral
+
+
+    def sample(self, events_history_set, sampled_points_set, time_history, time_next, mean_and_var_events, mean_and_var_time):
+        '''
         Args:
-        time_history: [batch_size, seq_len]
-        time_next:    [batch_size, seq_len]
-        resolution:   int
+            events_history: [batch_size, seq_len, dim_events]
+            time_history:   [batch_size, seq_len]
+            time_next:      [batch_size, seq_len]
+            mask:           [batch_size, seq_len]
         '''
 
         '''
-        History embeddings
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
+
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
-        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
-
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r di', r = resolution)
-                                                                               # [batch_size, seq_len, resolution, d_intensity]
 
         '''
-        Expanded time embedding 
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
         '''
-        time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
-                                                                               # [resolution]
-        original_time_expand = time_multiplier * rearrange(time_next, '... -> ... 1')
-                                                                               # [batch_size, seq_len, resolution]
-        time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        batch_size, seq_len = time_history.shape
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
+        sampled_points, sampled_points_ps = pack(sampled_points_set, 'b s rd *')
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events]
+
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
+
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
         
-        time_expand.requires_grad = True      
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
 
-        emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] is we need events else [batch_size, seq_len, resolution, d_intensity]
+        '''
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
 
-        emb_time_expand = self.time_mapper(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-        output = emb_time_expand + hidden_history                              # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
+        '''
+        time_next_zero = - mean_time / var_time * torch.ones_like(time_next)   # [batch_size, seq_len]
+        time_next = (time_next - mean_time) / var_time                         # [batch_size, seq_len]
+        
+        '''
+        Events embedding for events_next
+        '''
+        time_next_sampled = repeat(time_next, 'b s -> b s sample', sample = self.sample_resolution ** self.dim_events)
+                                                                               # [batch_size, seq_len, resolution ** dim_events]
+        emb_events_next_sampled = self.embed_time_and_events_nonneg_sample(time_next_sampled, sampled_points)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_expression]
+        emb_events_upper_bound = self.embed_time_and_events_nonneg(time_next, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_next_sampled = self.time_mapper(emb_events_next_sampled)    # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_pro_integral]
+        emb_events_upper_bound = self.time_mapper(emb_events_upper_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        output_events_next_sampled = emb_events_next_sampled + rearrange(hidden_history, 'b s di -> b s 1 1 di')
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_pro_integral]
+        output_events_upper_bound = emb_events_upper_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        unnormalised_probability_integral_output_events_next_sampled = self.go_through_nonneg_mlps(output_events_next_sampled).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_bound = self.go_through_nonneg_mlps(output_events_upper_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        unnormalised_probability_integral = unnormalised_probability_integral_output_events_next_sampled - unnormalised_probability_integral_output_events_upper_bound.unsqueeze(dim = -2) * self.mask_out_time
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        normalised_factor = unnormalised_probability_integral_output_events_lower_anchor - unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_subprobability_integrals = unnormalised_probability_integral / (normalised_factor + self.denominator_shift).unsqueeze(dim = -2)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        normalised_probability_integral = normalised_subprobability_integrals.prod(dim = -1)
+                                                                               # [batch_size, seq_len, resolution ** dim_events]
+
+        return normalised_probability_integral
 
 
-        for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] if we need events else [batch_size, seq_len, resolution, d_intensity]
+    def sample_evaluate(self, events_history_set, sampled_points_set, time_history, time_next, mean_and_var_events, mean_and_var_time):
+        '''
+        Args:
+            events_history: [batch_size, seq_len, dim_events]
+            time_history:   [batch_size, seq_len]
+            time_next:      [batch_size, seq_len]
+            mask:           [batch_size, seq_len]
+        '''
 
-        expand_integral = self.nonneg_activation(-self.aggregate(output))      # [batch_size, seq_len, resolution, num_events, 1] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-        expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        '''
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
 
-        if self.event_toggle:
-            integral_from_zero_to_inf = expand_integral[:, :, 0, :].detach()   # [batch_size, seq_len, num_events]
-            integral_sum = reduce(integral_from_zero_to_inf, 'b s ne -> b s ()', 'sum')
-                                                                               # [batch_size, seq_len, 1]
-            integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1')         # [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        else:
-            integral_from_zero_to_inf = expand_integral[:, :, 0].detach()      # [batch_size, seq_len]
-            integral_sum = rearrange(integral_from_zero_to_inf, 'b s -> b s 1')# [batch_size, seq_len, 1, 1]
-            expand_integral = expand_integral / (integral_sum + self.denominator_shift)
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
+        '''
+
+        '''
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
+        '''
+        batch_size, seq_len = time_history.shape
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
+        sampled_points, sampled_points_ps = pack(sampled_points_set, 'b s rd *')
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events]
+
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
+
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
+        
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
+
+        '''
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
+
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
+        '''
+        time_next_zero = - mean_time / var_time * torch.ones_like(time_next)   # [batch_size, seq_len]
+        time_next = (time_next - mean_time) / var_time                         # [batch_size, seq_len]
+        
+        '''
+        Events embedding for events_next
+        '''
+        time_next_sampled = repeat(time_next, 'b s -> b s sample', sample = 6 ** self.dim_events)
+                                                                               # [batch_size, seq_len, resolution ** dim_events]
+        emb_events_next_sampled = self.embed_time_and_events_nonneg_sample(time_next_sampled, sampled_points)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_expression]
+        emb_events_upper_bound = self.embed_time_and_events_nonneg(time_next, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len), \
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+        emb_events_next_sampled = self.time_mapper(emb_events_next_sampled)    # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_pro_integral]
+        emb_events_upper_bound = self.time_mapper(emb_events_upper_bound)      # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        output_events_next_sampled = emb_events_next_sampled + rearrange(hidden_history, 'b s di -> b s 1 1 di')
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1, d_pro_integral]
+        output_events_upper_bound = emb_events_upper_bound + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        unnormalised_probability_integral_output_events_next_sampled = self.go_through_nonneg_mlps(output_events_next_sampled).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_bound = self.go_through_nonneg_mlps(output_events_upper_bound).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        unnormalised_probability_integral = unnormalised_probability_integral_output_events_next_sampled - unnormalised_probability_integral_output_events_upper_bound.unsqueeze(dim = -2) * self.mask_out_time
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        normalised_factor = unnormalised_probability_integral_output_events_lower_anchor - unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        normalised_subprobability_integrals = unnormalised_probability_integral / (normalised_factor + self.denominator_shift).unsqueeze(dim = -2)
+                                                                               # [batch_size, seq_len, resolution ** dim_events, dim_events + 1]
+        normalised_probability_integral = normalised_subprobability_integrals.prod(dim = -1)
+                                                                               # [batch_size, seq_len, resolution ** dim_events]
+
+        return normalised_probability_integral
+
+
+    def probing_probability(self, events_history_set, time_history, time_next, resolution, mean_and_var_events, mean_and_var_time):
+        '''
+        Args:
+            events_history: [batch_size, seq_len, dim_events]
+            events_next:    [batch_size, seq_len, dim_events]
+            time_history:   [batch_size, seq_len]
+            time_next:      [batch_size, seq_len]
+            mask:           [batch_size, seq_len]
+        '''
+
+        '''
+        Functions whose n rank derivative is always positive would easily have explosive values with larger outputs.
+        Maybe we should create CIBIF as the composition of several IBIFs.
+
+        New thoughts:
+        we could decompose the multiple integral into the multiplication of several sub-integrals that could be handled
+        by IFIB.
+        For example:
+        \int_{a_1}^{b_1}{\int_{a_2}^{b_2}{\cdots \int_{a_n}^{b_n}{p(x_1, x_2, x_3, \cdots, x_n)dx_1dx_2dx_3\cdots d_x_n}}}
+        = \int_{a_1}^{b_1}{p(x_1)dx_1}\int_{a_2}^{b_2}{p(x_2|x_1)dx_2}\int_{a_3}^{b_3}{p(x_3|x_1, x_2)dx_3}\cdots\int_{a_n}^{b_n}{p(x_n|x_1, x_2, \cdots, x_{n-1})dx_n}
+
+        The order can not be intervened. Further works need to be done to certify the integration order.
+        '''
+
+        '''
+        Obtain historical embeddings.
+        All history information is embedded into a historical hidden space, the number of whose dimension is d_history.
+        '''
+        events_history, events_history_ps = pack(events_history_set, 'b s *')  # [batch_size, seq_len, dim_events]
+
+        mean_time, var_time = mean_and_var_time
+        batch_size, seq_len = time_history.shape
+
+        time_history = (time_history - mean_time) / var_time                   # [batch_size, seq_len]
+        emb_history = self.embed_time_and_events_history(time_history, events_history, mean_and_var_events)
+                                                                               # [batch_size, seq_len, d_history]
+        
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(emb_history)                 # [batch_size, seq_len, d_history]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_pro_integral]
+
+        '''
+        Obtain embeddings of time_next and event_next. This is where we introduce the multiple integration decomposition.
+
+        Each Module should provide a vector representing the expression of \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i}.
+        The module has following properties:
+        1. As a_i -> +infty, the value should be close to 0.   (If upper bound is present, we let the final hidden expression as \int_{a_i}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i} - \int_{a_{upper_bound}}^{+infty}{p(x_i|x_1, x_2, \cdot, x_{i-1})dx_i})
+        2. As a_i -> a_{lower_bound}, the value should be close to 1.
+        3. Every module should be monotonically increasing.
+        4. In the stage where we aggregate these hidden expressions to obtain the final integral, neither activation functions
+        nor fully-connected layers should participate in.
+
+        In essence, I just introduce dim_event sigmoid into this architecture to avoid the annoying n-rank positive derivative request.
+        The smallest function whose n-rank detivative is positive is a n-rank polynomial. Taking it as the activation will inevitably lead to output explosion. 
+        Don't know if this could work. I have my fingers crossed.
+        '''
+        time_next_zero = (- mean_time / var_time) * torch.ones_like(time_next) # [batch_size, seq_len]
+        original_expanded_time_next = time_next.unsqueeze(dim = -1) * torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [batch_size, seq_len, resolution]
 
-        # Gradient 1: Integral -> time
-        events_probability_at_each_interpolated_timestamp = \
-        - torch.autograd.grad(
-            outputs=expand_integral,
-            inputs=time_expand,
-            grad_outputs=torch.ones_like(expand_integral),
-            retain_graph=True
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if we need events else [batch_size, seq_len, resolution]
-                
-        time_expand.requires_grad = False
+        original_expanded_time_next.requires_grad = True
+        expanded_time_next = (original_expanded_time_next - mean_time) / var_time
+                                                                               # [batch_size, seq_len, resolution]
+
+        '''
+        Events embedding for events_next
+        '''
+        expanded_emb_events_lower = self.embed_time_and_events_nonneg_sample(expanded_time_next, \
+                                                            repeat(self.continuous_mark_lowerbound, 'de -> b s resolution de', b = batch_size, s = seq_len, resolution = resolution))
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1, d_expression]
+        expanded_emb_events_upper = self.embed_time_and_events_nonneg_sample(expanded_time_next, \
+                                                            repeat(self.continuous_mark_upperbound, 'de -> b s resolution de', b = batch_size, s = seq_len, resolution = resolution))
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1, d_expression]
+        emb_events_lower_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_lowerbound, 'de -> b s de', b = batch_size, s = seq_len),
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+        emb_events_upper_anchor = self.embed_time_and_events_nonneg(time_next_zero, \
+                                                       repeat(self.continuous_mark_upperbound, 'de -> b s de', b = batch_size, s = seq_len),
+                                                       mean_and_var_events, no_norm = True)
+                                                                               # [batch_size, seq_len, dim_events + 1, d_expression]
+
+
+        expanded_emb_events_lower = self.time_mapper(expanded_emb_events_lower)# [batch_size, seq_len, resolution, dim_events + 1, d_pro_integral]
+        expanded_emb_events_upper = self.time_mapper(expanded_emb_events_upper)# [batch_size, seq_len, resolution, dim_events + 1, d_pro_integral]
+        emb_events_lower_anchor = self.time_mapper(emb_events_lower_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        emb_events_upper_anchor = self.time_mapper(emb_events_upper_anchor)    # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+
+        expanded_output_events_lower = expanded_emb_events_lower + rearrange(hidden_history, 'b s di -> b s 1 1 di')
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1, d_pro_integral]
+        expanded_output_events_upper = expanded_emb_events_upper + rearrange(hidden_history, 'b s di -> b s 1 1 di')
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1, d_pro_integral]
+        output_events_lower_anchor = emb_events_lower_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+        output_events_upper_anchor = emb_events_upper_anchor + rearrange(hidden_history, 'b s di -> b s 1 di')
+                                                                               # [batch_size, seq_len, dim_events + 1, d_pro_integral]
+
+        expanded_unnormalised_probability_integral_lower = self.go_through_nonneg_mlps(expanded_output_events_lower).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1]
+        expanded_unnormalised_probability_integral_upper = self.go_through_nonneg_mlps(expanded_output_events_upper).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1]
+        expanded_unnormalised_probability_integral_output_events_lower_anchor = self.go_through_nonneg_mlps(output_events_lower_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        expanded_unnormalised_probability_integral_output_events_upper_anchor = self.go_through_nonneg_mlps(output_events_upper_anchor).squeeze(dim = -1)
+                                                                               # [batch_size, seq_len, dim_events + 1]
+        
+        expanded_unnormalised_probability_integral = expanded_unnormalised_probability_integral_lower - expanded_unnormalised_probability_integral_upper * self.mask_out_time
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1]
+        normalise_factor = expanded_unnormalised_probability_integral_output_events_lower_anchor - expanded_unnormalised_probability_integral_output_events_upper_anchor * self.mask_out_time
+                                                                               # [batch_size, seq_len, dim_events + 1]
+
+        expanded_probability_integral = expanded_unnormalised_probability_integral / (normalise_factor + self.denominator_shift).unsqueeze(dim = -2)
+                                                                               # [batch_size, seq_len, resolution, dim_events + 1]
+        expanded_probability_integral = expanded_probability_integral.prod(dim = -1)
+                                                                               # [batch_size, seq_len, resolution]
+        
+        '''
+        Obtains the probability over timeline.
+        '''
+        expanded_probability = - torch.autograd.grad(
+            outputs = expanded_probability_integral,
+            inputs = original_expanded_time_next,
+            grad_outputs = torch.ones_like(expanded_probability_integral)
+        )[0]                                                                   # [batch_size, seq_len, resolution]
+
+        original_expanded_time_next.requires_grad = False
 
         # Timestamp part
-        batch_size, seq_len = hidden_history.shape[0], hidden_history.shape[1]
+        batch_size, seq_len = time_history.shape
         zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
         timestamp, timstamp_ps = pack(
-            [zero_inception, original_time_expand.diff(dim = -1)],
+            [zero_inception, original_expanded_time_next.diff(dim = -1)],
             'b s *')                                                           # [batch_size, seq_len, resolution]
-        timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
 
-        '''
-        The data dict is defined here.
-        This dict should pack all data required by plot().
-        '''
-        data = {}
-        data['expand_probability_for_each_event'] = events_probability_at_each_interpolated_timestamp
-                                                                               # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
 
-        if self.event_toggle:
-            probability_for_each_event = \
-                rearrange(events_probability_at_each_interpolated_timestamp.detach().cpu(), 'b s r ne -> b (s r) ne')
-                                                                               # [batch_size, seq_len * resolution, num_events]
-            
-            spearman_matrix = []
-            pearson_matrix = []
-            L1_matrix = []
-            for idx, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in \
-                                                  enumerate(zip(probability_for_each_event, mask, time_next)):
-                seq_len = mask_per_seq.sum()
-                # rho: spearman coefficient
-                spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
-                if self.num_events == 2:
-                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
-
-                # r: pearson coefficient
-                pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
-                # L^1 metric
-                L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
-                                                resolution = resolution, num_events = self.num_events,
-                                                time_next = time_next_per_seq[:seq_len])
-
-                spearman_matrix.append(spearman_matrix_per_seq)
-                pearson_matrix.append(pearson_matrix_per_seq)
-                L1_matrix.append(L1_matrix_per_seq)
-
-            data['spearman_matrix'] = spearman_matrix
-            data['pearson_matrix'] = pearson_matrix
-            data['L1_matrix'] = L1_matrix
-
-        return data, timestamp
+        return expanded_probability, timestamp

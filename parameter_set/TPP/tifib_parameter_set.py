@@ -135,14 +135,13 @@ stackoverflow_plot_hyperparameter_list = [
     "--dataset_name", "stackoverflow", \
     "--dataloader_name", "generic", \
     "--figure_count", "10", \
-    "--train", \
     "--test", \
-    "--evaluation", \
     "--used_dataloader_config", "tifib_dl.json", \
-    "--plot_type", ["intensity", "probability", "debug"], \
+    # "--plot_type", ["intensity", "probability", "debug"], \
+    "--plot_type", "intensity", \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['graph']
+    "--task_name", ['mae_and_f1', 'mae_e_and_f1']
 ]
 
 mooc_plot_hyperparameter_list = [

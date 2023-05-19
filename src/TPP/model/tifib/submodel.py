@@ -75,9 +75,9 @@ class TIFIB(nn.Module):
         # We might need these two factors to control the vector's norm.
         if pretrain:
             # alpha
-            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device))
+            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device, requires_grad = True))
             # beta
-            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device))
+            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device, requires_grad = True))
         else:
             # alpha
             self.output_factor = torch.tensor(alpha,  device = self.device)
@@ -102,13 +102,6 @@ class TIFIB(nn.Module):
         Obtain historical embeddings.
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
         
         # Reshape hidden output for full connection layers.
         hidden_history = self.his_encoder(events_history, time_history, mask_history)

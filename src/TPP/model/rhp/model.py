@@ -5,25 +5,25 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 import numpy as np
 
 from src.TPP.model import memory_ceiling
-from src.TPP.model.sahp.plot import *
-from src.TPP.model.sahp.submodel import SAHP
+from src.TPP.model.rhp.plot import *
+from src.TPP.model.rhp.submodel import RHPModule
 from src.TPP.model.utils import *
-from src.TPP.model.sahp.utils import get_subsequent_mask
 
 
-class SAHPWrapper(BasicModule):
-    def __init__(self, num_events, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, zero_shift_factor = 1e-12, \
+class RHP(BasicModule):
+    def __init__(self, num_events, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
+                 d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, zero_shift_factor = 1e-12, \
                  probability_threshold = 0.5, monte_carlo_resolution = 100):
-        super(SAHPWrapper, self).__init__()
+        super(RHP, self).__init__()
         self.device = device
         self.num_events = num_events if num_events > 0 else 1
         self.probability_threshold = probability_threshold
         self.zero_shift_factor = zero_shift_factor
 
-        self.model = SAHP(num_events = num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
-                          n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
-                          device = device, monte_carlo_resolution = monte_carlo_resolution)
+        self.model = RHPModule(device = device, num_events = num_events, history_module_name = history_module_name, \
+                               d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
+                               history_encoder_layers = history_encoder_layers, dropout = dropout, \
+                               monte_carlo_resolution = monte_carlo_resolution)
     
 
     def divide_history_and_next(self, input):
@@ -215,7 +215,7 @@ class SAHPWrapper(BasicModule):
             2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
             3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
             '''
-            intensity_integral = self.model.monte_carlo_integration_estimator(time_history, taus, events_history, mask_history)
+            intensity_integral = self.model.monte_carlo_integration_estimator(time_history, taus, events_history)
                                                                                    # [batch_size, seq_len, num_events]
             return intensity_integral.sum(dim = -1)
 
@@ -273,16 +273,12 @@ class SAHPWrapper(BasicModule):
         
         if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
-        
-        '''
-        Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
-        '''
-        # resolution_inf = 2500
+
 
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
-
+        
         expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, resolution, 1]
         expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
@@ -297,6 +293,7 @@ class SAHPWrapper(BasicModule):
         probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
 
+        
         f1 = []
         top_k_acc = []
         for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability):
@@ -659,8 +656,7 @@ class SAHPWrapper(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
-
+        
         return mae, f1_1
 
     
@@ -675,7 +671,7 @@ class SAHPWrapper(BasicModule):
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_history, mask_next, mean, var)
         
-        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes = move_from_tensor_to_ndarray(*maes)
 
         return maes, f1_2, probability_sum
 

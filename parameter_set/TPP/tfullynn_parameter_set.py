@@ -6,11 +6,11 @@ stackoverflow_training_hyperparameter_list = [
     "--dataloader_name", "generic", \
     "--dataloader_config", "stackoverflow/tfullynn_dl.json",
     "--dataset_name", "stackoverflow", \
-    "--n_training_steps", "50000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
-    "--b", "128", \
-    "--n_warmup_steps", "10000", \
+    "--n_training_steps", "200000", \
+    "--n_evaluation_steps", "2000", \
+    "--n_report_steps", "2000", \
+    "--b", "32", \
+    "--n_warmup_steps", "40000", \
     "--model_name", "tfullynn", \
     "--model_config", "stackoverflow/tfullynn.json",
     "--lr", "0.002", \
@@ -27,11 +27,11 @@ retweet_training_hyperparameter_list = [
     "--dataloader_name", "generic", \
     "--dataloader_config", "retweet/tfullynn_dl.json",
     "--dataset_name", "retweet", \
-    "--n_training_steps", "100000", \
-    "--n_evaluation_steps", "500", \
-    "--n_report_steps", "500", \
-    "--b", "128", \
-    "--n_warmup_steps", "20000", \
+    "--n_training_steps", "400000", \
+    "--n_evaluation_steps", "4000", \
+    "--n_report_steps", "4000", \
+    "--b", "32", \
+    "--n_warmup_steps", "80000", \
     "--model_name", "tfullynn", \
     "--model_config", "retweet/tfullynn.json",
     "--lr", "0.002", \
@@ -49,8 +49,8 @@ mooc_training_hyperparameter_list = [
     "--dataloader_config", "mooc/tfullynn_dl.json",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
-    "--n_evaluation_steps", "5000", \
-    "--n_report_steps", "5000", \
+    "--n_evaluation_steps", "4000", \
+    "--n_report_steps", "4000", \
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "tfullynn", \

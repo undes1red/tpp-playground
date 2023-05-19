@@ -1,6 +1,10 @@
 import importlib
 from src.TPP.utils import getLogger
 
+# We use this parameter to control model's memory usage while running event-time prediction tasks.
+# Used in FENN, FullyNN, SAHP, RHP, and THP
+memory_ceiling = 3e7
+
 logger = getLogger(__name__)
 
 # One should register their models here.
@@ -12,8 +16,9 @@ def get_model(name, rank = 0):
         if rank == 0:
             logger.info(f"Model named {name} is retrieved.")
         return model
-    except:
+    except Exception as e:
         if rank == 0:
+            logger.exception(f'{e}.')
             logger.exception(f"Model named {name} is not found! Please register your model in src/model/{name}/__init__.py and try again.")
 
 

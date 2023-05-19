@@ -2,9 +2,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-
-from src.TPP.model.ifib.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_probability
+
+large_graph_length = 18
+large_graph_height = 10
 
 
 def plot_probability(data, timestamp, opt):
@@ -65,8 +67,8 @@ def plot_probability(data, timestamp, opt):
         subplot_instruction = [
             {
                 'plot_type': 'lineplot',
-                'length': 20,
-                'height': 5,
+                'length': large_graph_length,
+                'height': large_graph_height,
                 'kwargs':
                 {
                     'x':'Time',
@@ -77,8 +79,8 @@ def plot_probability(data, timestamp, opt):
             },
             {
                 'plot_type': 'scatterplot',
-                'length': 20,
-                'height': 5,
+                'length': large_graph_length,
+                'height': large_graph_height,
                 'kwargs':
                 {
                     'x': 'Time',
@@ -160,8 +162,8 @@ def plot_debug(data, timestamp, opt):
             subplot_instruction = [
                 {
                     'plot_type': 'lineplot',
-                    'length': 20,
-                    'height': 5,
+                    'length': large_graph_length,
+                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x':'Time',
@@ -172,8 +174,8 @@ def plot_debug(data, timestamp, opt):
                 },
                 {
                     'plot_type': 'scatterplot',
-                    'length': 20,
-                    'height': 5,
+                    'length': large_graph_length,
+                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x': 'Time',

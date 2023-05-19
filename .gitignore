@@ -117,6 +117,7 @@ output/
 config/
 wandb/
 deprecated/
+*.pkl
 
 # The test scripts
 scripts*/
@@ -130,5 +131,8 @@ events*
 # Figures
 *.png
 
-# nohup output file
-nohup.out
+# output files
+*.out
+
+# jupyter notebooks
+*.ipynb
