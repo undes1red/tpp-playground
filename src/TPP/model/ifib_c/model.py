@@ -395,12 +395,10 @@ class IFIBModel(BasicModule):
                 r = torch.where(v >= 0, c, r)
 
             return (l + r)/2
-
-        max_ = min(1e6, mean + 10 * var)
         
         l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
-        r = max_*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
+        r = 1e6*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len, num_events]
 

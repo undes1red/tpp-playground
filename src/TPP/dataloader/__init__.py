@@ -3,7 +3,7 @@ import torch, os, importlib, glob
 from torch.utils.data import DataLoader
 
 from src.TPP.dataloader.utils import *
-from src.TPP.utils import getLogger, read_json
+from src.TPP.utils import getLogger, read_json, read_yaml
 
 
 logger = getLogger(__name__)
@@ -50,7 +50,7 @@ def prepare_dataloaders(opt, rank = 0):
     Now, dataset_card.json is mandatory for every dataset.
     This json file should contain useful information about this dataset, like the number of classes it has.
     '''
-    opt.info_dict = read_json(os.path.join(opt.data_path, 'dataset_card.json'))
+    opt.info_dict = read_yaml(os.path.join(opt.data_path, 'dataset_card.yml'))
 
     #========= Preparing dataloaders =========#
     train_dataset = dataset(data_raw['train'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)

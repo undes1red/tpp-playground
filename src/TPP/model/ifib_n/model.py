@@ -581,11 +581,10 @@ class CIFIBModel(BasicModule):
             return (l + r)/2
 
         mean_time, var_time = mean_and_var_time
-        max_ = min(1e6, mean_time + 10 * var_time)
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
-        r = max_*torch.ones_like(time_history, dtype = torch.float32, device = self.device)
+        r = 1e6*torch.ones_like(time_history, dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len, num_events]
 

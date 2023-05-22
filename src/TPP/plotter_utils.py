@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from src.TPP.utils import restore_dataset_name
+from operator import itemgetter
 
 
 '''
@@ -29,16 +30,16 @@ def expand_true_probability(time, intensity, opt):
         obtain the final probability distribution.
         '''
         expand_true_intensity = \
-            functions[0](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len, resolution]
+            functions[0](time, intensity, opt, device = opt.device)            # [batch_size, seq_len, resolution]
         expand_true_integral = \
-            functions[1](time, intensity, opt.resolution, device = opt.device) # [batch_size, seq_len, resolution]
+            functions[1](time, intensity, opt, device = opt.device)            # [batch_size, seq_len, resolution]
         return expand_true_intensity * torch.exp(-expand_true_integral)        # [batch_size, seq_len, resolution]
     else:
         '''
         While for several special tpps defined by probability distributions instead of intensity functions, thing are quite
         easier: go find the distribution and the task is done.
         '''
-        expand_true_probability = functions[0](time, intensity, opt.resolution, device = opt.device)
+        expand_true_probability = functions[0](time, intensity, opt, device = opt.device)
                                                                                # [batch_size, seq_len, resolution]
         return expand_true_probability
 
@@ -56,9 +57,7 @@ def hawkes_1(time, intensity, opt, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    mu = 0.2
-    a = 0.8
-    b = 1.0
+    mu, a, b = itemgetter('mu', 'a', 'b')(opt.info_dict)
     resolution = opt.resolution
 
     batch_size = time.shape[0]
@@ -76,7 +75,7 @@ def hawkes_1(time, intensity, opt, device):
     return expand_true_intensity
 
 
-def hawkes_1_integral(time, intensity, resolution, device):
+def hawkes_1_integral(time, intensity, opt, device):
     '''
     Hawkes_1 process: \Lambda(t) = \mu * (t - t_l) + a - a * exp(-b(t - t_l)). When t = t_l, \Lambda(t) = 0.
     Hyperparameters that are used here follow what they are in function hawkes_1.
@@ -89,9 +88,8 @@ def hawkes_1_integral(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    mu = 0.2
-    a = 0.8
-    b = 1.0
+    mu, a, b = itemgetter('mu', 'a', 'b')(opt.info_dict)
+    resolution = opt.resolution
     
     # Integral part 1
     time_multiplier = torch.linspace(0, 1, resolution, device = device)
@@ -123,7 +121,7 @@ def hawkes_1_integral(time, intensity, resolution, device):
 '''
 Hawkes process whose intensity function has multiple kernels.
 '''
-def hawkes_2(time, intensity, resolution, device):
+def hawkes_2(time, intensity, opt, device):
     '''
     Hawkes_2 process: \lambda(t) = \mu + a_1 * b_1 * exp(-b_1(t - t_l)) + a_2 * b_2 * exp(-b_2(t - t_l))
     In this case, \mu = 0.2, a_1 = 0.4, b_1 = 1, a_2 = 0.4, b_2 = 20.0, and all past events affect the intensity.
@@ -138,11 +136,8 @@ def hawkes_2(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    mu = 0.2
-    a_1 = 0.4
-    a_2 = 0.4
-    b_1 = 1.0
-    b_2 = 20.0
+    mu, a_1, a_2, b_1, b_2 = itemgetter('mu', 'a_1', 'a_2', 'b_1', 'b_2')(opt.info_dict)
+    resolution = opt.resolution
 
     batch_size, seq_len = time.shape
     '''
@@ -173,7 +168,7 @@ def hawkes_2(time, intensity, resolution, device):
     return expand_true_intensity
 
 
-def hawkes_2_integral(time, intensity, resolution, device):
+def hawkes_2_integral(time, intensity, opt, device):
     '''
     Hawkes_2 process: \Lambda(t) = \mu * (t - t_l) + a_1 - a_1 * exp(-b_1(t - t_l)) + a_2 - a_2 * exp(-b_2(t - t_l)).
     When t = t_l, \Lambda(t) = 0.
@@ -187,11 +182,9 @@ def hawkes_2_integral(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    mu = 0.2
-    a_1 = 0.4
-    a_2 = 0.4
-    b_1 = 1.0
-    b_2 = 20.0
+    mu, a_1, a_2, b_1, b_2 = itemgetter('mu', 'a_1', 'a_2', 'b_1', 'b_2')(opt.info_dict)
+    resolution = opt.resolution
+
 
     # Integral part 1
     batch_size = time.shape[0]
@@ -232,7 +225,7 @@ def hawkes_2_integral(time, intensity, resolution, device):
 '''
 Time-independent poisson process
 '''
-def poisson(time, intensity, resolution, device):
+def poisson(time, intensity, opt, device):
     '''
     Poisson process: \lambda(t) = 1
     The intensity function of poisson process is a constant.
@@ -245,14 +238,15 @@ def poisson(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    lam = 1
+    lam = itemgetter('lam')(opt.info_dict)
+    resolution = opt.resolution
 
     batch_size, seq_len = intensity.shape
     return torch.ones((batch_size, seq_len, resolution), device = device) * lam
                                                                                # [batch_size, seq_len, resolution]
 
 
-def poisson_integral(time, intensity, resolution, device):
+def poisson_integral(time, intensity, opt, device):
     '''
     Poisson process: \lambda(t) = 1 and \Lambda(t) = t (\Lambda(t) is the integral of \lambda(t))
 
@@ -264,7 +258,8 @@ def poisson_integral(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    lam = 1
+    lam = itemgetter('lam')(opt.info_dict)
+    resolution = opt.resolution
 
     time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time.unsqueeze(-1)                         # [batch_size, seq_len, resolution]
@@ -275,7 +270,7 @@ def poisson_integral(time, intensity, resolution, device):
 '''
 Stationary renewal process, whose probability distribution instead of intensity function is defined.
 '''
-def stationary_renewal(time, intensity, resolution, device):
+def stationary_renewal(time, intensity, opt, device):
     '''
     The stationary renewal process: \lambda(t) = -0.797885*exp(-0.5*(log(t))**2) / (-t + t * erf(0.707107 * log(t)))
     The intensity function only matches the explicitly given lognorm distribution used in the synthetic data generator. 
@@ -290,6 +285,7 @@ def stationary_renewal(time, intensity, resolution, device):
     resolution : int
     device: conduct all computations on cpu, gpu, or other devices
     '''
+    resolution = opt.resolution
 
     time_multiplier = torch.linspace(0, 1, resolution, device = device)
     expand_time = time_multiplier * time.unsqueeze(-1)                         # [batch_size, seq_len, resolution]
@@ -299,7 +295,7 @@ def stationary_renewal(time, intensity, resolution, device):
     return expand_true_intensity
 
 
-def stationary_renewal_probability(time, intensity, resolution, device):
+def stationary_renewal_probability(time, intensity, opt, device):
     '''
     We won't implement the integral of stationary renewal's intensity function.
     We will directly use the distribution, instead.
@@ -313,6 +309,8 @@ def stationary_renewal_probability(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameter
+    # stationary renewal doesn't support custom hyperparamters.
+    resolution = opt.resolution
     s = np.sqrt(1)
     mu = 0
 
@@ -328,7 +326,7 @@ def stationary_renewal_probability(time, intensity, resolution, device):
 '''
 Self-correct process, which the latest events would drastically decrease the probability of next events in a small time period.
 '''
-def self_correct(time, intensity, resolution, device):
+def self_correct(time, intensity, opt, device):
     '''
     Self correct process has a iterative intensity function. \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events.
@@ -340,9 +338,9 @@ def self_correct(time, intensity, resolution, device):
     resolution : int
     device: conduct all computations on cpu, gpu, or other devices
     '''
-    # Hyperparameters
-    mu = 1
-    alpha = 1
+    # hyperparameters
+    mu, alpha = itemgetter('mu', 'alpha')(opt.info_dict)
+    resolution = opt.resolution
 
     batch_size = time.shape[0]
     time_multiplier = torch.linspace(0, 1, resolution, device = device)
@@ -356,7 +354,7 @@ def self_correct(time, intensity, resolution, device):
     return expand_intensity
 
 
-def self_correct_integral(time, intensity, resolution, device):
+def self_correct_integral(time, intensity, opt, device):
     '''
     self correct process has intensity function: \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events. Omi et al. claim self correct process doesn't aggregate intensity functions of all
@@ -370,8 +368,8 @@ def self_correct_integral(time, intensity, resolution, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameters
-    mu = 1
-    alpha = 1
+    mu, alpha = itemgetter('mu', 'alpha')(opt.info_dict)
+    resolution = opt.resolution
     
     batch_size, _ = time.shape
     time_interval = time                                                       # [batch_size, seq_len]

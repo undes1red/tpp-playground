@@ -1,18 +1,18 @@
-# parameter sets of model ifib
+# parameter sets of model ifib_c
 
 stackoverflow_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "stackoverflow/ifib_dl.json",
+    "--dataloader_config", "stackoverflow/ifib_c_dl.json",
     "--dataset_name", "stackoverflow", \
     "--n_training_steps", "200000", \
     "--n_evaluation_steps", "2000", \
     "--n_report_steps", "2000", \
     "--b", "32", \
     "--n_warmup_steps", "40000", \
-    "--model_name", "ifib", \
-    "--model_config", "stackoverflow/ifib.json",
+    "--model_name", "ifib_c", \
+    "--model_config", "stackoverflow/ifib_c.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -25,15 +25,15 @@ retweet_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "retweet/ifib_dl.json",
+    "--dataloader_config", "retweet/ifib_c_dl.json",
     "--dataset_name", "retweet", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
     "--n_report_steps", "4000", \
     "--b", "32", \
     "--n_warmup_steps", "80000", \
-    "--model_name", "ifib", \
-    "--model_config", "retweet/ifib.json",
+    "--model_name", "ifib_c", \
+    "--model_config", "retweet/ifib_c.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -46,15 +46,15 @@ mooc_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "mooc/ifib_dl.json",
+    "--dataloader_config", "mooc/ifib_c_dl.json",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
     "--n_report_steps", "4000", \
     "--b", "32", \
     "--n_warmup_steps", "80000", \
-    "--model_name", "ifib", \
-    "--model_config", "mooc/ifib.json",
+    "--model_name", "ifib_c", \
+    "--model_config", "mooc/ifib_c.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -67,15 +67,15 @@ bookorder_training_hyperparameter_list = [
     "train.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "bookorder/ifib_dl.json",
+    "--dataloader_config", "bookorder/ifib_c_dl.json",
     "--dataset_name", "bookorder", \
     "--n_training_steps", "20000", \
     "--n_evaluation_steps", "500", \
     "--n_report_steps", "500", \
     "--b", "8", \
     "--n_warmup_steps", "4000", \
-    "--model_name", "ifib", \
-    "--model_config", "bookorder/ifib.json",
+    "--model_name", "ifib_c", \
+    "--model_config", "bookorder/ifib_c.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -94,8 +94,8 @@ syn_training_hyperparameter_list = [
     "--n_report_steps", "500", \
     "--b", "128", \
     "--n_warmup_steps", "1000", \
-    "--model_name", "ifib", \
-    "--model_config", "syn/ifib.json",
+    "--model_name", "ifib_c", \
+    "--model_config", "syn/ifib_c.json",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
@@ -107,8 +107,8 @@ syn_training_hyperparameter_list = [
 retweet_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "ifib", \
-    "--model_config", "retweet/ifib.json", \
+    "--model_name", "ifib_c", \
+    "--model_config", "retweet/ifib_c.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "400000", \
@@ -118,19 +118,19 @@ retweet_plot_hyperparameter_list = [
     # "--train", \
     # "--evaluation", \
     "--test", \
-    "--used_dataloader_config", "ifib_dl.json", \
+    "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "probability", \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200", \
-    "--task_name", 'graph'
+    "--task_name", ['mae_e_and_f1']
 ]
 
 stackoverflow_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "ifib", \
-    "--model_config", "stackoverflow/ifib.json", \
+    "--model_name", "ifib_c", \
+    "--model_config", "stackoverflow/ifib_c.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "200000", \
@@ -140,7 +140,7 @@ stackoverflow_plot_hyperparameter_list = [
     # "--train", \
     # "--evaluation", \
     "--test", \
-    "--used_dataloader_config", "ifib_dl.json", \
+    "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--dataloader_config", "stackoverflow/plot.json", \
@@ -151,8 +151,8 @@ stackoverflow_plot_hyperparameter_list = [
 mooc_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "ifib", \
-    "--model_config", "mooc/ifib.json", \
+    "--model_name", "ifib_c", \
+    "--model_config", "mooc/ifib_c.json", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "400000", \
@@ -162,7 +162,7 @@ mooc_plot_hyperparameter_list = [
     # "--train", \
     # "--evaluation", \
     "--test", \
-    "--used_dataloader_config", "ifib_dl.json", \
+    "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--dataloader_config", "mooc/plot.json", \
@@ -173,8 +173,8 @@ mooc_plot_hyperparameter_list = [
 bookorder_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "ifib", \
-    "--model_config", "bookorder/ifib.json", \
+    "--model_name", "ifib_c", \
+    "--model_config", "bookorder/ifib_c.json", \
     "--lr", "0.002", \
     "--used_batch_size", "8", \
     "--n_training_steps", "20000", \
@@ -184,7 +184,7 @@ bookorder_plot_hyperparameter_list = [
     # "--train", \
     # "--evaluation", \
     "--test", \
-    "--used_dataloader_config", "ifib_dl.json", \
+    "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--dataloader_config", "bookorder/plot.json", \
@@ -195,8 +195,8 @@ bookorder_plot_hyperparameter_list = [
 syn_plot_hyperparameter_list = [
     "train.py", \
     "--seed", "32", \
-    "--model_name", "ifib", \
-    "--model_config", "syn/ifib.json", \
+    "--model_name", "ifib_c", \
+    "--model_config", "syn/ifib_c.json", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \

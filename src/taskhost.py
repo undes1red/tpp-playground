@@ -41,7 +41,7 @@ class TaskHost:
             logger.warning(f'No explicit random seed is detected, so the framework will spontaneously select a number as the random seed based on the UNIX timestamp.')
             random.seed(int(time.time()) % 65535)
             self.opt.seed = random.randint(0, 65535)
-            logger.info(f'The model loves {self.opt.seed} this time.')
+            logger.info(f'The model prefers {self.opt.seed} this time.')
         else:
             logger.info(f'You request that we should use number {self.opt.seed} as the random seed.')
 
@@ -50,11 +50,18 @@ class TaskHost:
         reproducibility
         '''
 
+        # Check cuda availability. We will force using CPU if cuda is unavailable even the user script wants to use cuda.
+        if self.opt.cuda and not torch.cuda.is_available():
+            logger.warning('You expect cuda acceleration but cuda is unavailable in this machine. Please check your cuda configuration and make sure that you have installed pytorch with cuda support.')
+            logger.warning('We use cpu now.')
+            self.opt.cuda = False
+
+
         # Prepare for multithreading
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = str(int(np.random.randint(30000, 65535)))
 
-
+        # set up random seed for various packages
         random.seed(self.opt.seed)
         torch.manual_seed(self.opt.seed)
         np.random.seed(self.opt.seed)
@@ -94,7 +101,7 @@ class TaskHost:
         Report device status
         '''
         self.opt.device = torch.device(
-            f'cuda:{rank:d}' if self.opt.cuda and torch.cuda.is_available() else 'cpu')
+            f'cuda:{rank:d}' if self.opt.cuda else 'cpu')
     
         if rank == 0:
             if self.opt.device.type == 'cuda':

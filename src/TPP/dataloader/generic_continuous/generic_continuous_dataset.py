@@ -21,12 +21,12 @@ class generic_continuous_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in train.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, num_events, plot = False, shift = False, shift_time = False, input_norm_data = False):
+    def __init__(self, data, device, property_dict, plot = False, shift = False, shift_time = False, input_norm_data = False):
         super(generic_continuous_dataset, self).__init__()
         self.data = data
         self.device = device
         self.plot = plot
-        self.num_events = num_events
+        self.dim_events = property_dict['dim_events']
         self.mean_time = 0
         self.var_time = 1
 
@@ -45,7 +45,7 @@ class generic_continuous_dataset(utils.data.Dataset):
         # if input_norm_data:
         #     self.data.time_seq = self.data.time_seq.apply(math.log)
         self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
-        self.data.event = self.data.event.apply(insert, number = [0] * num_events)
+        self.data.event = self.data.event.apply(insert, number = [0] * self.dim_events)
 
         # Data normalization
         # We need it because several datasets' inputs are just so huge that several model can never handle it.

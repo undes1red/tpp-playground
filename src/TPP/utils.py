@@ -1,5 +1,5 @@
 # Several extensive operations for python list.
-import math, json, logging
+import math, json, logging, yaml
 
 from tqdm import tqdm
 from functools import reduce
@@ -39,6 +39,16 @@ def print_performances(logger, procedure, lr = None, num_format = None, **kwargs
 def read_json(json_path):
     with open(json_path, 'r') as f:
         a = json.load(f)
+    return a
+
+def read_yaml(yaml_path):
+    a = None
+    with open(yaml_path, 'r') as f:
+        try:
+            a = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            print(exc)
+
     return a
 
 
