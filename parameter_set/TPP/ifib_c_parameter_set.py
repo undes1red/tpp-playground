@@ -120,10 +120,10 @@ retweet_plot_hyperparameter_list = [
     "--test", \
     "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", "probability", \
+    "--plot_type", "debug", \
     "--dataloader_config", "retweet/plot.json", \
     "--resolution", "200", \
-    "--task_name", ['mae_e_and_f1']
+    "--task_name", ['graph']
 ]
 
 stackoverflow_plot_hyperparameter_list = [
@@ -142,10 +142,10 @@ stackoverflow_plot_hyperparameter_list = [
     "--test", \
     "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", "intensity", \
+    "--plot_type", "debug", \
     "--dataloader_config", "stackoverflow/plot.json", \
     "--resolution", "200", \
-    "--task_name", 'mae_e_and_f1'
+    "--task_name", 'graph'
 ]
 
 mooc_plot_hyperparameter_list = [
@@ -164,10 +164,10 @@ mooc_plot_hyperparameter_list = [
     "--test", \
     "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", "intensity", \
+    "--plot_type", "debug", \
     "--dataloader_config", "mooc/plot.json", \
     "--resolution", "200", \
-    "--task_name", 'mae_e_and_f1'
+    "--task_name", 'graph'
 ]
 
 bookorder_plot_hyperparameter_list = [
@@ -186,10 +186,10 @@ bookorder_plot_hyperparameter_list = [
     "--test", \
     "--used_dataloader_config", "ifib_c_dl.json", \
     # "--plot_type", ["intensity", "probability", "debug"], \
-    "--plot_type", "intensity", \
+    "--plot_type", "debug", \
     "--dataloader_config", "bookorder/plot.json", \
     "--resolution", "200", \
-    "--task_name", 'mae_e_and_f1'
+    "--task_name", 'graph'
 ]
 
 syn_plot_hyperparameter_list = [

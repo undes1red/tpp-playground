@@ -170,6 +170,85 @@ class IFIB(nn.Module):
         return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.denominator_shift)
 
 
+    def sample(self, events_history, time_history, tau, mean, var):
+        '''
+        Args:
+            events_history: [batch_size, seq_len]
+            time_history:   [batch_size, seq_len]
+            tau:            [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+            mask:           [batch_size, seq_len]
+        '''
+
+        '''
+        Obtain historical embeddings.
+        '''
+        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+
+        if self.event_toggle:
+            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
+            history, history_ps = pack([events_embeddings, time_history], 'b s *')
+                                                                               # [batch_size, seq_len, d_history + 1]
+        else:
+            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
+        
+        # Reshape hidden output for full connection layers.
+        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+
+        if self.event_toggle:
+            hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
+                                                                               # [batch_size, seq_len, num_events, d_history]
+
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity] if we need events else [batch_size, seq_len, d_intensity]
+
+        '''
+        Obtain timestamp embeddings.
+        '''
+        tau = (tau - mean) / var                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+        time_next_zero = torch.ones_like(tau) * (-mean / var)                  # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+
+        time_embedding = tau.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+        time_zero_embedding = time_next_zero.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+        
+        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+        
+        output = time_embedding + hidden_history.unsqueeze(dim = 2)            # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+        output_zero = time_zero_embedding + hidden_history.unsqueeze(dim = 2)  # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+
+        for layer in self.mlp:
+            residual = output                                                  # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output = layer(output)                                             # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output = self.layer_activation(output)                             # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+
+            residual_zero = output_zero                                        # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output_zero = layer(output_zero)                                   # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output_zero = self.layer_activation(output_zero)                   # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+            output_zero = self.nonneg_factor(self.residual_factor) * residual_zero + self.nonneg_factor(self.output_factor) * output_zero
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, d_intensity] if we need events else [batch_size, seq_len, the_number_of_samples, d_intensity]
+
+        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, 1] if we need events else [batch_size, seq_len, the_number_of_samples, 1]
+        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events, 1] if we need events else [batch_size, seq_len, the_number_of_samples, 1]
+
+        if self.event_toggle:
+            probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events]
+            probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... ne 1 -> ... ()', 'sum')
+                                                                               # [batch_size, seq_len, the_number_of_samples, 1]
+        else:
+            probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
+                                                                               # [batch_size, seq_len, the_number_of_samples]
+            probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... 1 -> ...', 'sum')
+                                                                               # [batch_size, seq_len, the_number_of_samples]
+
+        return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.denominator_shift)
+
+
     def probability(self, events_history, time_history, time_next, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.

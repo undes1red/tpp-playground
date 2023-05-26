@@ -38,17 +38,17 @@ def prepare_dataloaders(opt, rank = 0):
 
     if rank == 0:
         if opt.abs_dataloader_config is None:
-            logger.info(f"No additional dataloader settings! We will use the default dataloader settings.")
+            logger.info(f"No custom dataloader settings! We will use the default dataloader settings.")
         else:
-            logger.info(f"Additional dataloader settings are loaded from the config file {opt.abs_dataloader_config}.")
-            logger.info(f"Additional settings are: {dataloader_config_dict}.")
+            logger.info(f"Custom dataloader settings are loaded from this config file {opt.abs_dataloader_config}.")
+            logger.info(f"Custom dataloader settings are: {dataloader_config_dict}.")
 
     dataset, read_data = find_dataset(opt.dataloader_name, rank)
     data_raw = read_data(opt.data_path, file_names)
 
     '''
-    Now, dataset_card.json is mandatory for every dataset.
-    This json file should contain useful information about this dataset, like the number of classes it has.
+    Now, dataset_card.yml is mandatory for every dataset.
+    This YAML file should contain useful information about this dataset, like the number of classes it has.
     '''
     opt.info_dict = read_yaml(os.path.join(opt.data_path, 'dataset_card.yml'))
 

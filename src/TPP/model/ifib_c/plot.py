@@ -361,4 +361,32 @@ def plot_debug(data, timestamp, opt):
         ]
         plot_instruction[f'probability_sum_{idx}'] = sub_plot_instruction
     
+    '''
+    We only select one sequence to show the distribution of sampled time.
+    '''
+    sampled_time = data['sampled_time_p_t']                                    # [batch_size, the_number_of_samples]
+    probabilty_input = data['sampled_probabilty_input'].squeeze()              # [the_number_of_samples]
+    sampled_time, probabilty_input = move_from_tensor_to_ndarray(sampled_time, probabilty_input)
+                                                                               # [batch_size, the_number_of_samples]
+    for idx, sampled_time_per_batch in enumerate(sampled_time):
+        dict_sampled_time = {
+            'x': probabilty_input,
+            'Sampled Time': sampled_time_per_batch
+        }
+
+        df_sampled_time = pd.DataFrame.from_dict(dict_sampled_time)
+
+        sub_plot_instruction = [
+            {
+                'plot_type': 'kdeplot',
+                'kwargs':
+                {
+                    'x': 'Sampled Time',
+                    'data': df_sampled_time,
+                    'log_scale': True
+                }
+            }
+        ]
+        plot_instruction[f'sample_{idx}'] = sub_plot_instruction
+
     return plot_instruction

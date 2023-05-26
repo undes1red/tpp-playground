@@ -11,7 +11,6 @@ from src.TPP.model.utils import *
 from src.TPP.model.fullynn.plot import *
 
 
-
 class FullyNNModel(BasicModule):
     '''
     The original FullyNN model with dedicated marker prediction module.
@@ -485,7 +484,7 @@ class FullyNNModel(BasicModule):
 
         '''
         Step 2: provide event predictions
-        '''        
+        '''
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
         expand_probability_per_event_for_monte_carlo = expand_probability_per_event[:, :, :-1, :]

@@ -299,6 +299,64 @@ class IFIBModel(BasicModule):
         return gap, tau_pred
 
 
+    def sample(self, events_history, time_history, time_next, mask_next, mean, var):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+        '''
+        '''
+        First, we randomly generate the probability_threshold from a uniform distribution.
+        '''
+        the_number_of_samples = 500
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        sample_input = dist.sample((1, 1, the_number_of_samples))    # [1, 1, the_number_of_samples]
+        sample_input = sample_input.to(self.device)                  # [1, 1, the_number_of_samples]
+
+        def evaluate_sample(integral_from_zero_to_inf, taus):
+            if self.event_toggle:
+                taus = repeat(taus, 'b s ns -> b s ns ne', ne = self.num_events)
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events]
+            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history, time_history, taus, mean, var)
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+            if self.event_toggle:
+                probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
+                                                                               # [batch_size, seq_len, the_number_of_samples]
+            return probability_integral
+
+        def bisect_target_sample(integral_from_zero_to_inf, taus):
+            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
+            
+        def median_prediction_sample(integral_from_zero_to_inf, l, r):
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target_sample(integral_from_zero_to_inf, c)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones((*time_history.shape, the_number_of_samples), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, the_number_of_samples]
+        r = 1e6*torch.ones((*time_history.shape, the_number_of_samples), dtype = torch.float32, device = self.device)
+                                                                               # [batch_size, seq_len, the_number_of_samples]
+        time_next_zero = torch.zeros_like(time_next)                           # [batch_size, seq_len]
+        if self.event_toggle:
+            time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
+                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+        integral_from_zero_to_inf = repeat(integral_from_zero_to_inf, 'b s ... -> b s ns ...', ns = the_number_of_samples)
+                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
+
+        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [batch_size, seq_len, the_number_of_samples]
+        tau_sampled = tau_sampled  * mask_next.unsqueeze(dim = -1)             # [batch_size, seq_len, the_number_of_samples]
+
+        return tau_sampled, sample_input
+
+
     def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var):
         '''
         Well...We will do something totally different by performing event-wise MAE.
@@ -526,6 +584,11 @@ class IFIBModel(BasicModule):
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         
+        sampled_time, probabilty_input = self.sample(events_history, time_history, time_next, mask_next, mean, var)
+                                                                               # [batch_size, seq_len, the_number_of_samples] + [1, 1, the_number_of_samples]
+        sampled_time_for_the_last_available_one = torch.index_select(sampled_time, 1, mask_next.sum(dim = -1) - 1).squeeze(dim = 1)
+                                                                               # [batch_size, the_number_of_samples]
+
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
 
@@ -545,6 +608,8 @@ class IFIBModel(BasicModule):
         data['mae_before_event'] = mae
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
+        data['sampled_time_p_t'] = sampled_time_for_the_last_available_one
+        data['sampled_probabilty_input'] = probabilty_input
 
         plots = plot_debug(data, timestamp, opt)
 

@@ -47,7 +47,7 @@ def expand_true_probability(time, intensity, opt):
 def hawkes_1(time, intensity, opt, device):
     '''
     Hawkes_1 process: \lambda(t) = \mu + a * b * exp(-b(t - t_l))
-    In this case, \mu = 0.2, a = 0.8, b = 1, and all past events affect the intensity.
+    The dataset must provide the value of \mu, a, and b in their dataset_card.yml.
 
     Args:
     time      : [batch_size, seq_len]
@@ -78,7 +78,7 @@ def hawkes_1(time, intensity, opt, device):
 def hawkes_1_integral(time, intensity, opt, device):
     '''
     Hawkes_1 process: \Lambda(t) = \mu * (t - t_l) + a - a * exp(-b(t - t_l)). When t = t_l, \Lambda(t) = 0.
-    Hyperparameters that are used here follow what they are in function hawkes_1.
+    The dataset must provide the value of \mu, a, and b in their dataset_card.yml.
 
     Args:
     time      : [batch_size, seq_len]
@@ -124,7 +124,7 @@ Hawkes process whose intensity function has multiple kernels.
 def hawkes_2(time, intensity, opt, device):
     '''
     Hawkes_2 process: \lambda(t) = \mu + a_1 * b_1 * exp(-b_1(t - t_l)) + a_2 * b_2 * exp(-b_2(t - t_l))
-    In this case, \mu = 0.2, a_1 = 0.4, b_1 = 1, a_2 = 0.4, b_2 = 20.0, and all past events affect the intensity.
+    The dataset must provide the value of \mu, a_1, , a_2, b_1, and b_2 in their dataset_card.yml.
 
     It seems that we have no choice but to solve the intensity iteratively.
 
@@ -172,7 +172,7 @@ def hawkes_2_integral(time, intensity, opt, device):
     '''
     Hawkes_2 process: \Lambda(t) = \mu * (t - t_l) + a_1 - a_1 * exp(-b_1(t - t_l)) + a_2 - a_2 * exp(-b_2(t - t_l)).
     When t = t_l, \Lambda(t) = 0.
-    Hyperparameters that are used here follow what they are in function hawkes_2.
+    The dataset must provide the value of \mu, a_1, , a_2, b_1, and b_2 in their dataset_card.yml.
 
     Args:
     time      : [batch_size, seq_len]
@@ -227,8 +227,9 @@ Time-independent poisson process
 '''
 def poisson(time, intensity, opt, device):
     '''
-    Poisson process: \lambda(t) = 1
+    Poisson process: \lambda(t) = lam
     The intensity function of poisson process is a constant.
+    The dataset must provide the value of lam in their dataset_card.yml.
 
     Args:
     time       : [batch_size, seq_len]  (not used in this function)
@@ -248,7 +249,8 @@ def poisson(time, intensity, opt, device):
 
 def poisson_integral(time, intensity, opt, device):
     '''
-    Poisson process: \lambda(t) = 1 and \Lambda(t) = t (\Lambda(t) is the integral of \lambda(t))
+    Poisson process: \lambda(t) = lam and \Lambda(t) = lam * t (\Lambda(t) is the integral of \lambda(t))
+    The dataset must provide the value of lam in their dataset_card.yml.
 
     Args:
     time       : [batch_size, seq_len]  (not used in this function)
@@ -309,7 +311,7 @@ def stationary_renewal_probability(time, intensity, opt, device):
     device: conduct all computations on cpu, gpu, or other devices
     '''
     # hyperparameter
-    # stationary renewal doesn't support custom hyperparamters.
+    # stationary renewal doesn't support custom hyperparamters, otherwise calculating its intensity function would be impossible.
     resolution = opt.resolution
     s = np.sqrt(1)
     mu = 0
@@ -330,6 +332,7 @@ def self_correct(time, intensity, opt, device):
     '''
     Self correct process has a iterative intensity function. \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events.
+    The dataset must provide the value of \mu and \alpha in their dataset_card.yml.
 
     Args:
     time       : [batch_size, seq_len]
@@ -359,6 +362,7 @@ def self_correct_integral(time, intensity, opt, device):
     self correct process has intensity function: \lambda(t) = exp(mu * tau - alpha * N)
     N is the number of happened events. Omi et al. claim self correct process doesn't aggregate intensity functions of all
     historical events, but it does just like the Hawkes process.
+    The dataset must provide the value of \mu and \alpha in their dataset_card.yml.
 
     Args:
     time       : [batch_size, seq_len + 1]
