@@ -136,3 +136,6 @@ events*
 
 # jupyter notebooks
 *.ipynb
+
+# useful utilities
+useful_utilities/*

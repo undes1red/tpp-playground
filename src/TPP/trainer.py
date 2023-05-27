@@ -162,7 +162,7 @@ class TPPTrainer:
         if self.rank == 0 and self.opt.log:
             for key, value in self.df_records.items():
                 if value is None:
-                    logger.warning('You require us to track the {key} process, but nothing is recorded!')
+                    logger.warning(f'You require us to track the {key} process, but nothing is recorded!')
                     continue
 
                 if key == 'Best':
