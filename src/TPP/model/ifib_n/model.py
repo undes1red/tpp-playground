@@ -3,13 +3,13 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.TPP.model.ifib_n.submodel import CIFIB
+from src.TPP.model.ifib_n.submodel import IFIBN
 from src.TPP.model.utils import BasicModule
 from src.TPP.model.ifib_n.utils import *
 from src.TPP.model.ifib_n.plot import *
 
 
-class CIFIBModel(BasicModule):
+class IFIBNModel(BasicModule):
     def __init__(self, d_history,
                  d_expression,
                  d_pro_integral,
@@ -25,7 +25,7 @@ class CIFIBModel(BasicModule):
                  sample_resolution = 50,
                  history_module = 'LSTM',
                  denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
-        super(CIFIBModel, self).__init__()
+        super(IFIBNModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.dim_events = info_dict['dim_events']
@@ -35,7 +35,7 @@ class CIFIBModel(BasicModule):
         self.zero_shift_factor = 1e-12
         self.point_sampling_pattern = torch.tensor([0.00, 0.05, 0.1, 0.25, 0.5, 0.75], device = self.device)
 
-        self.model = CIFIB(d_history = d_history, d_expression = d_expression, d_pro_integral = d_pro_integral, dim_events = self.dim_events,
+        self.model = IFIBN(d_history = d_history, d_expression = d_expression, d_pro_integral = d_pro_integral, dim_events = self.dim_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, nonlinear = nonlinear, denominator_shift = denominator_shift, 
                           pretrain = pretrain, alpha = alpha, beta = beta, continuous_mark_upperbound = continuous_mark_upperbound, 

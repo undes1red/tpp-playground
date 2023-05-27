@@ -30,7 +30,7 @@ TA = {
 }
 
 
-class IFIB(nn.Module):
+class IFIBC(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -43,7 +43,7 @@ class IFIB(nn.Module):
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, nonlinear, event_toggle, denominator_shift, pretrain, alpha, beta, device):
-        super(IFIB, self).__init__()
+        super(IFIBC, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle

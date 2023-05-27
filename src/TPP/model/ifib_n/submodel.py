@@ -30,7 +30,7 @@ TA = {
 }
 
 
-class CIFIB(nn.Module):
+class IFIBN(nn.Module):
     '''
     The CIFIB, defined on continuous time line and marks.
     '''

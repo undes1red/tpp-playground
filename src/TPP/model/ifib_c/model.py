@@ -4,12 +4,12 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.TPP.model.ifib_c.submodel import IFIB
+from src.TPP.model.ifib_c.submodel import IFIBC
 from src.TPP.model.utils import *
 from src.TPP.model.ifib_c.plot import *
 
 
-class IFIBModel(BasicModule):
+class IFIBCModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
@@ -22,7 +22,7 @@ class IFIBModel(BasicModule):
                  history_module = 'LSTM',
                  event_toggle = False, additional_event_loss = False,
                  denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
-        super(IFIBModel, self).__init__()
+        super(IFIBCModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = info_dict['num_events']
@@ -30,7 +30,7 @@ class IFIBModel(BasicModule):
         self.additional_event_loss = additional_event_loss
         self.zero_shift_factor = 1e-12
 
-        self.model = IFIB(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
+        self.model = IFIBC(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle,
                           denominator_shift = denominator_shift, pretrain = pretrain, alpha = alpha, beta = beta, device = device)

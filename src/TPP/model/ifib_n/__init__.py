@@ -1,5 +1,5 @@
-from src.TPP.model.ifib_n.model import CIFIBModel
+from src.TPP.model.ifib_n.model import IFIBNModel
 
 
 def get_model():
-    return CIFIBModel
+    return IFIBNModel
