@@ -18,7 +18,7 @@ class CIFIBModel(BasicModule):
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
-                 num_events,
+                 info_dict,
                  continuous_mark_upperbound,
                  continuous_mark_lowerbound,
                  device,
@@ -28,14 +28,14 @@ class CIFIBModel(BasicModule):
         super(CIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
-        self.dim_events = num_events
+        self.dim_events = info_dict['dim_events']
         self.continuous_mark_upperbound = continuous_mark_upperbound
         self.continuous_mark_lowerbound = continuous_mark_lowerbound
         self.sample_resolution = sample_resolution
         self.zero_shift_factor = 1e-12
         self.point_sampling_pattern = torch.tensor([0.00, 0.05, 0.1, 0.25, 0.5, 0.75], device = self.device)
 
-        self.model = CIFIB(d_history = d_history, d_expression = d_expression, d_pro_integral = d_pro_integral, dim_events = num_events,
+        self.model = CIFIB(d_history = d_history, d_expression = d_expression, d_pro_integral = d_pro_integral, dim_events = self.dim_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, nonlinear = nonlinear, denominator_shift = denominator_shift, 
                           pretrain = pretrain, alpha = alpha, beta = beta, continuous_mark_upperbound = continuous_mark_upperbound, 

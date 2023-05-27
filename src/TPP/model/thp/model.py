@@ -12,16 +12,16 @@ from src.TPP.model.thp.utils import *
 
 
 class THPWrapper(BasicModule):
-    def __init__(self, num_events, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
+    def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 0, probability_threshold = 0.5, 
                  monte_carlo_resolution = 100):
         super(THPWrapper, self).__init__()
         self.device = device
-        self.num_events = num_events if num_events > 0 else 1
+        self.num_events = info_dict['num_events'] if info_dict['num_events'] > 0 else 1
         self.probability_threshold = probability_threshold
         self.zero_shift = 1e-12
 
-        self.model = THP(num_events = num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
+        self.model = THP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
                          n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
                          beta = beta, monte_carlo_resolution = monte_carlo_resolution, device = device)
 

@@ -151,7 +151,7 @@ class FENN(nn.Module):
         integral = self.nonneg_activation(self.aggregate(output))              # [batch_size, seq_len, num_events, 1] if self.event_toggle else [batch_size, seq_len, 1]
 
         if self.zero_shift:
-            zero = torch.ones_like(time_next, device = self.device) * ( - mean / var)
+            zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
             zero_time_embedding = zero.unsqueeze(dim = -1) * self.non_neg(self.weight_for_t)
                                                                                # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]

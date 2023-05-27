@@ -27,7 +27,7 @@ class FENNModel(BasicModule):
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
-                 num_events,
+                 info_dict,
                  device,
                  history_module = 'LSTM',
                  event_toggle = False,
@@ -35,11 +35,11 @@ class FENNModel(BasicModule):
         super(FENNModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
-        self.num_events = num_events
+        self.num_events = info_dict['num_events']
         self.event_toggle = event_toggle
         self.zero_shift_factor = 1e-12
 
-        self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
+        self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, 
                           zero_shift = zero_shift, device = device)

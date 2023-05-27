@@ -11,16 +11,16 @@ from src.TPP.model.utils import *
 
 
 class RHP(BasicModule):
-    def __init__(self, num_events, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
+    def __init__(self, info_dict, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, zero_shift_factor = 1e-12, \
                  probability_threshold = 0.5, monte_carlo_resolution = 100):
         super(RHP, self).__init__()
         self.device = device
-        self.num_events = num_events if num_events > 0 else 1
+        self.num_events = info_dict['num_events'] if info_dict['num_events'] > 0 else 1
         self.probability_threshold = probability_threshold
         self.zero_shift_factor = zero_shift_factor
 
-        self.model = RHPModule(device = device, num_events = num_events, history_module_name = history_module_name, \
+        self.model = RHPModule(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                                d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                                history_encoder_layers = history_encoder_layers, dropout = dropout, \
                                monte_carlo_resolution = monte_carlo_resolution)

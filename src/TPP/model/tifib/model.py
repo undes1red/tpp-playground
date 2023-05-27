@@ -21,19 +21,19 @@ class TIFIBModel(BasicModule):
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
-                 num_events,
+                 info_dict,
                  device,
                  event_toggle = False, additional_event_loss = False,
                  denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
         super(TIFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
-        self.num_events = num_events
+        self.num_events = info_dict['num_events']
         self.event_toggle = event_toggle
         self.additional_event_loss = additional_event_loss
         self.zero_shift_factor = 1e-12
 
-        self.model = TIFIB(d_history = d_history, d_intensity = d_intensity, num_events = num_events, \
+        self.model = TIFIB(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events, \
                            dropout = dropout, d_hidden = d_hidden, n_layers = n_layers, n_head = n_head, \
                            d_qk = d_qk, d_v = d_v, mlp_layers = mlp_layers, nonlinear = nonlinear, \
                            event_toggle = event_toggle, denominator_shift = denominator_shift, pretrain = pretrain, \

@@ -27,6 +27,8 @@ class generic_dataset(utils.data.Dataset):
         self.device = device
         self.plot = plot
         self.number_of_events = property_dict['num_events']
+        self.t_0 = property_dict['t_0']
+        self.T = property_dict['T']
         self.mean = 0
         self.var = 1
 

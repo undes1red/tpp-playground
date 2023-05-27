@@ -17,7 +17,7 @@ class IFIBModel(BasicModule):
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
-                 num_events,
+                 info_dict,
                  device,
                  history_module = 'LSTM',
                  event_toggle = False, additional_event_loss = False,
@@ -25,12 +25,12 @@ class IFIBModel(BasicModule):
         super(IFIBModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
-        self.num_events = num_events
+        self.num_events = info_dict['num_events']
         self.event_toggle = event_toggle
         self.additional_event_loss = additional_event_loss
         self.zero_shift_factor = 1e-12
 
-        self.model = IFIB(d_history = d_history, d_intensity = d_intensity, num_events = num_events,
+        self.model = IFIB(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle,
                           denominator_shift = denominator_shift, pretrain = pretrain, alpha = alpha, beta = beta, device = device)
@@ -299,7 +299,7 @@ class IFIBModel(BasicModule):
         return gap, tau_pred
 
 
-    def sample(self, events_history, time_history, time_next, mask_next, mean, var):
+    def sample(self, events_history, time_history, time_next, mask_next, the_number_of_samples, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -307,10 +307,9 @@ class IFIBModel(BasicModule):
         '''
         First, we randomly generate the probability_threshold from a uniform distribution.
         '''
-        the_number_of_samples = 500
         dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
-        sample_input = dist.sample((1, 1, the_number_of_samples))    # [1, 1, the_number_of_samples]
-        sample_input = sample_input.to(self.device)                  # [1, 1, the_number_of_samples]
+        sample_input = dist.sample((1, 1, the_number_of_samples))              # [1, 1, the_number_of_samples]
+        sample_input = sample_input.to(self.device)                            # [1, 1, the_number_of_samples]
 
         def evaluate_sample(integral_from_zero_to_inf, taus):
             if self.event_toggle:
@@ -584,7 +583,7 @@ class IFIBModel(BasicModule):
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         
-        sampled_time, probabilty_input = self.sample(events_history, time_history, time_next, mask_next, mean, var)
+        sampled_time, probabilty_input = self.sample(events_history, time_history, time_next, mask_next, opt.sample_amount, mean, var)
                                                                                # [batch_size, seq_len, the_number_of_samples] + [1, 1, the_number_of_samples]
         sampled_time_for_the_last_available_one = torch.index_select(sampled_time, 1, mask_next.sum(dim = -1) - 1).squeeze(dim = 1)
                                                                                # [batch_size, the_number_of_samples]

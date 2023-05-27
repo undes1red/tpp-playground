@@ -8,15 +8,15 @@ from src.TPP.model.lognormmix.plot import *
 
 
 class LogNormMixWrapper(BasicModule):
-    def __init__(self, num_events: int, device, context_size: int = 32, mark_embedding_size: int = 32, \
+    def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
                  num_mix_components: int = 16, rnn_type: str = "LSTM", probability_threshold = 0.5):
         super(LogNormMixWrapper, self).__init__()
         self.device = device
-        self.num_events = num_events
+        self.num_events = info_dict['num_events']
         self.probability_threshold = probability_threshold
 
         self.model = LogNormMix(
-            num_events + 1,
+            self.num_events + 1,
             self.device,
             context_size,
             mark_embedding_size,

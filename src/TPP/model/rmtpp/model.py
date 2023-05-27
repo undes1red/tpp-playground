@@ -10,19 +10,19 @@ from src.TPP.model.rmtpp.plot import *
 
 
 class RMTPP(BasicModule):
-    def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, num_events, event_toggle, 
+    def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
                  output_size, limited_history_norm, time_scalar_min = 1e-4, 
                  probability_threshold = 0.5):
         super(RMTPP, self).__init__()
         self.device = device
-        self.num_events = num_events
+        self.num_events = info_dict['num_events']
         self.event_toggle = event_toggle
         self.limited_history_norm = limited_history_norm
         self.probability_threshold = probability_threshold
         self.zero_shift = 1e-12
 
         self.model = RMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
-                                 dropout = dropout, num_events = num_events, output_size = output_size, event_toggle = event_toggle, 
+                                 dropout = dropout, num_events = self.num_events, output_size = output_size, event_toggle = event_toggle, 
                                  limited_history_norm = limited_history_norm, time_scalar_min = time_scalar_min, device = device)
 
 
