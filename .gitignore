@@ -114,6 +114,7 @@ data/
 output*/
 raw_input/
 output/
+model/
 config/
 wandb/
 deprecated/
