@@ -1,0 +1,56 @@
+abs_dataloader_config: null
+abs_model_config: /home/stepinsilence/coderepo/workflow/config/ifib_c/syn/ifib_c.yml
+agg_update_step: 1
+alpha: 0.5
+batch_size: 128
+beta: 0.25
+cuda: false
+custom_collator: false
+custom_op: false
+d_history: 32
+d_intensity: 64
+data_path: /home/stepinsilence/coderepo/workflow/data/TPP/hawkes_1_v2
+dataloader_config: null
+dataloader_name: generic
+dataset_name: hawkes_1_v2
+dataset_type: json
+dropout: 0.0
+epoch: 8.0
+event_toggle: true
+grad_clip: 0.0
+history_module_layers: 1
+info_dict:
+  T: 153
+  a: 0.8
+  b: 1.0
+  mu: 0.2
+  num_events: 5
+  t_0: 0
+last_epoch: -1
+log: /home/stepinsilence/coderepo/workflow/log/hawkes_1_v2
+lr: 0.002
+lr_sched: true
+mlp_layers: 3
+model_config: ifib_c.yml
+model_name: ifib_c
+n_cycles: 0.5
+n_evaluation_steps: 500
+n_report_steps: 500
+n_training_steps: 10000
+n_warmup_steps: 1000
+n_worker: 0
+ngpus: 1
+no_seed: true
+nonlinear: tanh
+op_name: AdamW
+optim_config: /home/stepinsilence/coderepo/workflow/config/optimizer.yml
+pretrain: false
+probability_threshold: 0.5
+procedure: TPP
+save_mode: best
+save_model: /home/stepinsilence/coderepo/workflow/model/hawkes_1_v2
+seed: 43575
+task_category: Trainer
+trainable_parameters: 27905
+training_size: 1250
+wandb: false

@@ -1,7 +1,8 @@
 import os, torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.TPP.utils import read_json, print_args, getLogger
+from src.taskhost_utils import getLogger
+from src.TPP.utils import read_yaml, print_args
 from src.TPP.plotter_evaluation_functions import draw, spearman_and_l1, mae_and_f1, mae_e_and_f1
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
@@ -19,12 +20,7 @@ class TPPPlotter:
         '''
         Now, we use pd.DataFrame to record training records.
         '''
-        self.df_records = {
-            'Training': None,
-            'Evaluation': None,
-            'Test': None,
-            'Best': None
-        }
+        pass
 
 
     def work(self, rank, opt):
@@ -42,7 +38,7 @@ class TPPPlotter:
         else:
             raise logger.exception("Wrong input data path.")
     
-        model_param = read_json(self.opt.abs_model_config) if self.opt.abs_model_config else {}
+        model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
         if rank == 0:
             logger.info(f'The input model hyperparameters are {model_param}')

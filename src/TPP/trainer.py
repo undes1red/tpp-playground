@@ -1,12 +1,13 @@
-import os, torch
+import os, torch, yaml, io, copy
 from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.TPP.utils import print_performances, suffix, lst_add_lst, read_json, \
+from src.taskhost_utils import getLogger
+from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, \
                           lst_divide, evaluation, Metric, add_prefix_to_keys, \
-                          print_args, getLogger
+                          print_args
 from src.TPP.model import get_model
 from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
@@ -22,7 +23,7 @@ logger = getLogger(__name__)
 class TPPTrainer:
     def __init__(self):
         '''
-        Now, we use pd.DataFrame to record training records.
+        Now, we use pd.DataFrame to record training records and output them into csv files.
         '''
         self.df_records = {
             'Training': None,
@@ -34,13 +35,21 @@ class TPPTrainer:
 
     def work(self, rank, opt):
         '''
-        Store required initial information
+        The entry function for TaskHost to start the task.
+        
+        Args:
+        * rank: int
+                Which GPU should we use?
+        * opt : namespace
+                This namespace stores all parsed arguments.
         '''
+
+        # Store required initial information.
         self.opt = opt
         self.rank = rank
 
         '''
-        Host tries to check if model and log are saved and gives some hints if you don't store any models or logs.(most time you should store them)
+        We try to check if models and logs are saved and give some hints if you don't store any models or logs(most time you should store them).
         '''
         if not self.opt.log and not self.opt.save_model and rank == 0:
             logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
@@ -55,7 +64,7 @@ class TPPTrainer:
         else:
             raise logger.exception("Wrong input data path.")
     
-        model_param = read_json(self.opt.abs_model_config) if self.opt.abs_model_config else {}
+        model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
         if rank == 0:
             logger.info(f'The input model hyperparameters are {model_param}')
@@ -71,9 +80,12 @@ class TPPTrainer:
         self.opt.__dict__.update(model_param)
 
         if rank == 0:
+            trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            self.opt.trainable_parameters = trainable_parameters
+            self.opt.epoch = opt.n_training_steps/opt.training_size
             logger.info(print_args(self.opt))
-            logger.info(f'For someone who needs the number of training epoches, the number is {opt.n_training_steps/opt.training_size:5.5f}')
-            logger.info(f'The number of trainable model parameters is {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
+            logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
+            logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters}.')
     
         '''
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 
@@ -100,7 +112,7 @@ class TPPTrainer:
             os.makedirs(self.opt.save_model)
 
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
-        self.output_checkpoint_folder = 'output_' + self.folder_suffix
+        self.output_checkpoint_folder = 'model_' + self.folder_suffix
         self.log_folder = 'log_' + self.folder_suffix
         if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)) and self.rank == 0:
             os.mkdir(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
@@ -108,9 +120,18 @@ class TPPTrainer:
             os.mkdir(os.path.join(self.opt.log, self.log_folder))
 
         '''
+        Write hyperparameters into the model dir.
+        '''
+        with io.open(os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'model_card.yml'), 'w', encoding = 'utf8') as f_hyperparameters:
+            hyperparameters = copy.deepcopy(vars(self.opt))
+            del hyperparameters['device']
+            logger.debug(hyperparameters)
+            yaml.safe_dump(hyperparameters, f_hyperparameters, default_flow_style = False, allow_unicode = True)
+
+        '''
         Setting up file loggers and a wandb online logger.
         '''
-        if self.opt.log and self.rank == 0:    
+        if self.opt.log and self.rank == 0:
             if self.opt.wandb:
                 import wandb
                 wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \

@@ -18,7 +18,7 @@ def diff(per_line, shift):
 
 class generic_continuous_dataset(utils.data.Dataset):
     '''
-    Self defined dataset. The required pandas DataFrame are listed in train.py.
+    Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
     def __init__(self, data, device, property_dict, plot = False, shift = False, shift_time = False, input_norm_data = False):

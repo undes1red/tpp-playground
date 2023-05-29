@@ -11,7 +11,7 @@ def concate(per_line, item1 = np.array([]), item2 = np.array([])):
 
 class CTLSTMDataset(utils.data.Dataset):
     '''
-    Self defined dataset. The required pandas DataFrame are listed in train.py.
+    Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
 
     event_number is the number of all existing events, dummy events are not included.

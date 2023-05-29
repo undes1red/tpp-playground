@@ -1,5 +1,5 @@
 import importlib
-from src.TPP.utils import getLogger
+from src.taskhost import getLogger
 
 # We use this parameter to control model's memory usage while running event-time prediction tasks.
 # Used in FENN, FullyNN, SAHP, RHP, and THP

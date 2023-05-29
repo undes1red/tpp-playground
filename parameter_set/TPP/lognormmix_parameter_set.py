@@ -1,10 +1,10 @@
 # parameter sets of model lognormmix
 
 stackoverflow_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "ifl", \
-    "--dataloader_config", "stackoverflow/lognormmix_dl.json",
+    "--dataloader_config", "stackoverflow/lognormmix_dl.yml",
     "--dataset_name", "stackoverflow", \
     "--n_training_steps", "200000", \
     "--n_evaluation_steps", "2000", \
@@ -12,20 +12,20 @@ stackoverflow_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "40000", \
     "--model_name", "lognormmix", \
-    "--model_config", "stackoverflow/lognormmix.json",
+    "--model_config", "stackoverflow/lognormmix.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 retweet_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "ifl", \
-    "--dataloader_config", "retweet/lognormmix_dl.json",
+    "--dataloader_config", "retweet/lognormmix_dl.yml",
     "--dataset_name", "retweet", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
@@ -33,20 +33,20 @@ retweet_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "lognormmix", \
-    "--model_config", "retweet/lognormmix.json",
+    "--model_config", "retweet/lognormmix.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 mooc_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "ifl", \
-    "--dataloader_config", "mooc/lognormmix_dl.json",
+    "--dataloader_config", "mooc/lognormmix_dl.yml",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
@@ -54,20 +54,20 @@ mooc_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "lognormmix", \
-    "--model_config", "mooc/lognormmix.json",
+    "--model_config", "mooc/lognormmix.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 bookorder_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "ifl", \
-    "--dataloader_config", "bookorder/lognormmix_dl.json",
+    "--dataloader_config", "bookorder/lognormmix_dl.yml",
     "--dataset_name", "bookorder", \
     "--n_training_steps", "20000", \
     "--n_evaluation_steps", "500", \
@@ -75,20 +75,20 @@ bookorder_training_hyperparameter_list = [
     "--b", "8", \
     "--n_warmup_steps", "4000", \
     "--model_name", "lognormmix", \
-    "--model_config", "bookorder/lognormmix.json",
+    "--model_config", "bookorder/lognormmix.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 syn_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "ifl", \
-    "--dataloader_config", "syn/lognormmix_dl.json",
+    "--dataloader_config", "syn/lognormmix_dl.yml",
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
     "--n_training_steps", "10000", \
     "--n_evaluation_steps", "500", \
@@ -96,20 +96,20 @@ syn_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1000", \
     "--model_name", "lognormmix", \
-    "--model_config", "syn/lognormmix.json",
+    "--model_config", "syn/lognormmix.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 retweet_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "lognormmix", \
-    "--model_config", "retweet/lognormmix.json", \
+    "--model_config", "retweet/lognormmix.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "400000", \
@@ -119,8 +119,8 @@ retweet_plot_hyperparameter_list = [
     # "--train", \
     "--test", \
     # "--evaluation", \
-    "--used_dataloader_config", "lognormmix_dl.json", \
-    "--dataloader_config", "retweet/lognormmix_dl_plot.json", \
+    "--used_dataloader_config", "lognormmix_dl.yml", \
+    "--dataloader_config", "retweet/lognormmix_dl_plot.yml", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--resolution", "200", \
@@ -128,10 +128,10 @@ retweet_plot_hyperparameter_list = [
 ]
 
 stackoverflow_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "lognormmix", \
-    "--model_config", "stackoverflow/lognormmix.json", \
+    "--model_config", "stackoverflow/lognormmix.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "200000", \
@@ -141,8 +141,8 @@ stackoverflow_plot_hyperparameter_list = [
     # "--train", \
     "--test", \
     # "--evaluation", \
-    "--used_dataloader_config", "lognormmix_dl.json", \
-    "--dataloader_config", "mooc/lognormmix_dl_plot.json", \
+    "--used_dataloader_config", "lognormmix_dl.yml", \
+    "--dataloader_config", "mooc/lognormmix_dl_plot.yml", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--resolution", "200", \
@@ -150,10 +150,10 @@ stackoverflow_plot_hyperparameter_list = [
 ]
 
 mooc_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "lognormmix", \
-    "--model_config", "mooc/lognormmix.json", \
+    "--model_config", "mooc/lognormmix.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "400000", \
@@ -163,8 +163,8 @@ mooc_plot_hyperparameter_list = [
     # "--train", \
     "--test", \
     # "--evaluation", \
-    "--used_dataloader_config", "lognormmix_dl.json", \
-    "--dataloader_config", "mooc/lognormmix_dl_plot.json", \
+    "--used_dataloader_config", "lognormmix_dl.yml", \
+    "--dataloader_config", "mooc/lognormmix_dl_plot.yml", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--resolution", "200", \
@@ -172,10 +172,10 @@ mooc_plot_hyperparameter_list = [
 ]
 
 bookorder_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "lognormmix", \
-    "--model_config", "bookorder/lognormmix.json", \
+    "--model_config", "bookorder/lognormmix.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "8", \
     "--n_training_steps", "20000", \
@@ -185,8 +185,8 @@ bookorder_plot_hyperparameter_list = [
     # "--train", \
     "--test", \
     # "--evaluation", \
-    "--used_dataloader_config", "lognormmix_dl.json", \
-    "--dataloader_config", "bookorder/lognormmix_dl_plot.json", \
+    "--used_dataloader_config", "lognormmix_dl.yml", \
+    "--dataloader_config", "bookorder/lognormmix_dl_plot.yml", \
     # "--plot_type", ["intensity", "probability", "debug"], \
     "--plot_type", "intensity", \
     "--resolution", "200", \
@@ -194,10 +194,10 @@ bookorder_plot_hyperparameter_list = [
 ]
 
 syn_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "lognormmix", \
-    "--model_config", "syn/lognormmix.json", \
+    "--model_config", "syn/lognormmix.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
@@ -208,8 +208,8 @@ syn_plot_hyperparameter_list = [
     "--test", \
     "--evaluation", \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--used_dataloader_config", "lognormmix_dl.json", \
-    "--dataloader_config", "syn/lognormmix_dl_plot.json", \
+    "--used_dataloader_config", "lognormmix_dl.yml", \
+    "--dataloader_config", "syn/lognormmix_dl_plot.yml", \
     "--resolution", "200", \
     "--task_name", "graph"
 ]

@@ -1,9 +1,9 @@
 import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
-
+from src.taskhost_utils import getLogger
 from src.TPP.dataloader.utils import *
-from src.TPP.utils import getLogger, read_json, read_yaml
+from src.TPP.utils import read_yaml
 
 
 logger = getLogger(__name__)
@@ -18,7 +18,7 @@ def find_dataset(name, rank):
     try:
         dataloader_combo = dataloader_zoo(name)
         if rank == 0:
-            logger.info(f"Dataloader named {name} is retrieved.")
+            logger.info(f"Dataloader name: {name}")
         return dataloader_combo
     except:
         if rank == 0:
@@ -26,15 +26,24 @@ def find_dataset(name, rank):
 
 
 def prepare_dataloaders(opt, rank = 0):
+    '''
+    Creates the required dataloader against custom dataloader settings.
+
+    Args:
+    * opt:  namespace
+            This namespace stores all parsed arguments.
+    * rank: int
+            Says which GPU we should use.
+    '''
     file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
 
     if rank == 0:
         if len(file_names) == 0:
-            logger.exception(f'No available dataset file in {opt.data_path}! Please check your bootstrap script.')
+            logger.exception(f'No available dataset file in {opt.data_path}!')
         else:
-            logger.info(f'We are going to read {len(file_names)} files in {opt.data_path}. They are {opt.dataset_type} files. Is that expected?')
+            logger.info(f'We are going to read {len(file_names)} files in {opt.data_path}. They are all {opt.dataset_type} files. Is that right?')
     
-    dataloader_config_dict = read_json(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
+    dataloader_config_dict = read_yaml(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
 
     if rank == 0:
         if opt.abs_dataloader_config is None:
@@ -58,14 +67,6 @@ def prepare_dataloaders(opt, rank = 0):
     test_dataset = dataset(data_raw['test'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
 
     data_collator = getattr(train_dataset, '__call__')
-
-    # try:
-    #     data_collator = getattr(train_dataset, '__call__')
-    # except:
-    #     '''
-    #     This data collator is for data evaluation.
-    #     '''
-    #     data_collator = move_data_to_the_correct_device(device = opt.device)
 
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()

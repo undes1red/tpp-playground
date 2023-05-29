@@ -35,12 +35,7 @@ def print_performances(logger, procedure, lr = None, num_format = None, **kwargs
     logger.info(info.format_map(kwargs))
 
 
-# Read and convert a json file into a dict object.
-def read_json(json_path):
-    with open(json_path, 'r') as f:
-        a = json.load(f)
-    return a
-
+# Read and convert a YAML file into a dict object.
 def read_yaml(yaml_path):
     a = None
     with open(yaml_path, 'r') as f:
@@ -54,11 +49,22 @@ def read_yaml(yaml_path):
 
 # Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
+    shortcut_dict = {
+        'model_name': '',
+        'lr': 'lr',
+        'batch_size': 'bs',
+        'n_training_steps': 'nts',
+        'dataloader_config': '',
+        'model_config': ''
+    }
+    
     output = []
     for item in args:
-        output.append(getattr(opt, item))
+        hyperparameter = getattr(opt, item)
+        translated_suffix = shortcut_dict[item] + str(hyperparameter)
+        output.append(translated_suffix)
     
-    output = "_".join(map(str, output))
+    output = "_".join(output)
     
     return output
 
@@ -139,102 +145,3 @@ def print_args(opt):
         output += str(key) + ': ' + str(value) + '\n'
 
     return output
-
-
-'''
-Logger settings
-'''
-
-'''
-def getEventLogger(name, root):
-    logger = logging.getLogger(name)
-    if root:
-        logger.parent = None
-        logger.root = logger
-
-    logger.setLevel(logging.DEBUG)
-    if (logger.hasHandlers()):
-        logger.handlers.clear()
-    # create console handler and set level to debug
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d]: %(message)s', datefmt = '%Y-%m-%d %H:%M:%S')
-    # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    # add formatter to ch
-    ch.setFormatter(formatter)
-    # add ch to logger
-    logger.addHandler(ch)
-
-    return logger
-
-
-def getFileLogger(name, file, root):
-    logger = logging.getLogger(name)
-    if root:
-        logger.parent = None
-        logger.root = logger
-
-    logger.setLevel(logging.DEBUG)
-    if (logger.hasHandlers()):
-        logger.handlers.clear()
-    # create console handler and set level to debug
-    ch = logging.FileHandler(file, mode = 'w')
-    ch.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(message)s')
-    # add formatter to ch
-    ch.setFormatter(formatter)
-    # add ch to logger
-    logger.addHandler(ch)
-
-    return logger
-
-
-def getLogger(name = None, file = None, root = True):
-    \'''
-    Get normal loggers or file loggers.
-
-    Args:
-    name: The name of a generated logger
-    file: print all logs into the file if set.
-    \'''
-    if file:
-        return getFileLogger(name, file, root)
-    else:
-        return getEventLogger(name, root)
-'''
-
-def getEventLogger(name, root):
-    logger = logging.getLogger(name)
-    if root:
-        logger.parent = None
-        logger.root = logger
-
-    logger.setLevel(logging.DEBUG)
-    if (logger.hasHandlers()):
-        logger.handlers.clear()
-    # create console handler and set level to debug
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    # create formatter
-    formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d]: %(message)s', datefmt = '%Y-%m-%d %H:%M:%S')
-    # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    # add formatter to ch
-    ch.setFormatter(formatter)
-    # add ch to logger
-    logger.addHandler(ch)
-
-    return logger
-
-
-def getLogger(name = None, root = True):
-    '''
-    Get normal loggers or file loggers.
-
-    Args:
-    name: The name of a generated logger
-    file: print all logs into the file if set.
-    '''
-
-    return getEventLogger(name, root)

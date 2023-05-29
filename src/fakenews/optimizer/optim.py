@@ -21,7 +21,7 @@ class ScheduledOptim():
             if not hasattr(optim, opt.op_name):
                 raise logger.exception(f"The given optimizer {opt.op_name} is not found. Maybe it is a custom optimizer. Please set --custom_op and try again.")
     
-        param = read_json(opt.optim_json)
+        param = read_json(opt.optim_config)
         self._model = None
 
         if rank == 0:

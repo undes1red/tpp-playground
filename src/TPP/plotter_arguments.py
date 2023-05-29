@@ -79,7 +79,7 @@ def Plotter_postprocess(opt, root_path):
 
     # locate where checkpoints are stored.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
-    folder_suffix = 'output_' + model_hyperparameters
+    folder_suffix = 'model_' + model_hyperparameters
     opt.checkpoint_folder = os.path.join(root_path, 'model', opt.dataset_name, folder_suffix)
 
     # where figures, records are stored.

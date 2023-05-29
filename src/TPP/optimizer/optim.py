@@ -1,7 +1,8 @@
 '''A wrapper for a scheduled optimizer '''
 
 import math
-from src.TPP.utils import mean, read_json, getLogger
+from src.taskhost_utils import getLogger
+from src.TPP.utils import mean, read_yaml
 import torch.optim as optim
 
 logger = getLogger(__name__)
@@ -28,10 +29,7 @@ class ScheduledOptim():
         '''
         Read in optimizer configurations.
         '''
-        param = read_json(opt.optim_json)
-        
-        # Will be removed
-        # self._model = None
+        param = read_yaml(opt.optim_config)
 
         if rank == 0:
             logger.info(f'The additional input optimizer hyperparameters are {param}')

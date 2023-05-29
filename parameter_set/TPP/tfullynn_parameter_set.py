@@ -1,10 +1,10 @@
 # parameter sets of model tfullynn
 
 stackoverflow_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "stackoverflow/tfullynn_dl.json",
+    "--dataloader_config", "stackoverflow/tfullynn_dl.yml",
     "--dataset_name", "stackoverflow", \
     "--n_training_steps", "200000", \
     "--n_evaluation_steps", "2000", \
@@ -12,20 +12,20 @@ stackoverflow_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "40000", \
     "--model_name", "tfullynn", \
-    "--model_config", "stackoverflow/tfullynn.json",
+    "--model_config", "stackoverflow/tfullynn.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 retweet_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "retweet/tfullynn_dl.json",
+    "--dataloader_config", "retweet/tfullynn_dl.yml",
     "--dataset_name", "retweet", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
@@ -33,20 +33,20 @@ retweet_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "tfullynn", \
-    "--model_config", "retweet/tfullynn.json",
+    "--model_config", "retweet/tfullynn.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 mooc_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "mooc/tfullynn_dl.json",
+    "--dataloader_config", "mooc/tfullynn_dl.yml",
     "--dataset_name", "mooc", \
     "--n_training_steps", "400000", \
     "--n_evaluation_steps", "4000", \
@@ -54,20 +54,20 @@ mooc_training_hyperparameter_list = [
     "--b", "32", \
     "--n_warmup_steps", "80000", \
     "--model_name", "tfullynn", \
-    "--model_config", "mooc/tfullynn.json",
+    "--model_config", "mooc/tfullynn.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 bookorder_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
-    "--dataloader_config", "bookorder/tfullynn_dl.json",
+    "--dataloader_config", "bookorder/tfullynn_dl.yml",
     "--dataset_name", "bookorder", \
     "--n_training_steps", "20000", \
     "--n_evaluation_steps", "100", \
@@ -75,17 +75,17 @@ bookorder_training_hyperparameter_list = [
     "--b", "8", \
     "--n_warmup_steps", "4000", \
     "--model_name", "tfullynn", \
-    "--model_config", "bookorder/tfullynn.json",
+    "--model_config", "bookorder/tfullynn.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 syn_training_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--no_seed", \
     "--dataloader_name", "generic", \
     "--dataset_name", ["hawkes_1_v2", "hawkes_2_v2", "poisson_v2", "self_correct_v2", "stationary_renewal_v2"], \
@@ -95,20 +95,20 @@ syn_training_hyperparameter_list = [
     "--b", "128", \
     "--n_warmup_steps", "1000", \
     "--model_name", "tfullynn", \
-    "--model_config", "syn/tfullynn.json",
+    "--model_config", "syn/tfullynn.yml",
     "--lr", "0.002", \
     "--save_mode", "best", \
     "--lr_sched", \
     "--op_name", "AdamW", \
-    "--optim_json", "optimizer.json", \
+    "--optim_config", "optimizer.yml", \
     "--n_cycles", "0.5",
 ]
 
 retweet_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "tfullynn", \
-    "--model_config", "retweet/tfullynn.json", \
+    "--model_config", "retweet/tfullynn.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "100000", \
@@ -118,18 +118,18 @@ retweet_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--used_dataloader_config", "tfullynn_dl.yml", \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "retweet/plot.json", \
+    "--dataloader_config", "retweet/plot.yml", \
     "--resolution", "200", \
     "--task_name", ['graph']
 ]
 
 stackoverflow_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "tfullynn", \
-    "--model_config", "stackoverflow/tfullynn.json", \
+    "--model_config", "stackoverflow/tfullynn.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "50000", \
@@ -139,18 +139,18 @@ stackoverflow_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--used_dataloader_config", "tfullynn_dl.yml", \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "stackoverflow/plot.json", \
+    "--dataloader_config", "stackoverflow/plot.yml", \
     "--resolution", "200", \
     "--task_name", ['graph']
 ]
 
 mooc_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "tfullynn", \
-    "--model_config", "mooc/tfullynn.json", \
+    "--model_config", "mooc/tfullynn.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "32", \
     "--n_training_steps", "400000", \
@@ -160,18 +160,18 @@ mooc_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--used_dataloader_config", "tfullynn_dl.yml", \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "mooc/tfullynn_dl.json", \
+    "--dataloader_config", "mooc/tfullynn_dl.yml", \
     "--resolution", "200", \
     "--task_name", ['graph']
 ]
 
 bookorder_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "tfullynn", \
-    "--model_config", "bookorder/tfullynn.json", \
+    "--model_config", "bookorder/tfullynn.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "8", \
     "--n_training_steps", "20000", \
@@ -181,18 +181,18 @@ bookorder_plot_hyperparameter_list = [
     "--train", \
     "--test", \
     "--evaluation", \
-    "--used_dataloader_config", "tfullynn_dl.json", \
+    "--used_dataloader_config", "tfullynn_dl.yml", \
     "--plot_type", ["intensity", "probability", "debug"], \
-    "--dataloader_config", "bookorder/plot.json", \
+    "--dataloader_config", "bookorder/plot.yml", \
     "--resolution", "200", \
     "--task_name", ['graph']
 ]
 
 syn_plot_hyperparameter_list = [
-    "train.py", \
+    "start.py", \
     "--seed", "32", \
     "--model_name", "tfullynn", \
-    "--model_config", "syn/tfullynn.json", \
+    "--model_config", "syn/tfullynn.yml", \
     "--lr", "0.002", \
     "--used_batch_size", "128", \
     "--n_training_steps", "10000", \
@@ -204,7 +204,7 @@ syn_plot_hyperparameter_list = [
     "--evaluation", \
     # "--plot_type", ['intensity', 'integral', 'probability', 'debug'],
     "--plot_type", ['intensity'], \
-    "--dataloader_config", "syn/plot.json", \
+    "--dataloader_config", "syn/plot.yml", \
     "--resolution", "200", \
     "--task_name", ['spearman_and_l1']
     # "--task_name", ['graph', 'spearman_and_f1', 'mae_and_f1', 'mae_e_and_f1']

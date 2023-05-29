@@ -6,7 +6,7 @@ import pickle as pkl
 
 from einops import pack
 from tqdm import tqdm
-from src.TPP.utils import getLogger
+from src.taskhost_utils import getLogger
 
 
 logger = getLogger(name = __file__)

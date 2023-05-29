@@ -7,7 +7,7 @@ import numpy as np
 
 class CNFDataset(utils.data.Dataset):
     '''
-    Self defined dataset. The required pandas DataFrame are listed in train.py.
+    Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
 

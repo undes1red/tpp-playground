@@ -16,7 +16,7 @@ def concate_shift(per_line, item1, item2):
 
 class IflDataset(utils.data.Dataset):
     '''
-    Self defined dataset. The required pandas DataFrame are listed in train.py.
+    Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
 

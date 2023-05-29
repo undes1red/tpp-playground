@@ -41,7 +41,7 @@ class TPPTrainerArguments(BasicArguments):
                             help="The path of json file that contains model hyperparameters.")
         
         # Optimizer-related hyperparameters
-        self.parser.add_argument('--optim_json', type=str, default=None,
+        self.parser.add_argument('--optim_config', type=str, default=None,
                             help='The path of json file that contains optimizer and scheduler settings.')
         self.parser.add_argument('--custom_op', action='store_true', 
                             help='Set it to true if you want to use your own optimizer or that from third-party packages.')
@@ -83,7 +83,7 @@ def Trainer_postprocess(opt, root_path):
     opt.save_model = os.path.join(root_path, 'model', opt.dataset_name)
     opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
-    opt.optim_json = os.path.join(root_path, 'config', opt.optim_json)
+    opt.optim_config = os.path.join(root_path, 'config', opt.optim_config)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
 
