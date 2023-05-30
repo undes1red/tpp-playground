@@ -13,17 +13,13 @@ from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
 
 
-'''
-Detailed training procedure after all required data are ready.
-Define the logger.
-'''
 logger = getLogger(__name__)
 
 
 class TPPTrainer:
     def __init__(self):
         '''
-        Now, we use pd.DataFrame to record training records and output them into csv files.
+        Now, we use pd.DataFrame to record training records.
         '''
         self.df_records = {
             'Training': None,
@@ -252,16 +248,16 @@ class TPPTrainer:
         if self.opt.save_model:
             if self.opt.save_mode == 'all':
                 model_name = os.path.join(
-                        self.opt.save_model, 'output_' + self.folder_suffix, (f'checkpoint_training_step_{current_step}' + '.chkpt'))
+                        self.opt.save_model, 'model_' + self.folder_suffix, (f'checkpoint_training_step_{current_step}' + '.chkpt'))
                 torch.save(checkpoint, model_name)
                 logger.warning(f'The checkpoint file at step {current_step} has been stored.')
             elif self.opt.save_mode == 'best':
-                model_name = os.path.join(self.opt.save_model, 'output_' + self.folder_suffix, 'checkpoint.chkpt')
+                model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, 'checkpoint.chkpt')
                 metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
                 assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
                 if current_step > self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
                     torch.save(checkpoint, model_name)
-                    logger.warning(f'The checkpoint file has been updated at step {current_step}.')
+                    logger.warning(f'----> We have updated the model checkpoint at step {current_step}. <----')
                     self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
                                                                 **dict(zip(metric_names, metric_values)))
 

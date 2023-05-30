@@ -4,10 +4,10 @@ from src.TPP.utils import restore_dataset_name
 from operator import itemgetter
 
 
-'''
-Intensity function drawing utils
-'''
 def expand_true_intensity(time, intensity, opt):
+    '''
+    Entry function of calculating the true intensity functions.
+    '''
     try:
         return true_intensity_dict[restore_dataset_name(opt.dataset_name)](time, intensity, opt, device = opt.device)
                                                                                # [batch_size, seq_len, resolution]
@@ -15,10 +15,10 @@ def expand_true_intensity(time, intensity, opt):
         return [None] * intensity.shape[0]                                     # [batch_size]
 
 
-'''
-Probability distribution drawing utils
-'''
 def expand_true_probability(time, intensity, opt):
+    '''
+    Entry function of calculating the true probability distribution.
+    '''
     try:
         functions = true_probability_dict[restore_dataset_name(opt.dataset_name)]
     except:

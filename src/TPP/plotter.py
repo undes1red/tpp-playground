@@ -64,7 +64,6 @@ class TPPPlotter:
         if rank == 0:
             model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
             model_state_dict = model_raw['model']
-            model_setting = model_raw['settings']
             model.load_state_dict(model_state_dict)
             logger.info(print_args(self.opt))
             total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

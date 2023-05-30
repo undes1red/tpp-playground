@@ -2,7 +2,7 @@ import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
 from src.taskhost_utils import getLogger
-from src.TPP.dataloader.utils import *
+from src.TPP.dataloader.utils import seed_worker
 from src.TPP.utils import read_yaml
 
 
@@ -66,7 +66,9 @@ def prepare_dataloaders(opt, rank = 0):
     evaluate_dataset = dataset(data_raw['evaluate'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
     test_dataset = dataset(data_raw['test'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
 
-    data_collator = getattr(train_dataset, '__call__')
+    train_data_collator = getattr(train_dataset, '__call__')
+    evaluate_data_collator = getattr(evaluate_dataset, '__call__')
+    test_data_collator = getattr(test_dataset, '__call__')
 
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()
@@ -74,15 +76,15 @@ def prepare_dataloaders(opt, rank = 0):
 
     if not hasattr(opt, 'train') or (hasattr(opt, 'train') and opt.train):
         train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.batch_size, \
-            collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
     if not hasattr(opt, 'evaluation') or (hasattr(opt, 'evaluation') and opt.evaluation):
         evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.batch_size, \
-            collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = evaluate_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
     if not hasattr(opt, 'test') or (hasattr(opt, 'test') and opt.test):
         test_iterator = DataLoader(test_dataset, batch_size=opt.batch_size, \
-            collate_fn = data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = test_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
 
     return train_iterator, evaluation_iterator, test_iterator

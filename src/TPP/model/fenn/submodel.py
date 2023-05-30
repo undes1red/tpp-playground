@@ -5,41 +5,10 @@ import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.fenn.nonneg import NonNegLinear
-from src.TPP.model.fenn.activate import *
 from src.TPP.model.utils import L1_distance_across_events
 
 
-TA = {
-    # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
-    # That is to say, each scalar in the output vector is bigger than log(2) if all hidden layer weights only
-    # have positive numbers like what FullyNN does.
-    # We have vanilla version and symmetrical version of softplus
-    'softplus': nn.Softplus,
-    'sym_softplus': sym_softplus,
-
-    # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
-    # analysis, we argue that this feature is required by approaches like FullyNN to fit long-tail functions like Hawkes intensity function.
-    'tanh': nn.Tanh,
-    # Yet another function that has small gradients when it has big inputs. But as the log function is not bounded above, the hard integral bound introduced
-    # by tanh can be alleviated.
-    'log': sym_Log,
-    # This activation can perfectly show why FullyNN needs tanh to attain a trade-off between intensity function regression ability and extrapolation 
-    'identity': nn.Identity,
-    # Might be the redeemer, but I'm not sure.
-    'ploy': sym_Polynomial
-}
-
 class FENN(nn.Module):
-    '''
-    This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
-    Hope it can work properly.
-
-    Currently, normalization is disabled.
-    Update: 2022-01-19: Now you can use data normalization via synthetic dataloader.
-
-    Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
-    '''
-
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, nonlinear, event_toggle, zero_shift, device):
         super(FENN, self).__init__()
@@ -88,14 +57,14 @@ class FENN(nn.Module):
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
         ])
-        self.layer_activation = TA[nonlinear]()
+        self.layer_activation = nn.Tanh()
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.nonneg_activation = nn.Softplus()
 
 
     def forward(self, events_history, time_history, time_next, mean, var):
         '''
-        The forwardpropagation function of FullyNN, triggered by pytorch.
+        The forwardpropagation function of FENN, triggered by pytorch.
 
         Args:
         * events_history  type: torch.tensor shape: [batch_size, seq_len]

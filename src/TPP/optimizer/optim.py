@@ -69,13 +69,6 @@ class ScheduledOptim():
             lr.append(items['lr'])
 
         return mean(lr)
-
-    # Will be removed
-    # def get_model(self):
-    #     if self._model == None:
-    #         raise Exception('Only with mixed precision training enabled you can get model from optimizer.')
-    #     else:
-    #         return self._model
     
 
     def state_dict(self):

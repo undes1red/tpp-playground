@@ -1,4 +1,4 @@
-import os
+import os, argparse
 from src.arguments import BasicArguments
 
 
@@ -8,24 +8,22 @@ class TPPTrainerArguments(BasicArguments):
 
         self.root_path = root_path        
         # Input data
-        self.parser.add_argument('--dataset_name', type=str, default=None, help='Feeding in dataset name. All datasets should be placed in root/data/input')
+        self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/${main_procedure_name}.')
         self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
-        self.parser.add_argument('--dataloader_name', default=None, help='Input dataloader class name.')
-        self.parser.add_argument('--dataloader_config', type=str, default=None, help='The name of the dataloader config file. This file should be in directory config/$\{model_name\}.')
-        self.parser.add_argument('--custom_collator', action='store_true',\
-                help='If your datasets are special, and the default collator doesn\'t meet your requirements, you can write your own collate_fn() as a method in the dataset class and use it by toggling this argument to True.')
+        self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
+        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
 
         # Training procedure related hyperparameters
-        self.parser.add_argument('--n_training_steps', type=int, default=10000, help='The number of training steps.')
-        self.parser.add_argument('--n_evaluation_steps', type=int, default=200, help='The number of steps that follows a model evaluation.')
-        self.parser.add_argument('--n_report_steps', type = int, default=200, help='After a given number of steps, report the current model training status.')
+        self.parser.add_argument('--n_training_steps', type=int, default=10000, help='Training steps used for training the model.')
+        self.parser.add_argument('--n_evaluation_steps', type=int, default=200, help='Evaluate the model on evaluation and test datasets per {n_evaluation_steps} steps.')
+        self.parser.add_argument('--n_report_steps', type = int, default=200, help='Report the training metrics per {n_report_steps} steps.')
         self.parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
                                                                             agg_update_step * n_training_steps')
         self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
-                            help='The number of warmup steps. Models during warmup won\'t be stored.')
+                            help='The number of warmup steps. We won\'t store any checkpoints during warmup.')
 
         # wandb support
-        self.parser.add_argument('--wandb', action='store_true', help='Use wandb to visualize the training result.')
+        self.parser.add_argument('--wandb', action='store_true', help='Use wandb to record and visualize the training procedure.')
 
         # Model save and log management
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
@@ -38,11 +36,11 @@ class TPPTrainerArguments(BasicArguments):
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
         self.parser.add_argument('--model_config', type=str, default=None,
-                            help="The path of json file that contains model hyperparameters.")
+                            help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{model_name}/{dataset_name}/{model_config}.")
         
         # Optimizer-related hyperparameters
         self.parser.add_argument('--optim_config', type=str, default=None,
-                            help='The path of json file that contains optimizer and scheduler settings.')
+                            help='The config file that contains optimizer and scheduler settings.')
         self.parser.add_argument('--custom_op', action='store_true', 
                             help='Set it to true if you want to use your own optimizer or that from third-party packages.')
         self.parser.add_argument('--op_name', type=str, default='AdamW', 
@@ -56,9 +54,9 @@ class TPPTrainerArguments(BasicArguments):
 
         # self identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
-                            help='Used as an identifier. DO NOT USE IT IN YOUR BOOTSTRAP SCRIPT.')
+                            help=argparse.SUPPRESS)
         self.parser.add_argument('--task_category', type = str, default = 'Trainer',
-                            help='Used as an identifier. DO NOT USE IT IN YOUR BOOTSTRAP SCRIPT.')
+                            help=argparse.SUPPRESS)
 
 
 '''

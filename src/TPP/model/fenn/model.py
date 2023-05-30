@@ -10,15 +10,12 @@ from src.TPP.model.utils import *
 from src.TPP.model.fenn.plot import *
 
 
-
 class FENNModel(BasicModule):
     '''
-    The original FullyNN model with dedicated marker prediction module.
-    As the time distribution p^*(t) and p^*(m) are independent, only function time_event_prediction() works while
-    event_time_prediction() is unimplemented.
+    The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \lambda^*(m, t).
 
-    This FullyNN employs RNN modules as the history encoder. One should use TFullyNN if they want to evaluate FullyNN's performance
-    against Transformer history encoders.
+    However, as FENN also learns a unnormalized probability distribution, the mark and time prediction performance might not be 
+    better than FullyNN.
     '''
     def __init__(self, d_history,
                  d_intensity,
@@ -32,12 +29,15 @@ class FENNModel(BasicModule):
                  history_module = 'LSTM',
                  event_toggle = False,
                  zero_shift = False):
+        '''
+        This function creates a FENN model.
+        '''
         super(FENNModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = info_dict['num_events']
         self.event_toggle = event_toggle
-        self.zero_shift_factor = 1e-12
+        self.zero_offset = 1e-12
 
         self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
@@ -47,7 +47,7 @@ class FENNModel(BasicModule):
 
     def divide_history_and_next(self, input):
         '''
-        Extract the history and prediction sequences from the original output
+        Extract the history and prediction sequences from the input sequence.
 
         Args:
         * input  type: torch.tensor shape: [batch_size, seq_len + 1]
@@ -97,16 +97,15 @@ class FENNModel(BasicModule):
 
     def train_procedure(self, input_time, input_events, mask, mean, var):
         '''
-        The forwardpropagation function of the FullyNNModel, the wrapper of FullyNN with lots of useful
-        utilities.
+        FENNModel's forwardpropagation function when training, a wrapper of FENN with lots of useful utilities.
         
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The value of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
+                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The value of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}}
+                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}}
         * the_number_of_events  type: int shape: N/A
-                                The number of legit predicted events.
+                                The number of legit events.
         '''
 
         self.train()
@@ -140,11 +139,11 @@ class FENNModel(BasicModule):
 
         '''
         Calculate the event loss, macro-F1, and other possible metrics measuring event prediction accuracy.
-        This part is only available when event_toggle = True
+        We calculate event loss only when event_toggle = True
         '''
         events_loss = torch.tensor(0., dtype = torch.float32)
         if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_shift_factor)
+            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_offset)
                                                                                # [batch_size, seq_len, num_events]
             events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
@@ -167,16 +166,19 @@ class FENNModel(BasicModule):
 
     def evaluate_procedure(self, input_time, input_events, mask, mean, var):
         '''
-        The forwardpropagation function of the FullyNNModel, the wrapper of FullyNN with lots of useful
-        utilities, with evaluation enabled.
+        FENNModel's forwardpropagation function when training, a wrapper of FENN with lots of useful utilities.
 
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The value of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
+                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The value of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}}
+                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}} at each predicted time \(t_p\).
+        * mae                   type: torch.tensor shape: [batch_size, seq_len]
+                                Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
+        * f1                    type: int shape: N/A
+                                macro-F1 value between events predicted at \(t_p\) and the ground truths.
         * the_number_of_events  type: int shape: N/A
-                                The number of legit predicted events.
+                                The number of legit events.
         '''
 
         self.eval()
@@ -235,7 +237,7 @@ class FENNModel(BasicModule):
         events_loss = torch.tensor(0., dtype = torch.float32)
         f1 = 0
         if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event_from_tl_to_pred_time + self.zero_shift_factor)
+            probability_for_each_event = torch.log(intensity_for_each_event_from_tl_to_pred_time + self.zero_offset)
                                                                                # [batch_size, seq_len, num_events]
             events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
@@ -268,7 +270,7 @@ class FENNModel(BasicModule):
         * intensity           type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
                               intensity values at $ t_i $
         * intensity_integral  type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
-                              intensity integral from $ t_{i - 1} $ to $ t_{i} $
+                              intensity integral from $ t_{i - 1} $ to $ t_{i} $(t_0 = 0).
         * events_next:        type: torch.tensor shape: [batch_size, seq_len]
                               The mark of the events that we need to predict.
         * mask_next:          type: torch.tensor shape: [batch_size, seq_len]
@@ -282,17 +284,16 @@ class FENNModel(BasicModule):
         if self.event_toggle:
             intensity_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-            log_intensity = torch.log(intensity + self.zero_shift_factor) * intensity_mask
+            log_intensity = torch.log(intensity + self.zero_offset) * intensity_mask
             log_intensity = reduce(log_intensity, '... ne -> ...', 'sum')      # [batch_size, seq_len]
             intensity_integral = reduce(intensity_integral, '... ne -> ...', 'sum')
                                                                                # [batch_size, seq_len]
             nll_p = -log_intensity + intensity_integral                        # [batch_size, seq_len]
         else:
-            log_intensity = torch.log(intensity + self.zero_shift_factor)      # [batch_size, seq_len]
+            log_intensity = torch.log(intensity + self.zero_offset)      # [batch_size, seq_len]
             nll_p = -log_intensity + intensity_integral                        # [batch_size, seq_len]
     
         loss = nll_p * mask_next
-        # loss = torch.clamp(loss, max = 15)
         loss = torch.sum(loss)
 
         return loss
@@ -300,7 +301,27 @@ class FENNModel(BasicModule):
 
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         '''
+        Called by get_mae_and_f1(), this function calculates the MAE and macro-F1 of one minibatch.
 
+        Args:
+        * events_history        type: torch.tensor shape: [batch_size, seq_len]
+                                The event history \mathcal{H}_{t_l}. We use these history info and time history for \(\lambda^*(m, t)\) and \(\Lambda^*(m, t)\).
+        * time_history          type: torch.tensor shape: [batch_size, seq_len]
+
+        * events_next           type: torch.tensor shape: [batch_size, seq_len]
+
+        * time_next             type: torch.tensor shape: [batch_size, seq_len]
+
+        * mask_next             type: torch.tensor shape: [batch_size, seq_len]
+
+        * mean
+        * var                   type: int shape: N/A
+
+        Outputs:
+        * mae                   type: torch.tensor shape: [batch_size, seq_len]
+                                Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
+        * f1                    type: int shape: N/A
+                                macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
         self.eval()
 
@@ -335,7 +356,7 @@ class FENNModel(BasicModule):
         '''
         f1 = 0
         if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_shift_factor)
+            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_offset)
                                                                                # [batch_size, seq_len, num_events]
             events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]

@@ -3,7 +3,6 @@ import torch.utils as utils
 import os
 import pandas as pd
 import numpy as np
-from ..utils import move_data_to_the_correct_device
 
 
 def concate(per_line, item1 = np.array([]), item2 = np.array([])):
@@ -103,9 +102,6 @@ class CTLSTMDataset(utils.data.Dataset):
         
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
-        if self.plot:
-            move = move_data_to_the_correct_device(device = self.device)
-            padded_data = move.move_to_device(padded_data)
         
         return padded_data
 

@@ -2,7 +2,6 @@ import torch.utils as utils
 import os
 import pandas as pd
 import numpy as np
-from src.TPP.dataloader.utils import move_data_to_the_correct_device
 
 
 def insert(per_line, number):
@@ -109,9 +108,6 @@ class generic_dataset(utils.data.Dataset):
         
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
-        if self.plot:
-            move = move_data_to_the_correct_device(device = self.device)
-            padded_data = move.move_to_device(padded_data)
         
         return padded_data, (self.mean, self.var)
 

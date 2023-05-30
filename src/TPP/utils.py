@@ -1,5 +1,5 @@
 # Several extensive operations for python list.
-import math, json, logging, yaml
+import math, yaml
 
 from tqdm import tqdm
 from functools import reduce
@@ -53,6 +53,7 @@ def suffix(opt, *args):
         'model_name': '',
         'lr': 'lr',
         'batch_size': 'bs',
+        'used_batch_size': 'bs',
         'n_training_steps': 'nts',
         'dataloader_config': '',
         'model_config': ''

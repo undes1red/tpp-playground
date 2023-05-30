@@ -69,6 +69,12 @@ class TaskHost:
             logger.warning('You expect cuda acceleration but cuda is unavailable in this machine. Please check your cuda configuration and make sure that you have installed pytorch with cuda support.')
             logger.warning('We use cpu now.')
             self.opt.cuda = False
+        else:
+            logger.warning('We use cuda to speed up model training!')
+            logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                logger.info('{} \t Memory: {:.2f}GiB'.format(props.name, props.total_memory / (1024**3)))
 
         # Prepare for multithreading
         os.environ['MASTER_ADDR'] = 'localhost'
@@ -120,15 +126,6 @@ class TaskHost:
         Report device properties.
         '''
         self.opt.device = torch.device(f'cuda:{rank:d}' if self.opt.cuda else 'cpu')
-    
-        if rank == 0:
-            if self.opt.device.type == 'cuda':
-                logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
-                for i in range(torch.cuda.device_count()):
-                    props = torch.cuda.get_device_properties(i)
-                    logger.info('{} \t Memory: {:.2f}GiB'.format(props.name, props.total_memory / (1024**3)))
-            else:
-                logger.info('Using device {}'.format(self.opt.device))
     
         try:
             self.worker.work(rank = rank, opt = self.opt)
