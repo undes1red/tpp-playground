@@ -362,31 +362,109 @@ def plot_debug(data, timestamp, opt):
         plot_instruction[f'probability_sum_{idx}'] = sub_plot_instruction
     
     '''
-    We only select one sequence to show the distribution of sampled time.
+    Part 7: expand intensity and expand integral; on a sampled event sequence.
+    Required plots: lineplot and scatterplot
     '''
-    sampled_time = data['sampled_time_p_t']                                    # [batch_size, the_number_of_samples]
-    probabilty_input = data['sampled_probabilty_input'].squeeze()              # [the_number_of_samples]
-    sampled_time, probabilty_input = move_from_tensor_to_ndarray(sampled_time, probabilty_input)
-                                                                               # [batch_size, the_number_of_samples]
-    for idx, sampled_time_per_batch in enumerate(sampled_time):
-        dict_sampled_time = {
-            'x': probabilty_input,
-            'Sampled Time': sampled_time_per_batch
-        }
+    sampled_events_next = data['sampled_events_next']                          # [batch_size, seq_len]
+    sampled_time_next = data['sampled_time_next']                              # [batch_size, seq_len]
+    sampled_mask_next = data['sampled_mask_next']                              # [batch_size, seq_len]
+    sampled_expand_subprobability = data['sampled_subprobability']             # [batch_size, seq_len, resolution, num_events]
+    sampled_expand_timestamp = data['sampled_timestamp']                       # [batch_size, seq_len, resolution]
 
-        df_sampled_time = pd.DataFrame.from_dict(dict_sampled_time)
+    if opt.event_toggle:
+        sampled_expand_probability = sampled_expand_subprobability.sum(dim = -1)
+                                                                               # [batch_size, seq_len, resolution]
 
-        sub_plot_instruction = [
+    packed_data = zip(*move_from_tensor_to_ndarray(sampled_events_next, sampled_time_next, sampled_mask_next, sampled_expand_probability, \
+                                                   sampled_expand_subprobability, sampled_expand_timestamp))
+    for idx, (sampled_events_next_per_seq, sampled_time_next_per_seq, sampled_mask_next_per_seq, sampled_expand_probability_per_seq, \
+              sampled_expand_subprobability_per_seq, sampled_timestamp_per_seq) in enumerate(packed_data):
+        seq_len = sampled_mask_next_per_seq.sum()
+
+        df_event = pd.DataFrame.from_dict(
+                {'Time': sampled_time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(sampled_events_next_per_seq), \
+                 'Event': [f'Event {item}' for item in sampled_events_next_per_seq]}
+        )
+
+        event_list = [f'Event {i}' for i in range(num_events)]
+    
+        df_subprobability = pd.DataFrame.from_dict(
+                {'Time': sampled_timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
+                 'Probability': sampled_expand_subprobability_per_seq[:seq_len, :, :].flatten(), 
+                 'Event': event_list * (seq_len * resolution)}
+            )
+
+        df_probability = pd.DataFrame.from_dict(
+                {'Time': sampled_timestamp_per_seq.flatten().cumsum(axis = -1), 
+                 'Probability': sampled_expand_probability_per_seq[:seq_len, :].flatten()}
+            )
+
+        df_probability_plot = pd.melt(df_probability, 'Time')
+        df_probability_plot.columns = ['Time', ' ', 'Probability']
+        
+        '''
+        Probability distribution of the sampled sequence.
+        '''
+        subplot_instruction = [
             {
-                'plot_type': 'kdeplot',
+                'plot_type': 'lineplot',
+                'length': large_graph_length,
+                'height': large_graph_height,
                 'kwargs':
                 {
-                    'x': 'Sampled Time',
-                    'data': df_sampled_time,
-                    'log_scale': True
+                    'x':'Time',
+                    'y': 'Probability',
+                    'hue': ' ',
+                    'data': df_probability_plot
+                }
+            },
+            {
+                'plot_type': 'scatterplot',
+                'length': large_graph_length,
+                'height': large_graph_height,
+                'kwargs':
+                {
+                    'x': 'Time',
+                    'y': 'Point',
+                    'data': df_event,
+                    'palette': 'pastel',
+                    'hue': 'Event'
                 }
             }
         ]
-        plot_instruction[f'sample_{idx}'] = sub_plot_instruction
+        plot_instruction[f'sampled_probability_{idx}'] = subplot_instruction
+
+        '''
+        sub-probability distribution of the sampled sequence.
+        '''
+        for df, y in [(df_subprobability, 'Probability'),]:
+            subplot_instruction = [
+                {
+                    'plot_type': 'lineplot',
+                    'length': large_graph_length,
+                    'height': large_graph_height,
+                    'kwargs':
+                    {
+                        'x':'Time',
+                        'y': y,
+                        'hue': 'Event',
+                        'data': df
+                    }
+                },
+                {
+                    'plot_type': 'scatterplot',
+                    'length': large_graph_length,
+                    'height': large_graph_height,
+                    'kwargs':
+                    {
+                        'x': 'Time',
+                        'y': 'Point',
+                        'data': df_event,
+                        'palette': 'pastel',
+                        'hue': 'Event'
+                    }
+                }
+            ]
+            plot_instruction[f'sampled_sub{y.lower()}_{idx}'] = subplot_instruction
 
     return plot_instruction

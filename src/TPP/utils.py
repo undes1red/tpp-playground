@@ -56,6 +56,7 @@ def suffix(opt, *args):
         'used_batch_size': 'bs',
         'n_training_steps': 'nts',
         'dataloader_config': '',
+        'used_dataloader_config': '',
         'model_config': ''
     }
     

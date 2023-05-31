@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
-from einops import rearrange, repeat, reduce
+from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
 from src.TPP.model.ifib_c.submodel import IFIBC
@@ -299,63 +299,6 @@ class IFIBCModel(BasicModule):
         return gap, tau_pred
 
 
-    def sample(self, events_history, time_history, time_next, mask_next, the_number_of_samples, mean, var):
-        '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
-        '''
-        '''
-        First, we randomly generate the probability_threshold from a uniform distribution.
-        '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
-        sample_input = dist.sample((1, 1, the_number_of_samples))              # [1, 1, the_number_of_samples]
-        sample_input = sample_input.to(self.device)                            # [1, 1, the_number_of_samples]
-
-        def evaluate_sample(integral_from_zero_to_inf, taus):
-            if self.event_toggle:
-                taus = repeat(taus, 'b s ns -> b s ns ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, the_number_of_samples, num_events]
-            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history, time_history, taus, mean, var)
-                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
-            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
-            probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
-                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
-            if self.event_toggle:
-                probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len, the_number_of_samples]
-            return probability_integral
-
-        def bisect_target_sample(integral_from_zero_to_inf, taus):
-            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
-            
-        def median_prediction_sample(integral_from_zero_to_inf, l, r):
-            for _ in range(50):
-                c = (l + r)/2
-                v = bisect_target_sample(integral_from_zero_to_inf, c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-
-            return (l + r)/2
-        
-        l = 0.0001*torch.ones((*time_history.shape, the_number_of_samples), dtype = torch.float32, device = self.device)
-                                                                               # [batch_size, seq_len, the_number_of_samples]
-        r = 1e6*torch.ones((*time_history.shape, the_number_of_samples), dtype = torch.float32, device = self.device)
-                                                                               # [batch_size, seq_len, the_number_of_samples]
-        time_next_zero = torch.zeros_like(time_next)                           # [batch_size, seq_len]
-        if self.event_toggle:
-            time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-        integral_from_zero_to_inf = repeat(integral_from_zero_to_inf, 'b s ... -> b s ns ...', ns = the_number_of_samples)
-                                                                               # [batch_size, seq_len, the_number_of_samples, num_events] if we need events else [batch_size, seq_len, the_number_of_samples]
-
-        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [batch_size, seq_len, the_number_of_samples]
-        tau_sampled = tau_sampled  * mask_next.unsqueeze(dim = -1)             # [batch_size, seq_len, the_number_of_samples]
-
-        return tau_sampled, sample_input
-
-
     def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var):
         '''
         Well...We will do something totally different by performing event-wise MAE.
@@ -460,6 +403,228 @@ class IFIBCModel(BasicModule):
         tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len, num_events]
 
         return tau_pred
+
+
+    def sample_time_event(self, number_of_sampled_sequences, end_time, mean, var):
+        '''
+        This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
+        Steps:
+        1. Sample a time \(t_s\) from p^*(t) = \sum{n \in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \(\lambda^*(m, t_s)\).
+        '''
+
+        time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        events_history_for_sampling = torch.ones(number_of_sampled_sequences, 1, device = self.device, dtype = torch.int32) * self.num_events
+                                                                               # [number_of_sampled_sequences, 1]
+        tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
+
+        while True:
+            sampled_time, sampled_events = \
+                self.sample_one_events_from_model_time_event(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
+                                                                               # [number_of_sampled_sequences, 1]
+            # Ensure the sampled times and events are correct.
+            assert sampled_time.shape == (number_of_sampled_sequences, 1)
+            assert sampled_time.shape == (number_of_sampled_sequences, 1)
+
+            tmp_events_history_for_sampling, tmp_events_history_for_sampling_ps = pack([events_history_for_sampling, sampled_events], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+            tmp_time_history_for_sampling, tmp_time_history_for_sampling_ps = pack([time_history_for_sampling, sampled_time], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+            tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
+                                                                               # [number_of_sampled_sequences]
+
+            if tmp_sum_of_sampled_time.min() >= end_time:
+                break
+            else:
+                events_history_for_sampling = tmp_events_history_for_sampling  # [number_of_sampled_sequences, new_length]
+                time_history_for_sampling = tmp_time_history_for_sampling      # [number_of_sampled_sequences, new_length]
+
+        sampled_mask = (time_history_for_sampling.cumsum(dim = -1) < end_time).int()
+                                                                               # [number_of_sampled_sequences, sampled_sequences_length]
+
+        return time_history_for_sampling, events_history_for_sampling, sampled_mask
+
+
+    def sample_one_events_from_model_time_event(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var):
+        def evaluate_sample(integral_from_zero_to_inf, taus):
+            if self.event_toggle:
+                taus = repeat(taus, '... -> ... ne', ne = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            if self.event_toggle:
+                probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
+                                                                               # [number_of_sampled_sequences, 1]
+            return probability_integral
+
+        def bisect_target_sample(integral_from_zero_to_inf, taus, sample_input):
+            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
+            
+        def median_prediction_sample(integral_from_zero_to_inf, l, r):
+            '''
+            First, we randomly generate the probability_threshold from a uniform distribution.
+            '''
+            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+            sampled_threshold = dist.sample((number_of_sampled_sequences, 1))  # [number_of_sampled_sequences, 1]
+            sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1]
+
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target_sample(integral_from_zero_to_inf, c, sampled_threshold)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones((number_of_sampled_sequences, 1), dtype = torch.float32, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        r = 1e6*torch.ones((number_of_sampled_sequences, 1), dtype = torch.float32, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        time_next_zero = torch.zeros(number_of_sampled_sequences, 1)           # [number_of_sampled_sequences, 1]
+        if self.event_toggle:
+            time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        integral_from_zero_to_inf = self.model.sample(events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, var = var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        integral_from_zero_to_inf = integral_from_zero_to_inf.detach()         # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [number_of_sampled_sequences, 1]
+
+        if self.event_toggle:
+            repeated_tau_sampled = repeat(tau_sampled, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        repeated_tau_sampled.requires_grad = True
+        integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, var = var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+ 
+        probability_for_each_event_at_pred_time = - torch.autograd.grad(
+            outputs = integral_from_sampled_time_to_inf,
+            inputs = repeated_tau_sampled,
+            grad_outputs = torch.ones_like(integral_from_sampled_time_to_inf)
+        )[0]                                                                   # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]                
+
+        distribution_of_marks = torch.distributions.categorical.Categorical(probability_for_each_event_at_pred_time)
+        sampled_marks = distribution_of_marks.sample()                         # [number_of_sampled_sequences, 1]
+        sampled_marks = sampled_marks.to(self.device)                          # [number_of_sampled_sequences, 1]
+        repeated_tau_sampled.requires_grad = False
+
+        return tau_sampled, sampled_marks
+
+
+    def sample_event_time(self, number_of_sampled_sequences, end_time, mean, var):
+        '''
+        These two functions will sample a event sequence from the learned p^*(m, t) following the event-time prediction procedure.
+        Steps:
+        1. Sample the mark \(m_p\) from p^*(m) = \int_{t_l}^{+\infty}{p^*(m, \tau)d\tau}.
+        2. Sample when a new \(m_p\) event would happen in the future time by \(p^*(t|m_p)\).
+        '''
+        time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        events_history_for_sampling = torch.ones(number_of_sampled_sequences, 1, device = self.device, dtype = torch.int32) * self.num_events
+                                                                               # [number_of_sampled_sequences, 1]
+        tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
+
+        while True:
+            sampled_time, sampled_events = \
+                self.sample_one_events_from_model_event_time(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
+                                                                               # [number_of_sampled_sequences, 1]
+            # Ensure the sampled times and events are correct.
+            assert sampled_time.shape == (number_of_sampled_sequences, 1)
+            assert sampled_time.shape == (number_of_sampled_sequences, 1)
+
+            tmp_events_history_for_sampling, tmp_events_history_for_sampling_ps = pack([events_history_for_sampling, sampled_events], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+            tmp_time_history_for_sampling, tmp_time_history_for_sampling_ps = pack([time_history_for_sampling, sampled_time], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+            tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
+                                                                               # [number_of_sampled_sequences]
+
+            if tmp_sum_of_sampled_time.min() >= end_time:
+                break
+            else:
+                events_history_for_sampling = tmp_events_history_for_sampling  # [number_of_sampled_sequences, new_length]
+                time_history_for_sampling = tmp_time_history_for_sampling      # [number_of_sampled_sequences, new_length]
+
+        sampled_mask = (time_history_for_sampling.cumsum(dim = -1) < end_time).int()
+                                                                               # [number_of_sampled_sequences, sampled_sequences_length]
+
+        return time_history_for_sampling, events_history_for_sampling, sampled_mask
+
+
+    def sample_one_events_from_model_event_time(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var):
+        def evaluate_sample(integral_from_zero_to_inf, taus):
+            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+            probability_integral = probability_integral / integral_from_zero_to_inf
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [the_number_of_samples, 1]
+
+            return probability_integral
+
+        def bisect_target_sample(integral_from_zero_to_inf, taus, sample_input):
+            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
+            
+        def median_prediction_sample(integral_from_zero_to_inf, l, r):
+            '''
+            First, we randomly generate the probability_threshold from a uniform distribution.
+            '''
+            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+            sampled_threshold = dist.sample((number_of_sampled_sequences, 1, self.num_events))
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+            sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1, num_events]
+
+            for _ in range(50):
+                c = (l + r)/2
+                v = bisect_target_sample(integral_from_zero_to_inf, c, sampled_threshold)
+                l = torch.where(v < 0, c, l)
+                r = torch.where(v >= 0, c, r)
+
+            return (l + r)/2
+        
+        l = 0.0001*torch.ones((number_of_sampled_sequences, 1, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+        r = 1e6*torch.ones((number_of_sampled_sequences, 1, self.num_events), dtype = torch.float32, device = self.device)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+        time_next_zero = torch.zeros(number_of_sampled_sequences, 1)           # [number_of_sampled_sequences, 1]
+        if self.event_toggle:
+            time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        integral_from_zero_to_inf = self.model.sample(events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, var = var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        integral_from_zero_to_inf = integral_from_zero_to_inf.detach()         # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        distribution_of_marks = torch.distributions.categorical.Categorical(integral_from_zero_to_inf)
+        sampled_marks = distribution_of_marks.sample()                         # [number_of_sampled_sequences, 1]
+        sampled_marks = sampled_marks.to(self.device)                          # [number_of_sampled_sequences, 1]
+
+        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [number_of_sampled_sequences, 1, num_events]
+        tau_mask = torch.nn.functional.one_hot(sampled_marks, num_classes = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+        tau_sampled = (tau_sampled * tau_mask).sum(dim = -1)                   # [number_of_sampled_sequences, 1]
+
+        if self.event_toggle:
+            repeated_tau_sampled = repeat(tau_sampled, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+        repeated_tau_sampled.requires_grad = True
+        integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, var = var)
+                                                                               # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]
+ 
+        probability_for_each_event_at_pred_time = - torch.autograd.grad(
+            outputs = integral_from_sampled_time_to_inf,
+            inputs = repeated_tau_sampled,
+            grad_outputs = torch.ones_like(integral_from_sampled_time_to_inf)
+        )[0]                                                                   # [number_of_sampled_sequences, 1, num_events] if we need events else [number_of_sampled_sequences, 1]                
+        repeated_tau_sampled.requires_grad = False
+
+        return tau_sampled, sampled_marks
 
 
     def plot(self, minibatch, opt):
@@ -582,16 +747,27 @@ class IFIBCModel(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
-        sampled_time, probabilty_input = self.sample(events_history, time_history, time_next, mask_next, opt.sample_amount, mean, var)
-                                                                               # [batch_size, seq_len, the_number_of_samples] + [1, 1, the_number_of_samples]
-        sampled_time_for_the_last_available_one = torch.index_select(sampled_time, 1, mask_next.sum(dim = -1) - 1).squeeze(dim = 1)
-                                                                               # [batch_size, the_number_of_samples]
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
 
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
+        '''
+        We only show how porobability distribution goes on one sampled sequence.
+        '''
+        time_history_for_sampling, events_history_for_sampling, sampled_mask = self.sample_event_time(1, 70, mean, var)
+                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
+        sampled_time_history, sampled_time_next = self.divide_history_and_next(time_history_for_sampling)
+                                                                               # 2 * [batch_size, seq_len]
+        sampled_events_history, sampled_events_next = self.divide_history_and_next(events_history_for_sampling)
+                                                                               # 2 * [batch_size, seq_len]
+        sampled_mask_history, sampled_mask_next = self.divide_history_and_next(sampled_mask)
+                                                                               # 2 * [batch_size, seq_len]
+
+        sampled_data, sampled_timestamp \
+            = self.model.model_probe_function(sampled_events_history, sampled_time_history, sampled_time_next, \
+                                              opt.resolution, mean, var, sampled_mask_next)
+
 
         '''
         Append additional info into the data dict.
@@ -607,8 +783,14 @@ class IFIBCModel(BasicModule):
         data['mae_before_event'] = mae
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
-        data['sampled_time_p_t'] = sampled_time_for_the_last_available_one
-        data['sampled_probabilty_input'] = probabilty_input
+        data['time_history_for_sampling'] = time_history_for_sampling
+        data['events_history_for_sampling'] = events_history_for_sampling
+
+        data['sampled_events_next'] = sampled_events_next
+        data['sampled_time_next'] = sampled_time_next
+        data['sampled_mask_next'] = sampled_mask_next
+        data['sampled_timestamp'] = sampled_timestamp
+        data['sampled_subprobability'] = sampled_data['expand_probability_for_each_event']
 
         plots = plot_debug(data, timestamp, opt)
 

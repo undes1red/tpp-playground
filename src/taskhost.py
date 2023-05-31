@@ -54,8 +54,10 @@ class TaskHost:
             logger.info(f'The model prefers {self.opt.seed} this time.')
         else:
             logger.info(f'You request, we follow. We will use number {self.opt.seed} as the random seed.')
-
-        # Check PyTorch version.
+        
+        '''
+        Show and check PyTorch version.
+        '''
         logger.info(f'PyTorch Version: {torch.__version__}.')
         # Avoid pytorch issue #36313
         if torch.__version__ == '1.4.0':
@@ -81,7 +83,7 @@ class TaskHost:
         os.environ['MASTER_PORT'] = str(int(np.random.randint(30000, 65535)))
 
         '''
-        Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for furhter information about
+        Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for further information about
         reproducibility
         '''
         # set up random seed for various packages
