@@ -753,7 +753,7 @@ class IFIBCModel(BasicModule):
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
 
         '''
-        We only show how porobability distribution goes on one sampled sequence.
+        We show how porobability distribution goes on one sampled sequence.
         '''
         time_history_for_sampling, events_history_for_sampling, sampled_mask = self.sample_event_time(1, 70, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
