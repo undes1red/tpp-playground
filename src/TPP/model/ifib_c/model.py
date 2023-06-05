@@ -753,20 +753,39 @@ class IFIBCModel(BasicModule):
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
 
         '''
-        We show how porobability distribution goes on one sampled sequence.
+        We show how porobability distribution goes on two sampled sequences, one following the event-time routine, and the other following
+        the time-event routine.
         '''
-        time_history_for_sampling, events_history_for_sampling, sampled_mask = self.sample_event_time(1, 70, mean, var)
+        time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
+            = self.sample_event_time(1, 70, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
-        sampled_time_history, sampled_time_next = self.divide_history_and_next(time_history_for_sampling)
+
+        sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
                                                                                # 2 * [batch_size, seq_len]
-        sampled_events_history, sampled_events_next = self.divide_history_and_next(events_history_for_sampling)
+        sampled_events_history_event_time, sampled_events_next_event_time = self.divide_history_and_next(events_history_for_sampling_event_time)
                                                                                # 2 * [batch_size, seq_len]
-        sampled_mask_history, sampled_mask_next = self.divide_history_and_next(sampled_mask)
+        sampled_mask_history_event_time, sampled_mask_next_event_time = self.divide_history_and_next(sampled_mask_event_time)
                                                                                # 2 * [batch_size, seq_len]
 
-        sampled_data, sampled_timestamp \
-            = self.model.model_probe_function(sampled_events_history, sampled_time_history, sampled_time_next, \
-                                              opt.resolution, mean, var, sampled_mask_next)
+        sampled_data_event_time, sampled_timestamp_event_time \
+            = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
+                                              sampled_time_next_event_time, opt.resolution, mean, var, sampled_mask_next_event_time)
+
+
+        time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
+            = self.sample_time_event(1, 70, mean, var)
+                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
+
+        sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)
+                                                                               # 2 * [batch_size, seq_len]
+        sampled_events_history_time_event, sampled_events_next_time_event = self.divide_history_and_next(events_history_for_sampling_time_event)
+                                                                               # 2 * [batch_size, seq_len]
+        sampled_mask_history_time_event, sampled_mask_next_time_event = self.divide_history_and_next(sampled_mask_time_event)
+                                                                               # 2 * [batch_size, seq_len]
+
+        sampled_data_time_event, sampled_timestamp_time_event \
+            = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
+                                              sampled_time_next_time_event, opt.resolution, mean, var, sampled_mask_next_time_event)
 
 
         '''
@@ -783,14 +802,23 @@ class IFIBCModel(BasicModule):
         data['mae_before_event'] = mae
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
-        data['time_history_for_sampling'] = time_history_for_sampling
-        data['events_history_for_sampling'] = events_history_for_sampling
-
-        data['sampled_events_next'] = sampled_events_next
-        data['sampled_time_next'] = sampled_time_next
-        data['sampled_mask_next'] = sampled_mask_next
-        data['sampled_timestamp'] = sampled_timestamp
-        data['sampled_subprobability'] = sampled_data['expand_probability_for_each_event']
+        
+        '''
+        Show the event sequence sampled from p(t) and p(m|t)
+        '''
+        data['sampled_events_next_event_time'] = sampled_events_next_event_time
+        data['sampled_time_next_event_time'] = sampled_time_next_event_time
+        data['sampled_mask_next_event_time'] = sampled_mask_next_event_time
+        data['sampled_timestamp_event_time'] = sampled_timestamp_event_time
+        data['sampled_subprobability_event_time'] = sampled_data_event_time['expand_probability_for_each_event']
+        '''
+        Show the event sequence sampled from p(m) and p(t|m)
+        '''
+        data['sampled_events_next_time_event'] = sampled_events_next_time_event
+        data['sampled_time_next_time_event'] = sampled_time_next_time_event
+        data['sampled_mask_next_time_event'] = sampled_mask_next_time_event
+        data['sampled_timestamp_time_event'] = sampled_timestamp_time_event
+        data['sampled_subprobability_time_event'] = sampled_data_time_event['expand_probability_for_each_event']
 
         plots = plot_debug(data, timestamp, opt)
 

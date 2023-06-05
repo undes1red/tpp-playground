@@ -143,3 +143,8 @@ useful_utilities/*
 
 # hyperparameter set
 parameter_set/*
+
+# pending projects
+src/fakenews/*
+src/missing/*
+src/Transformers/*
