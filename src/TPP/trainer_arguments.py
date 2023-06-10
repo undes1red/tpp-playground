@@ -77,12 +77,12 @@ def Trainer_postprocess(opt, root_path):
         opt.n_warmup_steps *= opt.agg_update_step
 
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.log = os.path.join(root_path, 'log', opt.dataset_name)
-    opt.save_model = os.path.join(root_path, 'model', opt.dataset_name)
-    opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None
+    opt.log = os.path.join(root_path, 'log', opt.procedure, opt.dataset_name)
+    opt.save_model = os.path.join(root_path, 'model', opt.procedure, opt.dataset_name)
+    opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
-    opt.optim_config = os.path.join(root_path, 'config', opt.optim_config)
-    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
+    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
 
     return opt

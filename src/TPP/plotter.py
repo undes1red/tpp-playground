@@ -95,19 +95,19 @@ class TPPPlotter:
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
             for idx, train_data in enumerate(self.training_data):
-                draw(self.model.module, train_data, 'train', batch_idx = idx, opt = self.opt)
+                draw(self.model, train_data, 'train', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
 
         if self.opt.evaluation:
             for idx, evaluation_data in enumerate(self.evaluation_data):
-                draw(self.model.module, evaluation_data, 'evaluation', batch_idx = idx, opt = self.opt)
+                draw(self.model, evaluation_data, 'evaluation', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
 
         if self.opt.test:
             for idx, test_data in enumerate(self.test_data):
-                draw(self.model.module, test_data, 'test', batch_idx = idx, opt = self.opt)
+                draw(self.model, test_data, 'test', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
 
@@ -115,37 +115,37 @@ class TPPPlotter:
     def task_spearman_and_l1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            spearman_and_l1(self.model.module, self.training_data, 'train', opt = self.opt)
+            spearman_and_l1(self.model, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
-            spearman_and_l1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+            spearman_and_l1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
 
         if self.opt.test:
-            spearman_and_l1(self.model.module, self.test_data, 'test', opt = self.opt)
+            spearman_and_l1(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_mae_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            mae_and_f1(self.model.module, self.training_data, 'train', opt = self.opt)
+            mae_and_f1(self.model, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
-            mae_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+            mae_and_f1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
 
         if self.opt.test:
-            mae_and_f1(self.model.module, self.test_data, 'test', opt = self.opt)
+            mae_and_f1(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_mae_e_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.train:
-            mae_e_and_f1(self.model.module, self.training_data, 'train', opt = self.opt)
+            mae_e_and_f1(self.model, self.training_data, 'train', opt = self.opt)
 
         if self.opt.evaluation:
-            mae_e_and_f1(self.model.module, self.evaluation_data, 'evaluation', opt = self.opt)
+            mae_e_and_f1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
 
         if self.opt.test:
-            mae_e_and_f1(self.model.module, self.test_data, 'test', opt = self.opt)
+            mae_e_and_f1(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_sample(self):

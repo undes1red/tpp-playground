@@ -26,7 +26,7 @@ class RMTPP(BasicModule):
                                  limited_history_norm = limited_history_norm, time_scalar_min = time_scalar_min, device = device)
 
 
-    def forward(self, input_time, input_events, mask, mean, var, evaluate):
+    def forward(self, task_name, *args, **kwargs):
         '''
         The entrance of the FullyNN wrapper.
         
@@ -53,8 +53,16 @@ class RMTPP(BasicModule):
         Refers to train() and evaluate()'s documentation for detailed information.
 
         '''
-        return self.evaluate_procedure(input_time, input_events, mask, mean, var) if evaluate \
-            else self.train_procedure(input_time, input_events, mask, mean, var)
+        task_mapper = {
+            'train': self.train_procedure,
+            'evaluate': self.evaluate_procedure,
+            'spearman_and_l1': self.get_spearman_and_l1,
+            'mae_and_f1': self.get_mae_and_f1,
+            'mae_e_and_f1': self.get_mae_e_and_f1,
+            'graph': self.plot
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
 
 
     def divide_history_and_next(self, input):
@@ -454,7 +462,7 @@ class RMTPP(BasicModule):
         
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         loss, time_loss, events_loss, the_number_of_events, constant \
-                   = model(events, time, mask, mean, var, evaluate = False)
+                   = model('train', events, time, mask, mean, var)
 
         loss.backward()
 
@@ -474,7 +482,7 @@ class RMTPP(BasicModule):
         loss_time_next, time_loss_time_next, events_loss_time_next, \
         loss_pred_time, time_loss_pred_time, events_loss_pred_time, \
         mae, f1, the_number_of_events, constant_time_next, \
-        constant_pred_time = model(events, time, mask, mean, var, evaluate = True)
+        constant_pred_time = model('evaluate', events, time, mask, mean, var)
         
         # Loss values and other metrics at time_next
         loss_time_next = loss_time_next.item() / the_number_of_events

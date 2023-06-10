@@ -31,7 +31,7 @@ class RHP(BasicModule):
         return input_history, input_next
     
 
-    def forward(self, input_time, input_events, mask, evaluate):
+    def forward(self, task_name, *args, **kwargs):
         '''
         The entrance of the FullyNN wrapper.
         
@@ -58,8 +58,16 @@ class RHP(BasicModule):
         Refers to train() and evaluate()'s documentation for detailed information.
 
         '''
-        return self.evaluate_procedure(input_time, input_events, mask) if evaluate \
-            else self.train_procedure(input_time, input_events, mask)
+        task_mapper = {
+            'train': self.train_procedure,
+            'evaluate': self.evaluate_procedure,
+            'spearman_and_l1': self.get_spearman_and_l1,
+            'mae_and_f1': self.get_mae_and_f1,
+            'mae_e_and_f1': self.get_mae_e_and_f1,
+            'graph': self.plot
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
 
 
     '''
@@ -691,7 +699,7 @@ class RHP(BasicModule):
         '''
         log_likeli_loss, marker_loss, the_number_of_events
         '''
-        log_likeli_loss, mark_loss, the_number_of_events = model(time, events, mask, evaluate = False)
+        log_likeli_loss, mark_loss, the_number_of_events = model('train', time, events, mask)
         loss = log_likeli_loss
         loss.backward()
 
@@ -712,8 +720,7 @@ class RHP(BasicModule):
         time, events, fact, mask = minibatch[0]                                # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, \
         log_likeli_loss_pred_time, marker_loss_pred_time, f1_pred_time, \
-        mae, the_number_of_events \
-            = model(time, events, mask, evaluate = True)
+        mae, the_number_of_events = model('evaluate', time, events, mask)
 
         log_likeli_loss_time_next, marker_loss_time_next, f1_time_next \
             = log_likeli_loss_time_next.item() / the_number_of_events, \

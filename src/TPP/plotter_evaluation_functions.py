@@ -38,7 +38,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
     }
     '''
 
-    plots = model.plot(minibatch, opt)
+    plots = model('graph', minibatch, opt)
     
     # Create the plot storing directory if not exist.
     plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
@@ -73,7 +73,7 @@ def spearman_and_l1(model, dataset, desc, opt):
     l1 = 0
     size_of_dataset = len(dataset)
     for minibatch in tqdm(dataset, desc = f'Spearman and L1 for {desc}'):
-        spearman_for_this_batch, l1_for_this_batch = model.get_spearman_and_l1(minibatch, opt)               
+        spearman_for_this_batch, l1_for_this_batch = model('spearman_and_l1', minibatch, opt)               
                                                                                # [batch_size, seq_len * resolution]
         spearman += spearman_for_this_batch
         l1 += l1_for_this_batch
@@ -105,7 +105,7 @@ def mae_and_f1(model, dataset, desc, opt):
     
     with tqdm(dataset, desc = f'MAE and macro-f1 for {desc}') as progress_bar:
         for minibatch in progress_bar:
-            mae_per_seq, f1_per_seq = model.get_mae_and_f1(minibatch, opt)
+            mae_per_seq, f1_per_seq = model('mae_and_f1', minibatch, opt)
                                                                                # [batch_size, seq_len]
             if mae is None:
                 mae = mae_per_seq.flatten()
@@ -154,7 +154,7 @@ def mae_e_and_f1(model, dataset, desc, opt):
 
     with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc}') as progress_bar:
         for minibatch in progress_bar:
-            mae_e_per_seq, f1_per_seq, probability_sum_per_seq = model.get_mae_e_and_f1(minibatch, opt)
+            mae_e_per_seq, f1_per_seq, probability_sum_per_seq = model('mae_e_and_f1', minibatch, opt)
                                                                                # [batch_size, seq_len]
             if mae_e is None:
                 mae_e = mae_e_per_seq.flatten()

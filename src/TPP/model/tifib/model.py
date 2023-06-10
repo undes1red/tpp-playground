@@ -45,7 +45,7 @@ class TIFIBModel(BasicModule):
         return input_history, input_next
 
 
-    def forward(self, input_time, input_events, mask, mean, var, evaluate):
+    def forward(self, task_name, *args, **kwargs):
         '''
         The entrance of the FullyNN wrapper.
         
@@ -72,8 +72,16 @@ class TIFIBModel(BasicModule):
         Refers to train() and evaluate()'s documentation for detailed information.
 
         '''
-        return self.evaluate_procedure(input_time, input_events, mask, mean, var) if evaluate \
-            else self.train_procedure(input_time, input_events, mask, mean, var)
+        task_mapper = {
+            'train': self.train_procedure,
+            'evaluate': self.evaluate_procedure,
+            'spearman_and_l1': self.get_spearman_and_l1,
+            'mae_and_f1': self.get_mae_and_f1,
+            'mae_e_and_f1': self.get_mae_e_and_f1,
+            'graph': self.plot
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
 
 
     def train_procedure(self, input_time, input_events, mask, mean, var):
@@ -635,8 +643,8 @@ class TIFIBModel(BasicModule):
         model.train()
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
         loss, time_loss, events_loss, the_number_of_events = model(         
-                input_time = time_seq, input_events = event_seq, mask = mask, \
-                    mean = mean, var = var, evaluate = False
+                task_name = 'train', input_time = time_seq, input_events = event_seq, \
+                mask = mask, mean = mean, var = var,
         )
         
         loss.backward()
@@ -653,8 +661,8 @@ class TIFIBModel(BasicModule):
         model.eval()
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
         time_loss, events_loss, mae, f1_pred, f1_pred_at_time_next, the_number_of_events = model(
-                input_time = time_seq, input_events = event_seq, mask = mask, evaluate = True,\
-                mean = mean, var = var
+                task_name = 'evaluate', input_time = time_seq, input_events = event_seq, \
+                mask = mask, mean = mean, var = var
         )
     
         time_loss = time_loss.item() / the_number_of_events

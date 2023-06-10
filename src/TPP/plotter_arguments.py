@@ -69,17 +69,17 @@ def Plotter_postprocess(opt, root_path):
 
     opt.batch_size = 1
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
-    opt.abs_model_config = os.path.join(root_path, 'config', opt.model_name, opt.model_config) if opt.model_config else None
+    opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
 
     # locate where checkpoints are stored.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
     folder_suffix = 'model_' + model_hyperparameters
-    opt.checkpoint_folder = os.path.join(root_path, 'model', opt.dataset_name, folder_suffix)
+    opt.checkpoint_folder = os.path.join(root_path, 'model', opt.procedure, opt.dataset_name, folder_suffix)
 
     # where figures, records are stored.
-    opt.store_dir = os.path.join(root_path, 'output', opt.dataset_name, 'output_' + model_hyperparameters)
+    opt.store_dir = os.path.join(root_path, 'results', opt.procedure, opt.dataset_name, 'results_' + model_hyperparameters)
 
     return opt

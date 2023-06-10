@@ -5,15 +5,27 @@ import os, argparse, importlib
 root_path = os.path.dirname(os.path.abspath(__file__))
 
 main_procedure_translator = {
+    # Temporal point process
     'TPP_train': 'TPP',
     'TPP_plot': 'TPP',
+
+    # Outlier-directed missing data imputation
+    'missing_train': 'missing',
+    'missing_evaluate': 'missing',
+
     'Transformers': 'Transformers',
     'fakenews': 'fakenews'
 }
 
 sub_procedure_translator = {
+    # Temporal point process
     'TPP_train': 'Trainer',
     'TPP_plot': 'Plotter',
+
+    # Outlier-directed missing data imputation
+    'missing_train': 'Trainer',
+    'missing_evaluate': 'Plotter',
+
     'Transformers': 'Trainer',
     'fakenews': 'Trainer'
 }
@@ -26,8 +38,14 @@ if __name__ == '__main__':
     # we need main_procedure_translator and sub_procedure_translator to translate
     # procedure names into the correct procedure and argument class.
     procedure_names = [
+        # Temporal point process
         'TPP_train',
         'TPP_plot',
+
+        # Outlier-directed missing data imputation
+        'missing_train',
+        'missing_evaluate'
+
         # 'Transformers',
         # 'fakenews'
         ]

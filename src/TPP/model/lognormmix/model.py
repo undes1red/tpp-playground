@@ -25,7 +25,7 @@ class LogNormMixWrapper(BasicModule):
         )
     
 
-    def forward(self, input_events, input_time, input_mask, mean, var, evaluate):
+    def forward(self, task_name, *args, **kwargs):
         '''
         The entrance of the FullyNN wrapper.
         
@@ -52,8 +52,16 @@ class LogNormMixWrapper(BasicModule):
         Refers to train() and evaluate()'s documentation for detailed information.
 
         '''
-        return self.evaluate_procedure(input_events, input_time, input_mask, mean, var) if evaluate \
-            else self.train_procedure(input_events, input_time, input_mask, mean, var)
+        task_mapper = {
+            'train': self.train_procedure,
+            'evaluate': self.evaluate_procedure,
+            'spearman_and_l1': self.get_spearman_and_l1,
+            'mae_and_f1': self.get_mae_and_f1,
+            'mae_e_and_f1': self.get_mae_e_and_f1,
+            'graph': self.plot
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
 
 
     def divide_history_and_next(self, input):
@@ -403,7 +411,7 @@ class LogNormMixWrapper(BasicModule):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.train()
-        time_loss, event_loss, the_number_of_events = model(**extract_minibatch(minibatch), evaluate = False)
+        time_loss, event_loss, the_number_of_events = model(task_name = 'train', **extract_minibatch(minibatch), evaluate = False)
 
         loss = time_loss + event_loss
         loss.backward()
@@ -427,7 +435,8 @@ class LogNormMixWrapper(BasicModule):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.eval()
-        time_loss, event_loss, mae, f1_time_next, f1_pred_time, the_number_of_events = model(**extract_minibatch(minibatch), evaluate = True)
+        time_loss, event_loss, mae, f1_time_next, f1_pred_time, the_number_of_events \
+            = model(task_name = 'evaluate', **extract_minibatch(minibatch), evaluate = True)
         loss = time_loss + event_loss
 
         loss = loss.item() / the_number_of_events
