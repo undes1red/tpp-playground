@@ -23,8 +23,7 @@ def plot_probability(data, timestamp, opt):
     time_next = data['time_next']                                              # [batch_size, seq_len]
     input_intensity = data['input_intensity']                                  # [batch_size, seq_len + 1]
 
-    if opt.event_toggle:
-        expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
+    expand_probability = expand_probability.sum(dim = -1)                      # [batch_size, seq_len, resolution]
     true_probability = expand_true_probability(time_next, input_intensity, opt)# [batch_size, seq_len, resolution] or batch_size * None
 
     packed_data = zip(*move_from_tensor_to_ndarray(expand_probability, events_next, time_next, mask_next, timestamp, true_probability))
@@ -114,7 +113,7 @@ def plot_debug(data, timestamp, opt):
     What is inside dict data?
     1. expand_intensity_for_each_event  shape: [batch_size, seq_len, resolution, num_events]
     2. expand_integral_for_each_event   shape: [batch_size, seq_len, resolution, num_events]
-    3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
+    3. spearman, pearson, and L1 distance matrix.
     4. macro-f1: measure the event prediction performance without time prediction.
     5. top_k: measure the event prediction performance without time prediction.
     6. probability_sum: the value of \int_{t_l}^{+infty}{p(m, \tau)d\tau}
@@ -372,8 +371,7 @@ def plot_debug(data, timestamp, opt):
                                                                                # [batch_size, seq_len, resolution, num_events]
     sampled_expand_timestamp_event_time = data['sampled_timestamp_event_time'] # [batch_size, seq_len, resolution]
 
-    if opt.event_toggle:
-        sampled_expand_probability_event_time = sampled_expand_subprobability_event_time.sum(dim = -1)
+    sampled_expand_probability_event_time = sampled_expand_subprobability_event_time.sum(dim = -1)
                                                                                # [batch_size, seq_len, resolution]
 
     packed_data = zip(*move_from_tensor_to_ndarray(sampled_events_next_event_time, sampled_time_next_event_time, \
@@ -477,8 +475,7 @@ def plot_debug(data, timestamp, opt):
                                                                                # [batch_size, seq_len, resolution, num_events]
     sampled_expand_timestamp_time_event = data['sampled_timestamp_time_event'] # [batch_size, seq_len, resolution]
 
-    if opt.event_toggle:
-        sampled_expand_probability_time_event = sampled_expand_subprobability_time_event.sum(dim = -1)
+    sampled_expand_probability_time_event = sampled_expand_subprobability_time_event.sum(dim = -1)
                                                                                # [batch_size, seq_len, resolution]
 
     packed_data = zip(*move_from_tensor_to_ndarray(sampled_events_next_time_event, sampled_time_next_time_event, \

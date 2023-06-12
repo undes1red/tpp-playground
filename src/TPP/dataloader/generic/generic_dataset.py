@@ -4,15 +4,19 @@ import pandas as pd
 import numpy as np
 
 
-def insert(per_line, number):
+def prepend(per_line, number):
     return np.concatenate([np.array([number]), per_line])
 
 
-def diff(per_line, shift):
+def append(per_line, number):
+    return np.concatenate([per_line, np.array([number])])
+
+
+def diff(per_line, prepend = np._NoValue, append = np._NoValue):
     '''
     Avoid potential 0 output.
     '''
-    return np.diff(per_line) + (1e-6 if shift else 0)
+    return np.diff(per_line, prepend = prepend, append = append)
 
 
 class generic_dataset(utils.data.Dataset):
@@ -20,42 +24,51 @@ class generic_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, property_dict, plot = False, shift = False, shift_time = False, input_norm_data = False):
+    def __init__(self, data, device, property_dict, evaluate = False, shift = False, input_norm_data = False):
         super(generic_dataset, self).__init__()
         self.data = data
         self.device = device
-        self.plot = plot
+        self.evaluate = evaluate
         self.number_of_events = property_dict['num_events']
-        self.t_0 = property_dict['t_0']
-        self.T = property_dict['T']
+        self.start_time = property_dict['t_0']
+        self.end_time = property_dict['T']
         self.mean = 0
-        self.var = 1
+        self.std = 1
+
+        '''
+        Convert data from list to np.array.
+        '''
+        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
+        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
 
         # Data preprocessing
-        if shift_time:
-            '''
-            Current stackoverflow specific
-            '''
-            for idx, item in enumerate(self.data.time_seq):
-                first_event_abs_time = item[0]
-                self.data.time_seq[idx].insert(0, first_event_abs_time - 0.8)
+        # we remove the end dummy event from the sequence when evaluate = True
+        self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
+        if self.evaluate:
+            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
         else:
-            self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
+            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+            self.data.event = self.data.event.apply(append, number = self.number_of_events)
 
-        self.data.time_seq = self.data.time_seq.apply(diff, shift = shift)
-        # if input_norm_data:
-        #     self.data.time_seq = self.data.time_seq.apply(math.log)
-        self.data.time_seq = self.data.time_seq.apply(insert, number = 0)
-        self.data.event = self.data.event.apply(insert, number = self.number_of_events)
+        self.data.time_seq = self.data.time_seq.apply(prepend, number = 0)
+        self.data.event = self.data.event.apply(prepend, number = self.number_of_events)
 
         # Data normalization
         # We need it because several datasets' inputs are just so huge that several model can never handle it.
+        # PS: we don't want the append dummy events contaminate the mean and standard deviation.
         if input_norm_data:
-            regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())
-            regenerated_data = (regenerated_data + 1e-8).stack()
-            self.mean = regenerated_data.mean()
-            self.var = regenerated_data.std()
+            time_inteval = np.array([])
+            for item in self.data['time_seq'].values.tolist():
+                time_inteval = np.concatenate((time_inteval, item[1:-1]))
+            self.mean = time_inteval.mean()
+            self.std = time_inteval.std()
+            del time_inteval
 
+        '''
+        Fix datatype
+        '''
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
@@ -72,7 +85,7 @@ class generic_dataset(utils.data.Dataset):
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
         else:
-            if self.plot:
+            if self.evaluate:
                 return self.data.iloc[index].time_seq, \
                        self.data.iloc[index].event, \
                        self.data.iloc[index].score,\
@@ -91,7 +104,7 @@ class generic_dataset(utils.data.Dataset):
         '''
         The structure of data:
         [
-            (time_seq, event, score, mask, intensity if self.plot else it doesn't exist at all.)
+            (time_seq, event, score, mask, intensity if self.evaluate else it doesn't exist at all.)
         ], (mean, var)
         '''
         max_length_of_this_batch = max([item[0].size for item in data])
@@ -104,7 +117,7 @@ class generic_dataset(utils.data.Dataset):
             padded_event = np.pad(item[1], (0, pad_length), mode = 'minimum')
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
             padded_item = [padded_time_seq, padded_event, padded_score, mask]
-            if self.plot:
+            if self.evaluate:
                 padded_intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
                 padded_item.append(padded_intensity)
             
@@ -113,7 +126,7 @@ class generic_dataset(utils.data.Dataset):
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
         
-        return padded_data, (self.mean, self.var)
+        return padded_data, (self.mean, self.std)
 
 
 def read_data(path, file_names):
