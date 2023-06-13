@@ -1,4 +1,4 @@
-import torch
+import torch, copy
 from sklearn.metrics import f1_score
 from einops import rearrange, reduce, repeat
 
@@ -67,7 +67,21 @@ class LogNormMixWrapper(BasicModule):
     def divide_history_and_next(self, input):
         history, next = input[:, :-1].clone(), input[:, 1:].clone()
         return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
-    
+
+
+    def remove_dummy_event_from_mask(self, mask):
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        
+        return mask_without_dummy
+
 
     def train_procedure(self, input_events, input_time, input_mask, mean, var):
         '''
@@ -87,15 +101,17 @@ class LogNormMixWrapper(BasicModule):
         '''
 
         the_number_of_events = input_mask.sum().item()
-        log_prob, log_p_event = self.model.log_prob(input_events, input_time, mean, var)
+        log_prob, log_surv_last, log_p_event = self.model.log_prob(input_events, input_time, input_mask, mean, var)
+                                                                               # [batch_size, seq_len + 1]
                                                                                # [batch_size, seq_len + 1]
         log_prob = log_prob * input_mask                                       # [batch_size, seq_len + 1]
         log_p_event = log_p_event * input_mask                                 # [batch_size, seq_len + 1]
         
         time_loss = self.loss_f(log_prob)
         event_loss = self.loss_f(log_p_event)
+        surv_last_loss = self.loss_f(log_surv_last)
 
-        return time_loss, event_loss, the_number_of_events
+        return time_loss + surv_last_loss, time_loss, event_loss, the_number_of_events
 
 
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, var):
@@ -116,13 +132,14 @@ class LogNormMixWrapper(BasicModule):
         '''
 
         the_number_of_events = input_mask.sum().item()
-        log_prob, log_p_event = self.model.log_prob(input_events, input_time, mean, var)
+        log_prob, log_surv_last, log_p_event = self.model.log_prob(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
         log_prob = log_prob * input_mask                                       # [batch_size, seq_len + 1]
         log_p_event = log_p_event * input_mask                                 # [batch_size, seq_len + 1]
         
         time_loss = self.loss_f(log_prob)
         event_loss = self.loss_f(log_p_event)
+        surv_last_loss = self.loss_f(log_surv_last)
 
         mae, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
@@ -138,10 +155,9 @@ class LogNormMixWrapper(BasicModule):
         predicted_events_at_time_next, predicted_events_at_pred_time, input_events \
             = move_from_tensor_to_ndarray(predicted_events_at_time_next, predicted_events_at_pred_time, input_events)
         
-        f1_time_next = f1_score(y_pred = predicted_events_at_time_next, y_true = input_events, average = 'macro')
         f1_pred_time = f1_score(y_pred = predicted_events_at_pred_time, y_true = input_events, average = 'macro')
 
-        return time_loss, event_loss, mae, f1_time_next, f1_pred_time, the_number_of_events
+        return time_loss, surv_last_loss, event_loss, mae, f1_pred_time, the_number_of_events
 
 
     def loss_f(self, loglik):
@@ -411,17 +427,17 @@ class LogNormMixWrapper(BasicModule):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.train()
-        time_loss, event_loss, the_number_of_events = model(task_name = 'train', **extract_minibatch(minibatch), evaluate = False)
+        time_loss, time_loss_without_dummy, events_loss, the_number_of_events\
+              = model(task_name = 'train', **extract_minibatch(minibatch))
 
-        loss = time_loss + event_loss
+        loss = time_loss + events_loss
         loss.backward()
     
-        loss = loss.item() / the_number_of_events
-        time_loss = time_loss.item() / the_number_of_events
-        event_loss = event_loss.item() / the_number_of_events
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
         fact = minibatch[0][2].sum().item() / the_number_of_events
     
-        return loss, time_loss, event_loss, fact
+        return time_loss_without_dummy, events_loss, fact
     
 
     def evaluation_step(model, minibatch, device):
@@ -435,64 +451,69 @@ class LogNormMixWrapper(BasicModule):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.eval()
-        time_loss, event_loss, mae, f1_time_next, f1_pred_time, the_number_of_events \
-            = model(task_name = 'evaluate', **extract_minibatch(minibatch), evaluate = True)
-        loss = time_loss + event_loss
+        time_loss, surv_last_loss, event_loss, mae, f1_pred_time, the_number_of_events \
+            = model(task_name = 'evaluate', **extract_minibatch(minibatch))
 
-        loss = loss.item() / the_number_of_events
         time_loss = time_loss.item() / the_number_of_events
+        surv_last_loss = surv_last_loss.item() / the_number_of_events
         event_loss = event_loss.item() / the_number_of_events
         fact = minibatch[0][2].sum().item() / the_number_of_events
     
-        return loss, time_loss, event_loss, fact, mae, f1_time_next, f1_pred_time,
+        return time_loss, surv_last_loss, fact, event_loss, mae, f1_pred_time,
 
 
     def postprocess(input, procedure):
-        def train(input):
-            return [input[0], input[0] - input[-1], input[1], input[2]]
-
-        def evaluate(input):
-            return [input[0], input[0] - input[3], input[1], input[2], input[4], input[5], input[6]]
+        def train_postprocess(input):
+            '''
+            Training process
+            [absolute loss, relative loss, events loss]
+            '''
+            return [input[0], input[0] - input[1], input[2]]
         
-        return train(input) if procedure == 'Training' else evaluate(input)
+        def test_postprocess(input):
+            '''
+            Evaluation process
+            '''
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
+        
+        return train_postprocess(input) if procedure == 'Training' else test_postprocess(input)
 
 
-    format_dict_length = 7
+    format_dict_length = 6
 
 
     def log_print_format(input, procedure):
-        def train(input):
+        def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
-            format_dict['time_loss'] = input[2]
-            format_dict['event_loss'] = input[3]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f',\
-                                         'time_loss': ':8.5f', 'event_loss': ':8.5f'}
+            format_dict['events_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
+                                         'events_loss': ':6.5f'}
             return format_dict
-        
-        def evaluate(input):
+
+        def test_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['time_loss'] = input[2]
-            format_dict['event_loss'] = input[3]
-            format_dict['MAE'] = input[4]
-            format_dict['f1_time_next'] = input[5]
-            format_dict['f1_pred_time'] = input[6]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'time_loss': ':8.5f', \
-                                         'event_loss': ':8.5f', 'MAE': ':2.8f', 'f1_time_next': ':8.5f', 'f1_pred_time': ':8.5f'}
+            format_dict['absolute_NLL_loss'] = input[0]
+            format_dict['avg_survival_loss'] = input[1]
+            format_dict['relative_NLL_loss'] = input[2]
+            format_dict['events_loss'] = input[3]
+            format_dict['mae'] = input[4]
+            format_dict['f1_pred_at_pred_time'] = input[5]
+            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
+                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
+                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
             return format_dict
         
-        return train(input) if procedure == 'Training' else evaluate(input)
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
 
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset]
+        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
-    
 
-    metric_number = 2 # metric number is the length of the output of choose_metric[0]
+    metric_number = 2 # metric number is the length of the output of choose_metric

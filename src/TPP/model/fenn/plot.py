@@ -278,7 +278,7 @@ def plot_debug(data, timestamp, opt):
     What is inside dict data?
     1. expand_intensity_for_each_event  shape: [batch_size, seq_len, resolution, num_events]
     2. expand_integral_for_each_event   shape: [batch_size, seq_len, resolution, num_events]
-    3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
+    3. spearman, pearson, and L1 distance matrix
     4. macro-f1: measure the event prediction performance without time prediction.
     5. top_k: measure the event prediction performance without time prediction.
     6. probability_sum: the value of \int_{t_l}^{+infty}{p(m, \tau)d\tau}

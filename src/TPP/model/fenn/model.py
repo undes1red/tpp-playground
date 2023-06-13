@@ -1,4 +1,4 @@
-import torch
+import torch, copy
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce
 import numpy as np
@@ -27,7 +27,6 @@ class FENNModel(BasicModule):
                  info_dict,
                  device,
                  history_module = 'LSTM',
-                 event_toggle = False,
                  zero_shift = False):
         '''
         This function creates a FENN model.
@@ -36,13 +35,13 @@ class FENNModel(BasicModule):
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = info_dict['num_events']
-        self.event_toggle = event_toggle
-        self.zero_offset = 1e-12
+        self.start_time = info_dict['t_0']
+        self.end_time = info_dict['T']
+        self.epsilon = 1e-20
 
         self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                          mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, 
-                          zero_shift = zero_shift, device = device)
+                          mlp_layers = mlp_layers, nonlinear = nonlinear, zero_shift = zero_shift, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -62,6 +61,20 @@ class FENNModel(BasicModule):
 
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
+
+
+    def remove_dummy_event_from_mask(self, mask):
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        
+        return mask_without_dummy
 
 
     def forward(self, task_name, *args, **kwargs):
@@ -115,7 +128,6 @@ class FENNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-
         self.train()
 
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
@@ -126,12 +138,10 @@ class FENNModel(BasicModule):
         '''
         preparing for multi-event training when needed
         '''
-        if self.event_toggle:
-            time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
         time_next.requires_grad = True
         integral_for_each_event = self.model(events_history, time_history, time_next, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, num_events]
         '''
         Obtains intensity values.
         '''
@@ -141,35 +151,42 @@ class FENNModel(BasicModule):
             grad_outputs = torch.ones_like(integral_for_each_event),
             create_graph = True,
         )[0]
-        check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events]
         assert intensity_for_each_event.shape == integral_for_each_event.shape
         time_next.requires_grad = False
 
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = (events_next * mask_next_without_dummy).long()
+                                                                               # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
         '''
         Calculate the event loss, macro-F1, and other possible metrics measuring event prediction accuracy.
-        We calculate event loss only when event_toggle = True
         '''
-        events_loss = torch.tensor(0., dtype = torch.float32)
-        if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_offset)
+        probability_for_each_event = torch.log(intensity_for_each_event + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
-            events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
+        events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
-            events_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
-                                                                      events_next.long(), reduction = 'none')
+        events_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
+                                                                  events_next_without_dummy, reduction = 'none')
                                                                                # [batch_size, seq_len]
-            events_loss = events_loss * mask_next                              # [batch_size, seq_len]
-            events_loss = events_loss.sum()
+        events_loss = events_loss * mask_next_without_dummy                    # [batch_size, seq_len]
+        events_loss = events_loss.sum()
 
         '''
-        Calculate the NLL loss of p^*(m, t).
+        Calculate the NLL loss of p^*(m, t) from t_0 to t_{n}
         L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
         '''
-        time_loss = self.nll_loss(intensity = intensity_for_each_event, events_next = events_next, \
-                                  intensity_integral = integral_for_each_event, mask_next = mask_next)
-        the_number_of_events = mask_next.sum().item()
+        time_loss_without_dummy = self.nll_loss(intensity = intensity_for_each_event, events_next = events_next_without_dummy, \
+                                                intensity_integral = integral_for_each_event, mask_next = mask_next_without_dummy)
+        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_for_each_event.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.sum()
 
-        return time_loss, events_loss, the_number_of_events
+        loss = time_loss_without_dummy + loss_survival
+
+        return loss, time_loss_without_dummy, events_loss, the_number_of_events
 
 
     def evaluate_procedure(self, input_time, input_events, mask, mean, var):
@@ -188,25 +205,25 @@ class FENNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-
         self.eval()
 
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
-        the_number_of_events = mask_next.sum().item()
+
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = (events_next * mask_next_without_dummy).long()
+                                                                               # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
 
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                                  time_next = time_next, mask_next = mask_next, mean = mean, var = var)
+                                                  time_next = time_next, mask_next = mask_next_without_dummy, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_events
 
-        if self.event_toggle:
-            pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
-            time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
+        time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
 
         '''
         preparing for multi-event training when needed
@@ -214,9 +231,9 @@ class FENNModel(BasicModule):
         pred_time.requires_grad = True
         time_next.requires_grad = True
         integral_for_each_event_from_tl_to_pred_time = self.model(events_history, time_history, pred_time, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, num_events]
         integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, time_next, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, num_events]
 
         '''
         Obtains intensity values.
@@ -225,49 +242,51 @@ class FENNModel(BasicModule):
             outputs = integral_for_each_event_from_tl_to_pred_time,
             inputs = pred_time,
             grad_outputs = torch.ones_like(integral_for_each_event_from_tl_to_pred_time),
-        )[0]                                                                   # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        )[0]                                                                   # [batch_size, seq_len, num_events]
         intensity_for_each_event_from_tl_to_time_next = torch.autograd.grad(
             outputs = integral_for_each_event_from_tl_to_time_next,
             inputs = time_next,
             grad_outputs = torch.ones_like(integral_for_each_event_from_tl_to_time_next),
-        )[0]                                                                   # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        )[0]                                                                   # [batch_size, seq_len, num_events]
         pred_time.requires_grad = False
         time_next.requires_grad = False
-        check_tensor(intensity_for_each_event_from_tl_to_pred_time)            # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
-        check_tensor(intensity_for_each_event_from_tl_to_time_next)            # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        check_tensor(intensity_for_each_event_from_tl_to_pred_time)            # [batch_size, seq_len, num_events]
+        check_tensor(intensity_for_each_event_from_tl_to_time_next)            # [batch_size, seq_len, num_events]
         assert intensity_for_each_event_from_tl_to_pred_time.shape == integral_for_each_event_from_tl_to_pred_time.shape
         assert intensity_for_each_event_from_tl_to_time_next.shape == integral_for_each_event_from_tl_to_time_next.shape
 
         '''
         Calculate the event loss, macro-F1, and other possible metrics measuring event prediction accuracy.
-        This part is only available when event_toggle = True
         '''
-        events_loss = torch.tensor(0., dtype = torch.float32)
-        f1 = 0
-        if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event_from_tl_to_pred_time + self.zero_offset)
+        probability_for_each_event = torch.log(intensity_for_each_event_from_tl_to_pred_time + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
-            events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
+        events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
-            events_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
-                                                                      events_next.long(), reduction = 'none')
+        events_loss = torch.nn.functional.cross_entropy(rearrange(events_probability, 'b s ne -> b ne s'), \
+                                                                  events_next_without_dummy, reduction = 'none')
                                                                                # [batch_size, seq_len]
-            events_loss = events_loss * mask_next                              # [batch_size, seq_len]
-            events_loss = events_loss.sum()
+        events_loss = events_loss * mask_next_without_dummy                    # [batch_size, seq_len]
+        events_loss = events_loss.sum()
 
-            events_pred_index, events_true = \
-                move_from_tensor_to_ndarray(torch.argmax(events_probability, dim = -1)[mask_next == 1], \
-                                            events_next[mask_next == 1])
-            f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
+        events_pred_index, events_true = \
+            move_from_tensor_to_ndarray(torch.argmax(events_probability, dim = -1)[mask_next_without_dummy == 1], \
+                                        events_next[mask_next_without_dummy == 1])
+                                                                               # [batch_size, seq_len] * 2
+        f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
 
         '''
-        Calculate the NLL loss of p^*(m, t).
+        Calculate the NLL loss of p^*(m, t) from t_0 to t_{n}
         L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
         '''
-        time_loss = self.nll_loss(intensity = intensity_for_each_event_from_tl_to_time_next, events_next = events_next, \
-                                  intensity_integral = integral_for_each_event_from_tl_to_time_next, mask_next = mask_next)
+        time_loss = self.nll_loss(intensity = intensity_for_each_event_from_tl_to_time_next, events_next = events_next_without_dummy, \
+                                  intensity_integral = integral_for_each_event_from_tl_to_time_next, mask_next = mask_next_without_dummy)
+        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_for_each_event_from_tl_to_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.mean()
 
-        return time_loss, events_loss, mae, f1, the_number_of_events
+        return time_loss, loss_survival, events_loss, mae, f1, the_number_of_events
 
 
     def nll_loss(self, intensity, intensity_integral, events_next, mask_next):
@@ -275,9 +294,9 @@ class FENNModel(BasicModule):
         This function calculates the NLL loss at each legit event in events_next.
     
         Args:
-        * intensity           type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * intensity           type: torch.tensor shape: [batch_size, seq_len, num_events]
                               intensity values at $ t_i $
-        * intensity_integral  type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * intensity_integral  type: torch.tensor shape: [batch_size, seq_len, num_events]
                               intensity integral from $ t_{i - 1} $ to $ t_{i} $(t_0 = 0).
         * events_next:        type: torch.tensor shape: [batch_size, seq_len]
                               The mark of the events that we need to predict.
@@ -288,19 +307,14 @@ class FENNModel(BasicModule):
         * loss                type: torch.tensor shape: [1]
                               the sum of NLL loss on all event.
         '''
+        intensity_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                           # [batch_size, seq_len, num_events]
+        log_intensity = torch.log(intensity + self.epsilon) * intensity_mask
+        log_intensity = reduce(log_intensity, '... ne -> ...', 'sum')      # [batch_size, seq_len]
+        intensity_integral = reduce(intensity_integral, '... ne -> ...', 'sum')
+                                                                           # [batch_size, seq_len]
+        nll_p = -log_intensity + intensity_integral                        # [batch_size, seq_len]
 
-        if self.event_toggle:
-            intensity_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_events]
-            log_intensity = torch.log(intensity + self.zero_offset) * intensity_mask
-            log_intensity = reduce(log_intensity, '... ne -> ...', 'sum')      # [batch_size, seq_len]
-            intensity_integral = reduce(intensity_integral, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
-            nll_p = -log_intensity + intensity_integral                        # [batch_size, seq_len]
-        else:
-            log_intensity = torch.log(intensity + self.zero_offset)      # [batch_size, seq_len]
-            nll_p = -log_intensity + intensity_integral                        # [batch_size, seq_len]
-    
         loss = nll_p * mask_next
         loss = torch.sum(loss)
 
@@ -337,15 +351,13 @@ class FENNModel(BasicModule):
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
 
-        if self.event_toggle:
-            pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
         '''
         preparing for multi-event training when needed
         '''
         pred_time.requires_grad = True
         integral_for_each_event = self.model(events_history, time_history, pred_time, mean = mean, var = var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, num_events]
         '''
         Obtains intensity values.
         '''
@@ -356,23 +368,20 @@ class FENNModel(BasicModule):
         )[0]
         pred_time.requires_grad = False
         assert intensity_for_each_event.shape == integral_for_each_event.shape
-        check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events]
 
         '''
         Calculate the event loss, macro-F1, and other possible metrics measuring event prediction accuracy.
-        This part is only available when event_toggle = True
         '''
-        f1 = 0
-        if self.event_toggle:
-            probability_for_each_event = torch.log(intensity_for_each_event + self.zero_offset)
+        probability_for_each_event = torch.log(intensity_for_each_event + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
-            events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
+        events_probability = torch.nn.functional.softmax(probability_for_each_event, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
 
-            events_pred_index, events_true = \
-                move_from_tensor_to_ndarray(torch.argmax(events_probability, dim = -1)[mask_next == 1], \
-                                            events_next[mask_next == 1])
-            f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
+        events_pred_index, events_true = \
+            move_from_tensor_to_ndarray(torch.argmax(events_probability, dim = -1)[mask_next == 1], \
+                                        events_next[mask_next == 1])
+        f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
 
         return mae, f1
 
@@ -388,7 +397,7 @@ class FENNModel(BasicModule):
         * time_history    type: torch.tensor shape: [batch_size, seq_len]
                           Historical time sequences. Similar to events_history, we always generate
                           this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
                           When the next event actually happens. 
         * mask_next       type: torch.tensor shape: [batch_size, seq_len]
                           Needed mask to mask out unneeded loss values.
@@ -414,12 +423,10 @@ class FENNModel(BasicModule):
                           $ \sum_{n \in M}{\Lambda^*(n, \tau)} $
             '''
 
-            if self.event_toggle:
-                taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)     # [batch_size, seq_len, num_events]
+            taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
             integral = self.model(events_history, time_history, taus, mean, var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
-            if self.event_toggle:
-                integral = integral.sum(dim = -1)                              # [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, num_events]
+            integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
             
             return integral
 
@@ -458,7 +465,7 @@ class FENNModel(BasicModule):
         * time_history    type: torch.tensor shape: [batch_size, seq_len]
                           Historical time sequences. Similar to events_history, we always generate
                           this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
                           When the next event actually happens. 
         * mask_next       type: torch.tensor shape: [batch_size, seq_len]
                           Needed mask to mask out unneeded loss values.
@@ -956,33 +963,34 @@ class FENNModel(BasicModule):
         '''
     
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
-        time_loss, events_loss, the_number_of_events = model(         
+        loss, time_loss_without_dummy, events_loss, the_number_of_events = model(         
                 task_name = 'train', input_time = time_seq, \
                 input_events = event_seq, mask = mask, mean = mean, var = var
         )
 
-        time_loss.backward()
+        loss.backward()
     
-        time_loss = time_loss.item() / the_number_of_events
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss]
+        return time_loss_without_dummy, fact, events_loss
     
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
-        time_loss, events_loss, mae, f1, the_number_of_events = model(
+        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events = model(
                 task_name = 'evaluate', input_time = time_seq, \
                 input_events = event_seq, mask = mask, mean = mean, var = var
         )
     
         time_loss = time_loss.item() / the_number_of_events
+        loss_survival = loss_survival.item()
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
         
-        return [time_loss, fact, events_loss, mae, f1]
+        return time_loss, loss_survival, fact, events_loss, mae, f1
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -997,7 +1005,7 @@ class FENNModel(BasicModule):
             Evaluation process
             [absolute loss, relative loss, events loss, mae value]
             '''
-            return [input[0], input[0] - input[1], input[2], input[3], input[4]]
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
@@ -1013,25 +1021,28 @@ class FENNModel(BasicModule):
 
         def test_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['events_loss'] = input[2]
-            format_dict['mae'] = input[3]
-            format_dict['f1_value'] = input[4]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f',
-                                         'events_loss': ':6.5f', 'mae': ':2.8f', 'f1_value': ':2.8f'}
+            format_dict['absolute_NLL_loss'] = input[0]
+            format_dict['avg_survival_loss'] = input[1]
+            format_dict['relative_NLL_loss'] = input[2]
+            format_dict['events_loss'] = input[3]
+            format_dict['mae'] = input[4]
+            format_dict['f1_pred_at_pred_time'] = input[5]
+            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
+                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
+                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-    format_dict_length = 5
+    format_dict_length = 6
     
 
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['absolute_loss'], test_report_format_dict['absolute_loss']], \
+        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
     metric_number = 2 # metric number is the length of the output of choose_metric

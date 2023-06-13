@@ -4,77 +4,62 @@ import pandas as pd
 import numpy as np
 
 
-def concate(per_line, item1 = np.array([]), item2 = np.array([])):
+def concatenate(per_line, item1 = np.array([]), item2 = np.array([])):
     return np.concatenate([item1, per_line, item2])
 
 
-def concate_shift(per_line, item1, item2):
+def concatenate_shift(per_line, item1, item2):
     return np.concatenate([item1 + per_line[0] - 1, per_line, item2 + item1 + per_line[0] - 1])
 
 
-class IflDataset(utils.data.Dataset):
+class LogNormDataset(utils.data.Dataset):
     '''
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, property_dict, start_time: int = None, \
-                 end_time: int = None, input_norm_data = True, inception_shift = False, plot = False):
-        super(IflDataset, self).__init__()
+    def __init__(self, data, device, property_dict, input_norm_data = True, evaluate = False, shift = False):
+        super(LogNormDataset, self).__init__()
         self.data = data
         self.device = device
-        self.plot = plot
-        # All input data has the same sequence length.
-        # Use shift if the event sequences don't start at timestamp 0.
-        # If enabled, the time interval between the first event and the start will always be 1s.
-        self.sequence_length = len(self.data.iloc[0].time_seq)
-        self.start_time = start_time if start_time else 0
-        self.end_time = end_time if end_time else 350
-        self.input_norm_data = input_norm_data
+        self.evaluate = evaluate
+        self.start_time = property_dict['t_0']
+        self.end_time = property_dict['T']
         self.event_num = property_dict['num_events']
-
-        if inception_shift:
-            '''
-            Current stackoverflow specific
-            '''
-            for idx, item in enumerate(self.data.time_seq):
-                first_event_abs_time = item[0]
-                self.data.time_seq[idx].insert(0, first_event_abs_time - 0.8)
-                tmp = np.diff(self.data.time_seq[idx]) + 1e-6
-                self.data.time_seq[idx] = np.cumsum(tmp).tolist()
-
-        # Data normalization
-        if input_norm_data:
-            regenerated_data = pd.DataFrame(self.data['time_seq'].values.tolist())
-            regenerated_data.insert(0, 'start', self.start_time)
-            regenerated_data.insert(regenerated_data.columns.size, 'end', self.end_time)
-            regenerated_data = np.log(regenerated_data.diff(axis = 1) + 1e-15).stack()
-            self.mean = regenerated_data.mean()
-            self.var = regenerated_data.std()
-        
-        # intensity check.
-        self.has_intensity = False
-        if 'intensity' in self.data.columns:
-            self.has_intensity = True
-
-        # Data preprocessing
-        self.data.event = self.data.event.apply(concate, item2 = np.array([self.event_num]))
-        self.data.time_seq = self.data.time_seq.apply(concate, item1 = np.array([self.start_time]), item2 = np.array([self.end_time]))
-        self.data.time_seq = self.data.time_seq.apply(np.diff) + 1e-5
+        self.shift = shift
+        self.input_norm_data = input_norm_data
+        self.mean = 0
+        self.std = 1
+        self.epsilon = 1e-30
 
         '''
-        pd.DataFrame already has a method called 'mask', so self.data.mask will fail and
-        one should use self.data['mask'] instead.
-
-        Update: self.data['mask'] is only available when the sequence_length is fixed or the original datasets have mask
-        already. Otherwise, mask tensors should be generated after __getitem__() finishes, which means in collate_fn().
+        Convert data from list to np.array.
         '''
-        
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
-        if self.has_intensity:
-            self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+
+        # Data preprocessing
+        self.data.event = self.data.event.apply(concatenate, item2 = np.array([self.event_num]))
+        self.data.time_seq = self.data.time_seq.apply(np.diff,  prepend = self.start_time, append = self.end_time) + (self.epsilon if shift else 0)
+
+        # Data normalization
+        if input_norm_data:
+            time_inteval = np.array([])
+            for item in self.data['time_seq'].values.tolist():
+                time_inteval = np.concatenate((time_inteval, item[:-1]))
+            regenerated_data = np.log(time_inteval + self.epsilon)
+            self.mean = regenerated_data.mean()
+            self.std = regenerated_data.std()
+        
+        '''
+        Fix datatype
+        '''
+        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
+        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
 
 
     def __getitem__(self, index):
@@ -99,7 +84,7 @@ class IflDataset(utils.data.Dataset):
             time_tensor = self.data.iloc[index].time_seq
             score = self.data.iloc[index].score
 
-            if self.plot:
+            if self.evaluate:
                 return event_tensor, time_tensor, score, self.data.iloc[index].intensity
             else:
                 return event_tensor, time_tensor, score
@@ -112,14 +97,11 @@ class IflDataset(utils.data.Dataset):
     def __call__(self, data):
         '''
         The custom collate_fn() for IFL datasets.
-        data: [event_tensor, time_tensor, score, self.data.iloc[index].intensity if self.plot]
+        data: [event_tensor, time_tensor, score, self.data.iloc[index].intensity if self.evaluate]
         '''
         max_length_of_this_batch = max([item[0].size for item in data])
         mask = []
         padded_data = []
-
-        if self.plot:
-            intensity = []
 
         for item in data:
             pad_length = max_length_of_this_batch - item[0].size
@@ -131,7 +113,7 @@ class IflDataset(utils.data.Dataset):
             padded_event = np.pad(item[0], (0, pad_length), mode = 'minimum')
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
             padded_item = [padded_event, padded_time_seq, padded_score, mask]
-            if self.plot:
+            if self.evaluate:
                 intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
                 padded_item.append(intensity)
 
@@ -140,7 +122,7 @@ class IflDataset(utils.data.Dataset):
         from torch.utils.data._utils.collate import default_collate
         padded_data = default_collate(padded_data)
 
-        return padded_data, (self.mean, self.var) if self.input_norm_data else None
+        return padded_data, (self.mean, self.std) if self.input_norm_data else None
 
 
 def read_data(path, file_names):
@@ -164,8 +146,8 @@ def read_data(path, file_names):
     return data_raw
 
 
-def ifl_dataloader():
+def log_dataloader():
     '''
     Dataloader for IFL model.
     '''
-    return [IflDataset, read_data]
+    return [LogNormDataset, read_data]
