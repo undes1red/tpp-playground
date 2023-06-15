@@ -8,7 +8,6 @@ from src.TPP.model.thp.utils import *
 
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
-
     def __init__(
             self,
             num_types, d_input, d_hidden,
@@ -32,6 +31,7 @@ class Encoder(nn.Module):
                              d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
             for _ in range(n_layers)])
 
+
     def temporal_enc(self, time, non_pad_mask):
         """
         Input: batch*seq_len.
@@ -42,6 +42,7 @@ class Encoder(nn.Module):
         result[:, :, 0::2] = torch.sin(result[:, :, 0::2])
         result[:, :, 1::2] = torch.cos(result[:, :, 1::2])
         return result * non_pad_mask.unsqueeze(-1)
+
 
     def forward(self, event_type, event_time, non_pad_mask):
         """
@@ -83,13 +84,13 @@ class RNN_layers(nn.Module):
     Optional recurrent layers. This is inspired by the fact that adding
     recurrent layers on top of the Transformer helps language modeling.
     """
-
     def __init__(self, d_model, d_rnn, device):
         super(RNN_layers, self).__init__()
         self.device = device
 
         self.rnn = nn.LSTM(d_model, d_rnn, num_layers=1, batch_first=True, device = self.device)
         self.projection = nn.Linear(d_rnn, d_model, device = self.device)
+
 
     def forward(self, data):
         out = self.rnn(data)[0]                                                # [batch_size, seq_len, d_rnn]
@@ -100,7 +101,6 @@ class RNN_layers(nn.Module):
 
 class TransformerTPP(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
-
     def __init__(
             self, num_types, device, d_input, d_rnn, d_hidden,
             n_layers, n_head, d_qk, d_v, dropout):
@@ -122,6 +122,7 @@ class TransformerTPP(nn.Module):
 
         # OPTIONAL recurrent layer, this sometimes helps
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
+
 
     def forward(self, event_time, event_type, non_pad_mask):
         """

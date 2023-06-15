@@ -1,4 +1,5 @@
-from src.TPP.model.tfullynn.model import TFullyNNModel
+from src.TPP.model.tfullynn.model import FullyNNModel
+
 
 def get_model():
-    return TFullyNNModel
+    return FullyNNModel

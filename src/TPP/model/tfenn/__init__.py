@@ -1,4 +1,5 @@
-from src.TPP.model.tfenn.model import TFENNModel
+from src.TPP.model.tfenn.model import FENNModel
+
 
 def get_model():
-    return TFENNModel
+    return FENNModel

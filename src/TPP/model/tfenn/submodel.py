@@ -1,52 +1,20 @@
 import torch.nn as nn
 import torch
-from scipy.stats import spearmanr
 import numpy as np
+
 from einops import rearrange, repeat, reduce, pack, unpack
-
-from src.TPP.model.tfenn.transformers import TransEncoder
+from scipy.stats import spearmanr
 from src.TPP.model.tfenn.nonneg import NonNegLinear
-from src.TPP.model.tfenn.activate import *
-
-
-TA = {
-    # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
-    # That is to say, each scalar in the output vector is bigger than log(2) if all hidden layer weights only
-    # have positive numbers like what FullyNN does.
-    # We have vanilla version and symmetrical version of softplus
-    'softplus': nn.Softplus,
-    'sym_softplus': sym_softplus,
-
-    # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
-    # analysis, we argue that this feature is required by approaches like FullyNN to fit long-tail functions like Hawkes intensity function.
-    'tanh': nn.Tanh,
-    # Yet another function that has small gradients when it has big inputs. But as the log function is not bounded above, the hard integral bound introduced
-    # by tanh can be alleviated.
-    'log': sym_Log,
-    # This activation can perfectly show why FullyNN needs tanh to attain a trade-off between intensity function regression ability and extrapolation 
-    'identity': nn.Identity,
-    # Might be the redeemer, but I'm not sure.
-    'ploy': sym_Polynomial
-}
+from src.TPP.model.utils import L1_distance_across_events
+from src.TPP.model.tfenn_old.transformers import TransEncoder
 
 
 class TFENN(nn.Module):
-    '''
-    This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
-    Hope it can work properly.
-
-    Currently, normalization is disabled.
-    Update: 2022-01-19: Now you can use data normalization via synthetic dataloader.
-
-    Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
-    '''
-
     def __init__(self, d_history, d_intensity, num_events, dropout, d_hidden, n_layers, \
-                 n_head, d_qk, d_v, mlp_layers, nonlinear, event_toggle, zero_shift, device):
+                 n_head, d_qk, d_v, mlp_layers, zero_shift, device):
         super(TFENN, self).__init__()
         self.device = device
         self.num_events = num_events
-        self.event_toggle = event_toggle
 
         '''
         Should we force the model to start from 0.
@@ -59,10 +27,9 @@ class TFENN(nn.Module):
         Ceveat:
         FullyNN can not distinguish different markers because of computation graph overlap.
         It is expected that the original FullyNN achieves very inferior marker prediction performance in spite of the model size.
-        '''
-        
+        '''        
         self.his_encoder = TransEncoder(num_events, d_history, d_hidden, n_layers, \
-                                        n_head, d_qk, d_v, dropout, event_toggle, device = self.device)
+                                        n_head, d_qk, d_v, dropout, device = self.device)
 
         '''
         Map the time number into a vector.
@@ -82,14 +49,14 @@ class TFENN(nn.Module):
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
         ])
-        self.layer_activation = TA[nonlinear]()
+        self.layer_activation = nn.Tanh()
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.nonneg_activation = nn.Softplus()
 
 
     def forward(self, events_history, time_history, time_next, mask_history, mean, var):
         '''
-        The forwardpropagation function of FullyNN, triggered by pytorch.
+        The forwardpropagation function of FENN, triggered by pytorch.
 
         Args:
         * events_history  type: torch.tensor shape: [batch_size, seq_len]
@@ -98,9 +65,9 @@ class TFENN(nn.Module):
         * time_history    type: torch.tensor shape: [batch_size, seq_len]
                           Historical time sequences. Similar to events_history, we always generate
                           this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
                           When the next event actually happens. 
-        * mask_history    type: torch.tensor shape: [batch_size, seq_len]
+        * mask            type: torch.tensor shape: [batch_size, seq_len]
                           placeholder. This parameter might not be needed at all.
         * mean            type: float shape: N/A
                           The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
@@ -109,7 +76,7 @@ class TFENN(nn.Module):
                           The variance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
         Outputs:
-        * integral        type: torch.tensor shape: [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        * integral        type: torch.tensor shape: [batch_size, seq_len, num_events]
                           The integral of the intensity function from $ t_i $ to $ t_{i - 1} $. This integral must not contain
                           1. negative values, 2. inf, and 3. nan. Meanwhile, integral.requires_grad should be True.
         '''
@@ -121,39 +88,38 @@ class TFENN(nn.Module):
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
 
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
+        hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events, d_history]
         
         time_embedding = time_next.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
 
-        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
-        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
-        output = self.layer_activation(time_embedding + hidden_history)        # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity]
+        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, num_events, d_intensity]
+        output = self.layer_activation(time_embedding + hidden_history)        # [batch_size, seq_len, num_events, d_intensity]
 
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+            output = nonneg_layer(output)                                      # [batch_size, seq_len, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [batch_size, seq_len, num_events, d_intensity]
 
-        integral = self.nonneg_activation(self.aggregate(output))              # [batch_size, seq_len, num_events, 1] if self.event_toggle else [batch_size, seq_len, 1]
+        integral = self.nonneg_activation(self.aggregate(output))              # [batch_size, seq_len, num_events, 1]
 
         if self.zero_shift:
-            zero = torch.ones_like(time_next, device = self.device) * (- mean / var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+            zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
+                                                                               # [batch_size, seq_len, num_events]
             zero_time_embedding = zero.unsqueeze(dim = -1) * self.non_neg(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+                                                                               # [batch_size, seq_len, num_events, d_intensity]
 
-            zero_time_embedding = self.time_mapper(zero_time_embedding)        # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
-            zero_output = self.activate(zero_time_embedding + hidden_history)  # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+            zero_time_embedding = self.time_mapper(zero_time_embedding)        # [batch_size, seq_len, num_events, d_intensity]
+            zero_output = self.activate(zero_time_embedding + hidden_history)  # [batch_size, seq_len, num_events, d_intensity]
             for nonneg_layer in self.mlp:
-                zero_output = nonneg_layer(zero_output)                        # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
-                zero_output = self.activate(zero_output)                       # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+                zero_output = nonneg_layer(zero_output)                        # [batch_size, seq_len, num_events, d_intensity]
+                zero_output = self.activate(zero_output)                       # [batch_size, seq_len, num_events, d_intensity]
             
-            zero_integral = self.nonneg_activation(self.aggregate(zero_output))# [batch_size, seq_len, num_events, 1] if self.event_toggle else [batch_size, seq_len, 1]
-            integral = integral - zero_integral.detach()                       # [batch_size, seq_len, num_events, 1] if self.event_toggle else [batch_size, seq_len, 1]
+            zero_integral = self.nonneg_activation(self.aggregate(zero_output))# [batch_size, seq_len, num_events, 1]
+            integral = integral - zero_integral.detach()                       # [batch_size, seq_len, num_events, 1]
 
-        integral = integral.squeeze(dim = -1)                                  # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
+        integral = integral.squeeze(dim = -1)                                  # [batch_size, seq_len, num_events]
 
         return integral
     
@@ -194,17 +160,13 @@ class TFENN(nn.Module):
         Prepare the history embedding.
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-        
+
+        # Reshape hidden output for full connection layers.
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
-
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
+        hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r di', r = resolution)
-                                                                               # [batch_size, seq_len, resolution, d_intensity]
 
         '''
         Prepare the time embedding.
@@ -213,34 +175,30 @@ class TFENN(nn.Module):
                                                                                # [resolution]
         original_time_expand = time_next.unsqueeze(dim = -1) * time_multiplier # [batch_size, seq_len, resolution]
         time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
+        time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events] is self.event_toggle else [batch_size, seq_len, resolution]
+        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events]
 
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] is self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
-        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity]
+        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity]
 
         '''
         Get intensity integrals.
         '''
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1]
 
         if self.zero_shift:
-            if self.event_toggle:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, num_events, 1]
-            else:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :].detach(), 'b s 1 -> b s 1 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, 1]
+            integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
+            expand_integral = expand_integral - integral_at_zero               # [batch_size, seq_len, 1, num_events, 1]
+
 
         '''
         Get intensity values at every sampled $ t $.
@@ -249,11 +207,11 @@ class TFENN(nn.Module):
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = False
 
-        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
-        expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events]
+        expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events]
 
         '''
         Restore the original timestamp
@@ -267,7 +225,7 @@ class TFENN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, mask_history, time_next, resolution, mean, var):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
@@ -366,7 +324,7 @@ class TFENN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, mask_history, time_next, resolution, mean, var, mask_next):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -379,17 +337,12 @@ class TFENN(nn.Module):
         Prepare the history embedding.
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
-        if self.event_toggle:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
+        hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
-        else:
-            hidden_history = repeat(hidden_history, 'b s di -> b s r di', r = resolution)
-                                                                               # [batch_size, seq_len, resolution, d_intensity]
 
         '''
         Prepare the time embedding.
@@ -398,46 +351,42 @@ class TFENN(nn.Module):
                                                                                # [resolution]
         original_time_expand = time_next.unsqueeze(dim = -1) * time_multiplier # [batch_size, seq_len, resolution]
         time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        if self.event_toggle:
-            time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
+        time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events]
         
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
-        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity]
+        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity]
 
         '''
         Get intensity integrals.
         '''
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, resolution, d_intensity]
+            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
         
-        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1]
 
         if self.zero_shift:
-            if self.event_toggle:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, num_events, 1]
-            else:
-                integral_at_zero = rearrange(expand_integral[:, :, 0, :].detach(), 'b s 1 -> b s 1 1')
-                expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, 1]
+            integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
+            expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, num_events, 1]
+
 
         expand_intensity = torch.autograd.grad(
             outputs = expand_integral,
             inputs = time_expand,
             grad_outputs = torch.ones_like(expand_integral),
             retain_graph = True
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = False
 
-        expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events]
 
         '''
         Obtain timestamp here.
@@ -453,71 +402,40 @@ class TFENN(nn.Module):
         This dict should pack all data required by plot().
         '''
         data = {}
-        data['expand_intensity_for_each_event'] = expand_intensity             # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
-        data['expand_integral_for_each_event'] = expand_integral               # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution]
+        data['expand_intensity_for_each_event'] = expand_intensity             # [batch_size, seq_len, resolution, num_events]
+        data['expand_integral_for_each_event'] = expand_integral               # [batch_size, seq_len, resolution, num_events]
 
 
-        if self.event_toggle:
-            expand_intensity = rearrange(expand_intensity.detach().cpu(), 'b s r ne -> b (s r) ne')
-                                                                               # [batch_size, seq_len * resolution, num_event]
-            expand_integral = rearrange(expand_integral.detach().cpu(), 'b s r ne -> b (s r) ne')
-                                                                               # [batch_size, seq_len * resolution, num_event]
-            
-            spearman_matrix = []
-            pearson_matrix = []
-            L1_matrix = []
-            for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-                in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
-                seq_len = mask_per_seq.sum()
+        expand_intensity = rearrange(expand_intensity.detach().cpu(), 'b s r ne -> b (s r) ne')
+                                                                           # [batch_size, seq_len * resolution, num_event]
+        expand_integral = rearrange(expand_integral.detach().cpu(), 'b s r ne -> b (s r) ne')
+                                                                           # [batch_size, seq_len * resolution, num_event]
+        
+        spearman_matrix = []
+        pearson_matrix = []
+        L1_matrix = []
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+            seq_len = mask_per_seq.sum()
 
-                probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
-                # rho: spearman coefficient
-                spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
-                if self.num_events == 2:
-                    spearman_matrix_per_seq = np.array([[1, spearman_matrix], [spearman_matrix, 1]])
+            probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
+            # rho: spearman coefficient
+            spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
+            if self.num_events == 2:
+                spearman_matrix_per_seq = np.array([[1, spearman_matrix], [spearman_matrix, 1]])
 
-                # r: pearson coefficient
-                pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
-                # L^1 metric
-                L1_matrix_per_seq = L1_distance(probability_distribution[:seq_len * resolution], 
-                                                resolution = resolution, num_events = self.num_events,
-                                                time_next = time_next_per_seq[:seq_len])
-                spearman_matrix.append(spearman_matrix_per_seq)
-                pearson_matrix.append(pearson_matrix_per_seq)
-                L1_matrix.append(L1_matrix_per_seq)
+            # r: pearson coefficient
+            pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
+            # L^1 metric
+            L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
+                                            resolution = resolution, num_events = self.num_events,
+                                            time_next = time_next_per_seq[:seq_len])
+            spearman_matrix.append(spearman_matrix_per_seq)
+            pearson_matrix.append(pearson_matrix_per_seq)
+            L1_matrix.append(L1_matrix_per_seq)
 
-            data['spearman_matrix'] = spearman_matrix
-            data['pearson_matrix'] = pearson_matrix
-            data['L1_matrix'] = L1_matrix
+        data['spearman_matrix'] = spearman_matrix
+        data['pearson_matrix'] = pearson_matrix
+        data['L1_matrix'] = L1_matrix
 
         return data, timestamp
-
-
-def L1_distance(input, resolution, num_events, time_next):
-    '''
-    This function calculates the L^1 distance between two functions in scattered form.
-    Input:
-    1. input:      function values
-                   [seq_len * resolution, num_events]
-    2. resolution: int
-                   the number of points from [t_{i - 1}, t_i]
-    3. num_events: int
-                   the number of event types
-    4. time_next:  [seq_len, num_events]
-                   the length of all intervals with interpolations.
-    '''
-
-    input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
-    intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
-
-    gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
-    gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
-
-    L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
-                                                                               # [num_events, num_events]
-    # round off the value smaller than 1e-6
-    L1[L1 < 1e-6] = 0
-
-    return L1

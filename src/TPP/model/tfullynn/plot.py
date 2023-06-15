@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.TPP.model.tfullynn.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_intensity, expand_true_probability
 
 large_graph_length = 18
@@ -165,7 +165,7 @@ def plot_integral(data, timestamp, opt):
                     'palette': 'pastel',
                     'hue': 'Event'
                 }
-            }
+            },
         ]
 
         plot_instruction[f'integral_{idx}'] = subplot_instruction

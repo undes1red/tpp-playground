@@ -1,4 +1,4 @@
-import torch
+import torch, copy
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
@@ -16,7 +16,7 @@ class RHP(BasicModule):
                  probability_threshold = 0.5, monte_carlo_resolution = 100):
         super(RHP, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events'] if info_dict['num_events'] > 0 else 1
+        self.num_events = info_dict['num_events']
         self.probability_threshold = probability_threshold
         self.zero_shift_factor = zero_shift_factor
 
@@ -29,6 +29,20 @@ class RHP(BasicModule):
     def divide_history_and_next(self, input):
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
+
+
+    def remove_dummy_event_from_mask(self, mask):
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        
+        return mask_without_dummy
     
 
     def forward(self, task_name, *args, **kwargs):
@@ -90,15 +104,24 @@ class RHP(BasicModule):
         integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
-        # temporal point process loss
-        log_likeli_loss, marker_loss = self.loss_function(
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        event_next_without_dummy = (mask_next_without_dummy * events_next).long()
+                                                                               # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum()
+
+        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
              integral_all_events = integral_all_events, intensity_all_events = intensity_all_events, \
-             events_next = events_next, mask_next = mask_next
+             events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
         )
+        # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.sum()
+        loss = log_likeli_loss_without_dummy + loss_survival
 
-        the_number_of_events = mask_next.sum().item()
-
-        return log_likeli_loss, marker_loss, the_number_of_events
+        return loss, log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
 
 
     '''
@@ -117,7 +140,10 @@ class RHP(BasicModule):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        the_number_of_events = mask_next.sum().item()
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        event_next_without_dummy = (mask_next_without_dummy * events_next).long()
+                                                                               # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum()
 
         mae, pred_time = \
                     self.mean_absolute_error(time_history = time_history, time_next = time_next, events_history = events_history, \
@@ -131,28 +157,26 @@ class RHP(BasicModule):
         integral_all_events_pred_time, intensity_all_events_pred_time \
             = self.model(time_history, pred_time, events_history, mask_history)# 2 * [batch_size, seq_len, num_events]
 
-        # NLL loss and event loss at time_next
-        log_likeli_loss_time_next, marker_loss_time_next = self.loss_function(
-             integral_all_events = integral_all_events_time_next, intensity_all_events = intensity_all_events_time_next, \
-             events_next = events_next, mask_next = mask_next
-        )
-        # NLL loss and event loss at pred_time
-        log_likeli_loss_pred_time, marker_loss_pred_time = self.loss_function(
-             integral_all_events = integral_all_events_pred_time, intensity_all_events = intensity_all_events_pred_time, \
-             events_next = events_next, mask_next = mask_next
-        )
-
-        predicted_events_time_next = torch.argmax(intensity_all_events_time_next, dim = -1)[mask_next == 1]
-        predicted_events_pred_time = torch.argmax(intensity_all_events_pred_time, dim = -1)[mask_next == 1]
-        events_true = events_next[mask_next == 1]
-        predicted_events_time_next, predicted_events_pred_time, events_true \
-            = move_from_tensor_to_ndarray(predicted_events_time_next, predicted_events_pred_time, events_true)
-        f1_time_next = f1_score(y_pred = predicted_events_time_next, y_true = events_true, average = 'macro')
+        events_true = event_next_without_dummy[mask_next_without_dummy == 1]
+        predicted_events_pred_time = torch.argmax(intensity_all_events_pred_time, dim = -1)[mask_next_without_dummy == 1]
+        predicted_events_pred_time, events_true = move_from_tensor_to_ndarray(predicted_events_pred_time, events_true)
         f1_pred_time = f1_score(y_pred = predicted_events_pred_time, y_true = events_true, average = 'macro')
 
+        # NLL loss and event loss at time_next
+        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.loss_function(
+             integral_all_events = integral_all_events_time_next, intensity_all_events = intensity_all_events_time_next, \
+             events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
+        )
+        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_all_events_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.mean()
 
-        return log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, log_likeli_loss_pred_time, \
-               marker_loss_pred_time, f1_pred_time, mae, the_number_of_events
+
+        return log_likeli_loss_time_next_without_dummy, loss_survival, marker_loss_time_next_without_dummy, \
+               mae, f1_pred_time, the_number_of_events
 
 
     '''
@@ -161,11 +185,8 @@ class RHP(BasicModule):
     def loss_function(self, integral_all_events, intensity_all_events, events_next, mask_next):
         """ Log-likelihood of sequence. """
             
-        if events_next is not None:
-            type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
+        type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-        else:
-            type_mask = 1
 
         '''
         MTPP loss function
@@ -223,9 +244,11 @@ class RHP(BasicModule):
             2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
             3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
             '''
-            intensity_integral = self.model.monte_carlo_integration_estimator(time_history, taus, events_history)
-                                                                                   # [batch_size, seq_len, num_events]
-            return intensity_integral.sum(dim = -1)
+            expanded_integral_all_events, _, = \
+                self.model(time_history, taus, events_history, mask_history)   # [batch_size, seq_len, num_events]
+            expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [batch_size, seq_len]
+
+            return expanded_integral
 
         def bisect_target(taus):
             return evaluate(taus) + torch.log(1 - torch.tensor(self.probability_threshold, device = self.device))
@@ -282,29 +305,22 @@ class RHP(BasicModule):
         if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
-
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
-                                                                               # 2 * [batch_size, seq_len, resolution, num_events]
-        
+                                                                               # 2 * [batch_size, seq_len, resolution_inf, num_events]
+
         expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
-                                                                               # [batch_size, seq_len, resolution, 1]
+                                                                               # [batch_size, seq_len, resolution_inf, 1]
         expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
-                                                                               # [batch_size, seq_len, resolution, num_events]
-        expanded_probability_inf_monte_carlo = expanded_probability_inf[:, :, :-1, :]
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        timestamp_monte_carlo = timestamp[:, :, 1:].unsqueeze(dim = -1)        # [batch_size, seq_len, resolution - 1, 1]
-        expanded_probability_inf = expanded_probability_inf_monte_carlo * timestamp_monte_carlo
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        
-        probability = expanded_probability_inf.sum(dim = -2)                   # [batch_size, seq_len, num_events]
-        probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
-        predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
+                                                                               # [batch_size, seq_len, resolution_inf, num_events]
+        probability_integral_to_inf = self.model.integration_estimator(expanded_probability_inf, timestamp, resolution_inf)[:, :, -1, :]
+        probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
+        predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
         
         f1 = []
         top_k_acc = []
-        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability):
+        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_to_inf):
             f1.append(f1_score(y_true = ground_truth_per_seq.detach().cpu(),
                                y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
             
@@ -330,7 +346,7 @@ class RHP(BasicModule):
         # top_k_acc: [batch_size, num_events]
 
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
-                                                                  mask_history, probability, \
+                                                                  mask_history, probability_integral_to_inf, \
                                                                   resolution_between_events, max_, mean, var)
                                                                                # [batch_size, seq_len, num_events]
 
@@ -370,14 +386,10 @@ class RHP(BasicModule):
                                                                                # [batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [batch_size, seq_len, num_events, resolution]
-
-            expanded_probability_per_event_monte_carlo = expanded_probability_per_event[:, :, :, :-1]
-                                                                               # [batch_size, seq_len, num_events, resolution - 1]
-            timestamp_monte_carlo = timestamp[:, :, :, 1:]                     # [batch_size, seq_len, num_events, resolution - 1]
-
-            probability = (expanded_probability_per_event_monte_carlo * timestamp_monte_carlo).sum(dim = -1)
+            expanded_probability_per_event = rearrange(expanded_probability_per_event, 'b s ne r -> b s r ne')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+            probability = self.model.integration_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
                                                                                # [batch_size, seq_len, num_events]
-            
             return probability
     
         def bisect_target(taus):
@@ -695,18 +707,20 @@ class RHP(BasicModule):
         Maybe need another function to extract data from minibatches.
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
-        time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        time, events, score, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         '''
         log_likeli_loss, marker_loss, the_number_of_events
         '''
-        log_likeli_loss, mark_loss, the_number_of_events = model('train', time, events, mask)
-        loss = log_likeli_loss
-        loss.backward()
+        loss, time_loss_without_dummy, events_loss, the_number_of_events \
+            = model('train', time, events, mask)
 
-        log_likeli_loss, mark_loss = log_likeli_loss.item() / the_number_of_events, mark_loss.item() / the_number_of_events
-        fact = fact.sum().item() / the_number_of_events
+        loss.backward()
     
-        return log_likeli_loss, mark_loss, fact
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum().item() / the_number_of_events
+        
+        return time_loss_without_dummy, fact, events_loss
     
 
     def evaluation_step(model, minibatch, device):
@@ -717,67 +731,69 @@ class RHP(BasicModule):
         log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, log_likeli_loss_pred_time, \
                        marker_loss_pred_time, f1_pred_time, mae, the_number_of_events
         '''
-        time, events, fact, mask = minibatch[0]                                # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, \
-        log_likeli_loss_pred_time, marker_loss_pred_time, f1_pred_time, \
-        mae, the_number_of_events = model('evaluate', time, events, mask)
+        time, events, score, mask = minibatch[0]                                # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events = model('evaluate', time, events, mask)
 
-        log_likeli_loss_time_next, marker_loss_time_next, f1_time_next \
-            = log_likeli_loss_time_next.item() / the_number_of_events, \
-              marker_loss_time_next.item() / the_number_of_events, \
-              f1_time_next.item()
-        log_likeli_loss_pred_time, marker_loss_pred_time, f1_pred_time \
-            = log_likeli_loss_pred_time.item() / the_number_of_events, \
-              marker_loss_pred_time.item() / the_number_of_events, \
-              f1_pred_time.item()
-        fact = fact.sum().item() / the_number_of_events
-
-        return fact, log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, \
-               log_likeli_loss_pred_time, marker_loss_pred_time, f1_pred_time, mae
+        time_loss = time_loss.item() / the_number_of_events
+        loss_survival = loss_survival.item()
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum().item() / the_number_of_events
+        
+        return time_loss, loss_survival, fact, events_loss, mae, f1
 
 
     def postprocess(input, procedure):
-        def train():
-            return [input[0], input[0] - input[2], input[1]]
-        def evaluate():
-            return [input[1], input[1] - input[0], input[2], input[4], input[5], input[3], input[6], input[7]]
-        return train() if procedure == 'Training' else evaluate()
-
-
+        def train_postprocess(input):
+            '''
+            Training process
+            [absolute loss, relative loss, events loss]
+            '''
+            return [input[0], input[0] - input[1], input[2]]
+        
+        def test_postprocess(input):
+            '''
+            Evaluation process
+            [absolute loss, relative loss, events loss, mae value]
+            '''
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
+        
+        return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
+    
+    
     def log_print_format(input, procedure):
-        def train():
+        def train_log_print_format(input):
             format_dict = {}
-            format_dict['NLL loss'] = input[0]
-            format_dict['relative NLL loss'] = input[1]
-            format_dict['events loss'] = input[2]
-            format_dict['num_format'] = {'NLL loss': ':8.5f', 'relative NLL loss': ':8.5f', 'events loss': ':8.5f'}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['events_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
+                                         'events_loss': ':6.5f'}
             return format_dict
-        def evaluate():
-            format_dict = {}
-            format_dict['NLL loss at given time'] = input[0]
-            format_dict['relative NLL loss at given time'] = input[1]
-            format_dict['marker loss at given time'] = input[2]
-            format_dict['NLL loss at pred time'] = input[3]
-            format_dict['marker loss at pred time'] = input[4]
-            format_dict['f1 at given time'] = input[5]
-            format_dict['f1 at pred time'] = input[6]
-            format_dict['MAE'] = input[7]
-            format_dict['num_format'] = \
-                {'NLL loss at given time': ':8.5f', 'relative NLL loss at given time': ':8.5f', \
-                 'marker loss at given time': ':8.5f', 'NLL loss at pred time': ':8.5f', \
-                 'marker loss at pred time': ':8.5f', 'f1 at given time': ':8.5f', 'f1 at pred time': ':8.5f',\
-                 'MAE': ':2.8f'}
-            return format_dict
-        return train() if procedure == 'Training' else evaluate()
 
-    format_dict_length = 8
+        def test_log_print_format(input):
+            format_dict = {}
+            format_dict['absolute_NLL_loss'] = input[0]
+            format_dict['avg_survival_loss'] = input[1]
+            format_dict['relative_NLL_loss'] = input[2]
+            format_dict['events_loss'] = input[3]
+            format_dict['mae'] = input[4]
+            format_dict['f1_pred_at_pred_time'] = input[5]
+            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
+                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
+                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
+            return format_dict
+        
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
+
+    format_dict_length = 6
 
     
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['NLL loss at given time'], test_report_format_dict['NLL loss at given time']], \
-               ['evaluation NLL loss at given time', 'test NLL loss at given time']
-    
+        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
+
     metric_number = 2 # metric number is the length of the output of choose_metric

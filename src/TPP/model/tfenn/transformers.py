@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange, reduce, repeat
 
 from src.TPP.model.tfenn.layers import TransformerLayer
-from src.TPP.model.tfenn.utils import *
+from src.TPP.model.tfenn.utils import get_subsequent_mask
 
 
 class TransEncoder(nn.Module):
@@ -12,12 +12,10 @@ class TransEncoder(nn.Module):
     def __init__(
             self,
             num_events, d_input, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout,
-            event_toggle, device):
+            n_layers, n_head, d_qk, d_v, dropout, device):
         super(TransEncoder, self).__init__()
         self.device = device
         self.d_input = d_input
-        self.event_toggle = event_toggle
         self.num_events = num_events
 
         # position vector, used for temporal encoding
@@ -76,27 +74,16 @@ class TransEncoder(nn.Module):
         idx_emb = self.encode_position_idx(seq_idx)                            # [1, seq_len, d_input]
         time = rearrange(time_history, '... -> ... 1')                         # [batch_size, seq_len, 1]
 
-        time_emb = self.history_time_emb(time) + idx_emb                       # [batch_size, seq_len, d_input]
-
-        if self.event_toggle:
-            time_emb = time_emb + self.event_emb(events_history)               # [batch_size, seq_len, d_input]
-            
-            for enc_layer in self.encoder:
-                '''
-                history event sequence
-                '''
-                time_emb, _ = enc_layer(
-                    time_emb, time_emb, time_emb,
-                    non_pad_mask = non_pad_mask,
-                    self_attn_mask = self_attn_mask)                           # [batch_size, seq_len, d_input]
-        else:
-            for enc_layer in self.time_encoder:
-                '''
-                history event sequence
-                '''
-                time_emb, _ = enc_layer(
-                    time_emb, time_emb, time_emb,
-                    non_pad_mask = non_pad_mask,
-                    self_attn_mask = self_attn_mask)                           # [batch_size, seq_len, d_input]
+        time_emb = self.history_time_emb(time) + idx_emb + self.event_emb(events_history)
+                                                                               # [batch_size, seq_len, d_input]
+        
+        for enc_layer in self.encoder:
+            '''
+            history event sequence
+            '''
+            time_emb, _ = enc_layer(
+                time_emb, time_emb, time_emb,
+                non_pad_mask = non_pad_mask,
+                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
 
         return time_emb

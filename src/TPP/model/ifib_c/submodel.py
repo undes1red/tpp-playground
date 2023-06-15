@@ -6,28 +6,6 @@ from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.utils import L1_distance_across_events
 from src.TPP.model.ifib_c.nonneg import NonNegLinear
-from src.TPP.model.ifib_c.activate import *
-
-
-TA = {
-    # Vanilla Softplus harms the algorithm by shifting the entire distribution into the non-nrgative area.
-    # That is to say, each scalar in the output vector is bigger than log(2) if all hidden layer weights only
-    # have positive numbers like what FullyNN does.
-    # We have vanilla version and symmetrical version of softplus
-    'softplus': nn.Softplus,
-    'sym_softplus': sym_softplus,
-
-    # Some papers have pointed out that Tanh introduces significant gradient vanishment when the input time is too big. After theoretical
-    # analysis, we argue that this feature is required by approaches like FullyNN to fit long-tail functions like Hawkes intensity function.
-    'tanh': nn.Tanh,
-    # Yet another function that has small gradients when it has big inputs. But as the log function is not bounded above, the hard integral bound introduced
-    # by tanh can be alleviated.
-    'log': sym_Log,
-    # This activation can perfectly show why FullyNN needs tanh to attain a trade-off between intensity function regression ability and extrapolation 
-    'identity': nn.Identity,
-    # Might be the redeemer, but I'm not sure.
-    'ploy': sym_Polynomial
-}
 
 
 class IFIBC(nn.Module):
@@ -68,7 +46,7 @@ class IFIBC(nn.Module):
         ])
 
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
-        self.layer_activation = TA[nonlinear]()
+        self.layer_activation = nn.Tanh()
 
         # We might need these two factors to control the vector's norm.
         if pretrain:

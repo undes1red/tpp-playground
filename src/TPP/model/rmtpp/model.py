@@ -1,7 +1,5 @@
-from einops import rearrange, reduce, repeat
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
-import torch
-import numpy as np
+from sklearn.metrics import f1_score
+import torch, copy
 from scipy.stats import spearmanr
 
 from src.TPP.model.utils import *
@@ -16,15 +14,16 @@ class RMTPP(BasicModule):
         super(RMTPP, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
+        self.start_time = info_dict['t_0']
+        self.end_time = info_dict['T']
         self.event_toggle = event_toggle
         self.limited_history_norm = limited_history_norm
         self.probability_threshold = probability_threshold
-        self.zero_shift = 1e-12
+        self.epsilon = 1e-20
 
         self.model = RMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
                                  dropout = dropout, num_events = self.num_events, output_size = output_size, event_toggle = event_toggle, 
                                  limited_history_norm = limited_history_norm, time_scalar_min = time_scalar_min, device = device)
-
 
     def forward(self, task_name, *args, **kwargs):
         '''
@@ -64,39 +63,63 @@ class RMTPP(BasicModule):
 
         return task_mapper[task_name](*args, **kwargs)
 
-
     def divide_history_and_next(self, input):
         history, next = input[:, :-1].clone(), input[:, 1:].clone()
         return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
 
+    def remove_dummy_event_from_mask(self, mask):
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        
+        return mask_without_dummy
 
     def train_procedure(self, events, time, mask, mean, var):
         events_history, events_next = self.divide_history_and_next(events)
                                                                                # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
 
-        integral, intensity, mark, constant = self.model(events_history, time_history, time_next, mean, var)
+        integral, intensity, mark, _ = self.model(events_history, time_history, time_next, mean, var)
                                                                                # [batch_size, seq_len, 1] * 2, [batch_size, seq_length, num_events], and [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
 
         check_tensor(intensity)
         check_tensor(integral)
 
-        loss, time_loss, events_loss, the_number_of_events = \
-                   self.loss_function(intensity, integral, mark, events_next, mask_next)
+        # loss_without_dummy = time_loss_without_dummy + events_loss_without_dummy
+        # time_loss_without_dummy = \sum_{t_i}{\lambda^*(t_i)} + \int_{t_0}^{t_n}{\lambda^*(\tau)d\tau}
+        # event_loss_without_dummy = \sum{x_i}{CrossEntropyLoss(\hat{x_i}, x_i)} for all real-world events.
+        loss_without_dummy, time_loss_without_dummy, events_loss_without_dummy = \
+                   self.loss_function(intensity, integral, mark, events_next_without_dummy, mask_next_without_dummy)
+        # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        probability_survival = integral.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1).sum()
+                                                                               # [batch_size, 1]
+        loss = loss_without_dummy + probability_survival                       # [batch_size]
 
-        return loss, time_loss, events_loss, the_number_of_events, constant
-
+        return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
 
     def evaluate_procedure(self, events, time, mask, mean, var):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
 
         '''
         Calculating MAE here.
         '''
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
+        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next_without_dummy, mean, var)
                                                                                # [batch_size, seq_len] * 2
 
         integral_time_next, intensity_time_next, mark_time_next, constant_time_next \
@@ -110,20 +133,27 @@ class RMTPP(BasicModule):
         check_tensor(intensity_pred_time)
         check_tensor(integral_pred_time)
         
-        loss_time_next, time_loss_time_next, events_loss_time_next, the_number_of_events = \
-                   self.loss_function(intensity_time_next, integral_time_next, mark_time_next, events_next, mask_next)
-        loss_pred_time, time_loss_pred_time, events_loss_pred_time, the_number_of_events = \
-                   self.loss_function(intensity_pred_time, integral_pred_time, mark_pred_time, events_next, mask_next)
-
-        predicted_events = torch.argmax(mark_pred_time, dim = -1)[mask_next == 1]
-        events_true = events_next[mask_next == 1]
+        # NLL and event loss at time_next.
+        loss_time_next_without_dummy, time_loss_time_next_without_dummy, events_loss_time_next_without_dummy = \
+                   self.loss_function(intensity_time_next, integral_time_next, mark_time_next, events_next_without_dummy, mask_next_without_dummy)
+        
+        '''
+        macro-F1 of evaluating event predictions.
+        '''
+        predicted_events = torch.argmax(mark_pred_time, dim = -1)[mask_next_without_dummy == 1]
+        events_true = events_next_without_dummy[mask_next_without_dummy == 1]
         predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
                                                                        # [batch_size, seq_len] * 2
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
-        return loss_time_next, time_loss_time_next, events_loss_time_next, loss_pred_time, time_loss_pred_time, events_loss_pred_time, \
-               mae, f1, the_number_of_events, constant_time_next, constant_pred_time
+        # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        probability_survival = integral_time_next.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        time_loss_survival = -torch.log(probability_survival + self.epsilon).mean()
 
+        return time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
+               mae, f1, the_number_of_events
 
     def loss_function(self, intensity, integral, mark, events_next, mask_next):
         # temporal point process loss
@@ -142,14 +172,13 @@ class RMTPP(BasicModule):
         else:
             events_loss = torch.tensor(0., device = self.device)
 
-        time_loss = -torch.log(intensity + self.zero_shift) + integral         # [batch_size, seq_len]
+        time_loss = -torch.log(intensity + self.epsilon) + integral            # [batch_size, seq_len]
         time_loss = time_loss * mask_next
         time_loss = time_loss.sum()
 
         loss = time_loss + events_loss
 
-        return loss, time_loss, events_loss, mask_next.sum().item()
-
+        return loss, time_loss, events_loss
 
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
@@ -162,7 +191,6 @@ class RMTPP(BasicModule):
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
         return mae, f1
-
 
     def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
         '''
@@ -195,7 +223,6 @@ class RMTPP(BasicModule):
 
         return gap, tau_pred
 
-
     def plot(self, minibatch, opt):
         plot_type_to_functions = {
             'intensity': self.intensity,
@@ -205,7 +232,6 @@ class RMTPP(BasicModule):
         }
     
         return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
 
     def extract_plot_data(self, minibatch):
         '''
@@ -233,7 +259,6 @@ class RMTPP(BasicModule):
         mean, var = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, var
-
 
     def intensity(self, input_data, opt):
         '''
@@ -273,7 +298,6 @@ class RMTPP(BasicModule):
         
         return plots
 
-
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -310,7 +334,6 @@ class RMTPP(BasicModule):
             }
         plots = plot_integral(data, timestamp, opt)
         return plots
-
 
     def probability(self, input_data, opt):
         '''
@@ -351,7 +374,6 @@ class RMTPP(BasicModule):
         plots = plot_probability(data, timestamp, opt)
         return plots
 
-
     def debug(self, input_data, opt):
         '''
         Args:
@@ -388,7 +410,6 @@ class RMTPP(BasicModule):
         plots = plot_debug(data, timestamp, opt)
 
         return plots
-
 
     '''
     Evaluation over the entire dataset.
@@ -437,7 +458,6 @@ class RMTPP(BasicModule):
 
         return spearman, l1
     
-
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -452,117 +472,90 @@ class RMTPP(BasicModule):
 
         return mae, f1_1
 
-    
     def get_mae_e_and_f1(self, input_data, opt):
         raise NotImplemented("RMTPP is a TPP model, so MAE-E is not supported.")
-
 
     def train_step(model, minibatch, device):
         model.train()
         
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
-        loss, time_loss, events_loss, the_number_of_events, constant \
-                   = model('train', events, time, mask, mean, var)
+        loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', events, time, mask, mean, var)
 
         loss.backward()
 
-        loss = loss.item() / the_number_of_events
-        time_loss = time_loss.item() / the_number_of_events
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
-        constant_norm = torch.linalg.norm(constant).detach().item() / the_number_of_events
 
-        return loss, time_loss, fact, events_loss, constant_norm
-
+        return time_loss_without_dummy, fact, events_loss
 
     def evaluation_step(model, minibatch, device):
         model.eval()
 
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
-        loss_time_next, time_loss_time_next, events_loss_time_next, \
-        loss_pred_time, time_loss_pred_time, events_loss_pred_time, \
-        mae, f1, the_number_of_events, constant_time_next, \
-        constant_pred_time = model('evaluate', events, time, mask, mean, var)
+        time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
+        mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, var)
         
-        # Loss values and other metrics at time_next
-        loss_time_next = loss_time_next.item() / the_number_of_events
-        time_loss_time_next = time_loss_time_next.item() / the_number_of_events
+        time_loss_time_next_without_dummy = time_loss_time_next_without_dummy.item() / the_number_of_events
+        time_loss_survival = time_loss_survival.item()
         fact = score.sum().item() / the_number_of_events
-        events_loss_time_next = events_loss_time_next.item() / the_number_of_events
-        constant_time_next = torch.linalg.norm(constant_time_next).item() / the_number_of_events
-
-        # Loss values and other metrics at pred_time
-        loss_pred_time = loss_pred_time.item() / the_number_of_events
-        time_loss_pred_time = time_loss_pred_time.item() / the_number_of_events
-        events_loss_pred_time = events_loss_pred_time.item() / the_number_of_events
+        events_loss_time_next_without_dummy = events_loss_time_next_without_dummy.item() / the_number_of_events
         mae = mae.sum().item() / the_number_of_events
-        constant_pred_time = torch.linalg.norm(constant_pred_time).item() / the_number_of_events
 
-
-        return loss_time_next, time_loss_time_next, fact, events_loss_time_next, \
-               constant_time_next, loss_pred_time, time_loss_pred_time, \
-               events_loss_pred_time, constant_pred_time, mae, f1
-
+        return time_loss_time_next_without_dummy, time_loss_survival, fact, events_loss_time_next_without_dummy, mae, f1
 
     def postprocess(input, procedure):
-        if procedure == 'Training':
-            return [input[0], input[1], input[1] - input[2], input[3], input[4]]
-        else:
-            return [input[0], input[1], input[1] - input[2], input[3], \
-                    input[4], input[5], input[6], input[7], input[8], \
-                    input[9], input[10]]
-
-
-    format_dict_length = 11
-
-
-    def log_print_format(input, procedure):
-        def format_training(input):
-            format_dict = {}
-            format_dict['loss'] = input[0]
-            format_dict['absolute_time_loss'] = input[1]
-            format_dict['relative_time_loss'] = input[2]
-            format_dict['events_loss'] = input[3]
-            format_dict['constant_norm'] = input[4]
-            format_dict['num_format'] = {'loss': ':8.5f', 'absolute_time_loss': ':8.5f', 'relative_time_loss': ':8.5f', \
-                                         'events_loss': ':8.5f', 'constant_norm': ':8.5f'}
-            return format_dict
-
-        def format_eva_and_test(input):
-            format_dict = {}
+        def train_postprocess(input):
             '''
-            loss_time_next, time_loss_time_next, fact, events_loss_time_next,
-            constant_time_next, loss_pred_time, time_loss_pred_time,
-            events_loss_pred_time, constant_pred_time, mae, f1
+            Training process
+            [absolute loss, relative loss, events loss]
             '''
-            format_dict['loss_time_next'] = input[0]
-            format_dict['absolute_time_loss_time_next'] = input[1]
-            format_dict['relative_time_loss_time_next'] = input[2]
-            format_dict['events_loss_time_next'] = input[3]
-            format_dict['constant_norm_time_next'] = input[4]
-            format_dict['loss_pred_time'] = input[5]
-            format_dict['absolute_time_loss_pred_time'] = input[6]
-            format_dict['events_loss_pred_time'] = input[7]
-            format_dict['constant_norm_pred_time'] = input[8]
-            format_dict['mae'] = input[9]
-            format_dict['f1'] = input[10]
+            return [input[0], input[0] - input[1], input[2]]
+        
+        def test_postprocess(input):
+            '''
+            Evaluation process
+            [absolute loss, relative loss, events loss, mae value]
+            '''
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
+        
+        return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
 
-            format_dict['num_format'] = {
-                'loss_time_next': ':8.5f', 'absolute_time_loss_time_next': ':8.5f', 'relative_time_loss_time_next': ':8.5f', 
-                'events_loss_time_next': ':8.5f', 'constant_norm_time_next': ':8.5f', 'loss_pred_time': ':8.5f',
-                'absolute_time_loss_pred_time': ':8.5f', 'events_loss_pred_time': ':8.5f', 'constant_norm_pred_time': ':8.5f', 
-                'mae': ':2.8f', 'f1': ':2.8f'
-            }
-            return format_dict
 
-        return format_training(input) if procedure == 'Training' else format_eva_and_test(input)
+    format_dict_length = 6
+
     
+    def log_print_format(input, procedure):
+        def train_log_print_format(input):
+            format_dict = {}
+            format_dict['absolute_loss'] = input[0]
+            format_dict['relative_loss'] = input[1]
+            format_dict['events_loss'] = input[2]
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
+                                         'events_loss': ':6.5f'}
+            return format_dict
 
+        def test_log_print_format(input):
+            format_dict = {}
+            format_dict['absolute_NLL_loss'] = input[0]
+            format_dict['avg_survival_loss'] = input[1]
+            format_dict['relative_NLL_loss'] = input[2]
+            format_dict['events_loss'] = input[3]
+            format_dict['mae'] = input[4]
+            format_dict['f1_pred_at_pred_time'] = input[5]
+            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
+                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
+                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
+            return format_dict
+        
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
+    
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset]
+        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['loss_time_next'], test_report_format_dict['loss_time_next']], \
+        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
-    
+
     metric_number = 2 # metric number is the length of the output of choose_metric

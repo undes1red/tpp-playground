@@ -1,4 +1,4 @@
-import torch
+import torch, copy
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
@@ -14,21 +14,39 @@ from src.TPP.model.thp.utils import *
 class THPWrapper(BasicModule):
     def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 0, probability_threshold = 0.5, 
-                 monte_carlo_resolution = 100):
+                 integration_sample_rate = 100, epsilon = 1e-20, history_time_offset = 1.0):
         super(THPWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events'] if info_dict['num_events'] > 0 else 1
+        self.num_events = info_dict['num_events']
+        self.start_time = info_dict['t_0']
+        self.end_time = info_dict['T']
         self.probability_threshold = probability_threshold
-        self.zero_shift = 1e-12
+        self.epsilon = epsilon
+        self.history_time_offset = history_time_offset
 
         self.model = THP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
                          n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
-                         beta = beta, monte_carlo_resolution = monte_carlo_resolution, device = device)
+                         beta = beta, integration_sample_rate = integration_sample_rate, device = device, \
+                         history_time_offset = history_time_offset)
 
 
     def divide_history_and_next(self, input):
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
+
+
+    def remove_dummy_event_from_mask(self, mask):
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        
+        return mask_without_dummy
 
 
     def forward(self, task_name, *args, **kwargs):
@@ -82,26 +100,30 @@ class THPWrapper(BasicModule):
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
-
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len] * 2
 
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
+
         integral_all_events, intensity_all_events \
             = self.model(time_history, time_next, events_history, mask_history, mask_next)
                                                                                # [batch_size, seq_len, num_events]
-        # temporal point process loss
-        neg_log_likeli_loss, marker_loss = self.negative_log_likelihood_and_event_loss(
+        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.negative_log_likelihood_and_event_loss(
              intensity_all_events = intensity_all_events, integral_all_events = integral_all_events,\
-             events_next = events_next, mask_next = mask_next
+             events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
         )
-        
-        '''
-        Event loss. This loss should not be counted into the backward loss
-        '''
-        the_number_of_events = mask_next.sum().item()
+        # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.sum()
+        loss = neg_log_likeli_loss_without_dummy + loss_survival
 
-        return neg_log_likeli_loss, marker_loss, the_number_of_events
+        return neg_log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
 
 
     '''
@@ -121,13 +143,15 @@ class THPWrapper(BasicModule):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
+
         '''
         Event loss. This loss should not be counted into the backward loss
         '''
-        the_number_of_events = mask_next.sum().item()
-        gap, tau_pred = self.mean_absolute_error(time_history, time_next, events_history, mask_history, mask_next)
-        gap_mean = gap.sum().item() / the_number_of_events
-
+        mae, tau_pred = self.mean_absolute_error(time_history, time_next, events_history, mask_history, mask_next_without_dummy)
+        mae = mae.sum().item() / the_number_of_events
 
         integral_all_events_time_next, intensity_all_events_time_next \
             = self.model(time_history, time_next, events_history, mask_history, mask_next)
@@ -136,25 +160,24 @@ class THPWrapper(BasicModule):
             = self.model(time_history, tau_pred, events_history, mask_history, mask_next)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
-        # temporal point process loss
-        log_likeli_loss_time_next, marker_loss_time_next = self.negative_log_likelihood_and_event_loss(
+        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.negative_log_likelihood_and_event_loss(
              intensity_all_events = intensity_all_events_time_next, integral_all_events = integral_all_events_time_next,\
-             events_next = events_next, mask_next = mask_next
+             events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
         )
-        f1_time_next = self.evaluate_f1(intensity_all_events_time_next, events_next, mask_next)
-        log_likeli_loss_pred, marker_loss_pred = self.negative_log_likelihood_and_event_loss(
-             intensity_all_events = intensity_all_events_pred, integral_all_events = integral_all_events_pred,\
-             events_next = events_next, mask_next = mask_next
-        )
-        f1_pred = self.evaluate_f1(intensity_all_events_pred, events_next, mask_next)
+        f1_pred_time = self.evaluate_f1(intensity_all_events_pred, events_next_without_dummy, mask_next_without_dummy)
+        # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+        integral_survival = integral_all_events_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                               # [batch_size, 1]
+        loss_survival = integral_survival.sum()
 
-
-        return log_likeli_loss_pred, log_likeli_loss_time_next, marker_loss_pred, marker_loss_time_next,\
-               gap_mean, f1_time_next, f1_pred, the_number_of_events
+        return log_likeli_loss_time_next_without_dummy, loss_survival, marker_loss_time_next_without_dummy, \
+               mae, f1_pred_time, the_number_of_events
 
 
     def evaluate_f1(self, intensity_all_events, events_next, mask_next):
-        events_prediction_probability = torch.log(intensity_all_events + self.zero_shift)
+        events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
         events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
@@ -173,28 +196,21 @@ class THPWrapper(BasicModule):
     '''
     def negative_log_likelihood_and_event_loss(self, intensity_all_events, integral_all_events, events_next, mask_next):
         """ Log-likelihood of sequence. """
-            
-        if events_next is not None:
-            type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
-                                                                               # [batch_size, seq_len, num_events]
-        else:
-            type_mask = 1
+        type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
 
         '''
         MTPP loss function
         '''
         intensity = torch.sum(intensity_all_events * type_mask, dim = -1)      # [batch_size, seq_len]
-
-        log_intensity = torch.log(intensity + self.zero_shift) * mask_next     # [batch_size, seq_len]
+        log_intensity = torch.log(intensity + self.epsilon) * mask_next     # [batch_size, seq_len]
         intensity_integral = integral_all_events.sum(dim = -1)                 # [batch_size, seq_len]
         ll = -log_intensity + intensity_integral                               # [batch_size, seq_len]
         mtpp_nll_loss = torch.sum(ll)
 
-
         '''
         Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
         '''
-        events_prediction_probability = torch.log(intensity_all_events + self.zero_shift)
+        events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
         events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
@@ -257,7 +273,6 @@ class THPWrapper(BasicModule):
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var):
         self.eval()
 
-
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
@@ -285,32 +300,22 @@ class THPWrapper(BasicModule):
         if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
-        '''
-        Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
-        '''
-        # resolution_inf = 2500
-
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
-        probabilty_expanded_events = \
+        expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
                                                                                # [batch_size, seq_len, resolution, num_events]
-        probabilty_expanded_events_for_monte_carlo = probabilty_expanded_events[:, :, :-1, :]
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        expanded_time_gap_for_monte_carlo = timestamp[:, :, 1:].unsqueeze(dim = -1)
-                                                                               # [batch_size, seq_len, resolution - 1, 1]
-        probability = probabilty_expanded_events_for_monte_carlo * expanded_time_gap_for_monte_carlo
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        probability = probability.sum(dim = -2)                                # [batch_size, seq_len, num_events]
-        probability_integral_sum = probability.sum(dim = -1)                   # [batch_size, seq_len]
-        predicted_events = torch.argmax(probability, dim = -1)                 # [batch_size, seq_len]
+        probability_integral_to_inf = self.model.integration_estimator(expanded_probability_inf, timestamp, resolution_inf)[:, :, -1, :]
+                                                                               # [batch_size, seq_len, num_events]
+        probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
+        predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
         # F1 value and top_k_acc are only avaliable when batch_size = 1
         
         f1 = []
         top_k_acc = []
-        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability):
+        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_to_inf):
             f1.append(f1_score(y_true = ground_truth_per_seq.detach().cpu(),
                                y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
             
@@ -377,14 +382,10 @@ class THPWrapper(BasicModule):
                                                                                # [batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [batch_size, seq_len, num_events, resolution]
-
-            expanded_probability_per_event_monte_carlo = expanded_probability_per_event[:, :, :, :-1]
-                                                                               # [batch_size, seq_len, num_events, resolution - 1]
-            timestamp_monte_carlo = timestamp[:, :, :, 1:]                     # [batch_size, seq_len, num_events, resolution - 1]
-
-            probability = (expanded_probability_per_event_monte_carlo * timestamp_monte_carlo).sum(dim = -1)
+            expanded_probability_per_event = rearrange(expanded_probability_per_event, 'b s ne r -> b s r ne')
+                                                                               # [batch_size, seq_len, resolution, num_events]
+            probability = self.model.integration_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
                                                                                # [batch_size, seq_len, num_events]
-            
             return probability
 
         def bisect_target(taus):
@@ -719,71 +720,69 @@ class THPWrapper(BasicModule):
     
         model.eval()
 
-        time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        log_likeli_loss_pred, log_likeli_loss_time_next, marker_loss_pred, marker_loss_time_next,\
-        gap, f1_time_next, f1_pred, the_number_of_events = model('evaulate', time, events, mask)
+        time, events, score, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
+        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events = model('evaluate', time, events, mask)
 
-        log_likeli_loss_pred, log_likeli_loss_time_next \
-            = log_likeli_loss_pred.item() / the_number_of_events, log_likeli_loss_time_next.item() / the_number_of_events
-        marker_loss_pred, marker_loss_time_next \
-            = marker_loss_pred.item() / the_number_of_events, marker_loss_time_next.item() / the_number_of_events
-        fact = fact.sum().item() / the_number_of_events
-
-        return log_likeli_loss_pred, log_likeli_loss_time_next, marker_loss_pred, marker_loss_time_next, fact, gap, f1_time_next, f1_pred
+        time_loss = time_loss.item() / the_number_of_events
+        loss_survival = loss_survival.item()
+        events_loss = events_loss.item() / the_number_of_events
+        fact = score.sum().item() / the_number_of_events
+        
+        return time_loss, loss_survival, fact, events_loss, mae, f1
 
 
     def postprocess(input, procedure):
-        def train(input):
-            return [input[0], input[0] - input[2], input[1]]
+        def train_postprocess(input):
+            '''
+            Training process
+            [absolute loss, relative loss, events loss]
+            '''
+            return [input[0], input[0] - input[1], input[2]]
         
-        def evaluate(input):
-            return [input[0], input[1], input[1] - input[4], input[2], input[3], input[5], input[6], input[7]]
-
-        return train(input) if procedure == 'Training' else evaluate(input)
-
-
-    format_dict_length = 8
-
-
+        def test_postprocess(input):
+            '''
+            Evaluation process
+            [absolute loss, relative loss, events loss, mae value]
+            '''
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
+        
+        return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
+    
+    
     def log_print_format(input, procedure):
-        def train(input):
+        def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = input[0]
             format_dict['relative_loss'] = input[1]
             format_dict['events_loss'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':8.5f', 'relative_loss': ':8.5f', 'events_loss': ':8.5f'}
+            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
+                                         'events_loss': ':6.5f'}
             return format_dict
-        
-        def evaluate(input):
+
+        def test_log_print_format(input):
             format_dict = {}
-            format_dict['NLL Loss at predicted timestamps'] = input[0]
-            format_dict['NLL Loss at given timestamps'] = input[1]
-            format_dict['relative NLL Loss at given timestamps'] = input[2]
-            format_dict['marker loss at predicted timestamps'] = input[3]
-            format_dict['marker loss at given timestamps'] = input[4]
-            format_dict['mae'] = input[5]
-            format_dict['f1 at given timestamps'] = input[6]
-            format_dict['f1 at predicted timestamps'] = input[7]
-            format_dict['num_format'] = {
-                'NLL Loss at predicted timestamps': ':8.5f',
-                'NLL Loss at given timestamps': ':8.5f',
-                'relative NLL Loss at given timestamps': ':8.5f',
-                'marker loss at predicted timestamps': ':8.5f',
-                'marker loss at given timestamps': ':8.5f',
-                'mae': ':2.8f',
-                'f1 at given timestamps': ':8.5f',
-                'f1 at predicted timestamps': ':8.5f'
-            }
+            format_dict['absolute_NLL_loss'] = input[0]
+            format_dict['avg_survival_loss'] = input[1]
+            format_dict['relative_NLL_loss'] = input[2]
+            format_dict['events_loss'] = input[3]
+            format_dict['mae'] = input[4]
+            format_dict['f1_pred_at_pred_time'] = input[5]
+            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
+                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
+                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
             return format_dict
         
-        return train(input) if procedure == 'Training' else evaluate(input)
+        return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
+    format_dict_length = 6
 
+    
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['NLL Loss at given timestamps'], test_report_format_dict['NLL Loss at given timestamps']], \
-               ['evaluation NLL loss at given time', 'test NLL loss at given time']
-    
+        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+               ['evaluation_absolute_loss', 'test_absolute_loss']
+
     metric_number = 2 # metric number is the length of the output of choose_metric

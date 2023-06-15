@@ -1,4 +1,10 @@
 '''
+The grave yard of functions.
+
+These functions might be introduced to verify the MAE-E values.
+'''
+
+'''
 The gap between mae_per_event_with_predict_index and mae_per_event_pure_predict, mae_per_event_with_event_next and 
 mae_per_event_next should be minor.
 
@@ -7,14 +13,16 @@ p_m_predicted = reduce(p_m * predict_index_one_hot_mask, '... ne -> ...', 'sum')
 p_m_real = reduce(p_m * events_next_one_hot_mask, '... ne -> ...', 'sum')
                                                                        # [batch_size, seq_len]
 
-mae_per_event_pure_predict = self.mean_absolute_error_per_event(events_history, predict_index, time_history, time_next,
+mae_per_event_pure_predict = self.mean_absolute_error_per_event_worker(events_history, predict_index, time_history, time_next,
                                                                        p_m_predicted, resolution, mask_next, mean, var, max_)
-mae_per_event_next = self.mean_absolute_error_per_event(events_history, events_next, time_history, time_next, 
+mae_per_event_next = self.mean_absolute_error_per_event_worker(events_history, events_next, time_history, time_next, 
                                                           p_m_real, resolution, mask_next, mean, var, max_)
 '''
 
+
 '''
-    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, p_m, resolution, \
+
+    def mean_absolute_error_per_event_worker(self, events_history, events_next, time_history, time_next, p_m, resolution, \
                                              mask_next, mean, var, max_val):
         \'''
         The time prediction of given markers
@@ -96,5 +104,5 @@ mae_per_event_next = self.mean_absolute_error_per_event(events_history, events_n
         gap = torch.abs(gap)
 
         return gap
-    
+
 '''

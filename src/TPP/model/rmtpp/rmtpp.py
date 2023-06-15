@@ -14,7 +14,6 @@ class RMTPPModule(nn.Module):
         self.event_toggle = event_toggle
         self.limited_history_norm = limited_history_norm
         self.time_scalar_min = time_scalar_min
-        self.zero_shift_factor = 1e-12
 
         self.time_embedding = nn.Linear(1, input_size, device = self.device)
         self.rnn = nn.LSTM(input_size = input_size, hidden_size = hidden_size, num_layers = history_encoder_layers, batch_first = True, \

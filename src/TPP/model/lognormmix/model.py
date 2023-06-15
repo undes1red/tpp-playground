@@ -468,7 +468,7 @@ class LogNormMixWrapper(BasicModule):
             Training process
             [absolute loss, relative loss, events loss]
             '''
-            return [input[0], input[0] - input[1], input[2]]
+            return [input[0], input[0] - input[2], input[1]]
         
         def test_postprocess(input):
             '''
