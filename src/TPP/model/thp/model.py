@@ -339,11 +339,9 @@ class THPWrapper(BasicModule):
             top_k_acc.append(top_k_acc_per_seq)
 
         # F1:        [batch_size]
-        # top_k_acc: [batch_size, num_events]
-        resolution = max(min(int(mean * 200), 1000), 1)
-        
-        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, probability, resolution_between_events, \
-                                                                  mask_history, mean, var, max_)
+        # top_k_acc: [batch_size, num_events]        
+        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, probability_integral_to_inf, \
+                                                                  resolution_between_events, mask_history, mean, var, max_)
                                                                                # [batch_size, seq_len, num_events]
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
