@@ -54,9 +54,6 @@ class TPPPlotter:
         )
 
         self.opt.__dict__.update(model_param)
-
-        if rank == 0:
-            logger.info(print_args(self.opt))
         
         '''
         Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DDP.

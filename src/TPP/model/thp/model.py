@@ -336,7 +336,6 @@ class THPWrapper(BasicModule):
                         y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
                     )
                 )
-                top_k_acc.append(1.0)
             top_k_acc.append(top_k_acc_per_seq)
 
         # F1:        [batch_size]
@@ -384,7 +383,7 @@ class THPWrapper(BasicModule):
                                                                                # [batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = rearrange(expanded_probability_per_event, 'b s ne r -> b s r ne')
                                                                                # [batch_size, seq_len, resolution, num_events]
-            probability = self.model.integration_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
+            probability = self.model.integration_probability_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
                                                                                # [batch_size, seq_len, num_events]
             return probability
 

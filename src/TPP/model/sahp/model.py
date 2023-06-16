@@ -305,7 +305,7 @@ class SAHPWrapper(BasicModule):
             resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
 
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
                                                                                # 2 * [batch_size, seq_len, resolution_inf, num_events]
 
         expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
@@ -338,7 +338,6 @@ class SAHPWrapper(BasicModule):
                         y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
                     )
                 )
-                top_k_acc.append(1.0)
             top_k_acc.append(top_k_acc_per_seq)
         # F1:        [batch_size]
         # top_k_acc: [batch_size, num_events]
@@ -372,7 +371,7 @@ class SAHPWrapper(BasicModule):
         '''
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, mean, var)
+                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution)
                                                                                # 2 * [batch_size, seq_len, num_events, resolution, num_events] + [batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                                # [batch_size, seq_len, num_events, resolution]
@@ -384,9 +383,8 @@ class SAHPWrapper(BasicModule):
                                                                                # [batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [batch_size, seq_len, num_events, resolution]
-            expanded_probability_per_event = rearrange(expanded_probability_per_event, 'b s ne r -> b s r ne')
-                                                                               # [batch_size, seq_len, resolution, num_events]
-            probability = self.model.integration_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
+            probability = self.model.integration_probability_estimator(expanded_probability_per_event, \
+                                                                       timestamp, resolution)[:, :, :, -1]
                                                                                # [batch_size, seq_len, num_events]
             return probability
     
@@ -474,7 +472,7 @@ class SAHPWrapper(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -513,7 +511,7 @@ class SAHPWrapper(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -551,7 +549,7 @@ class SAHPWrapper(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -592,7 +590,7 @@ class SAHPWrapper(BasicModule):
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_history, mask_next, opt.resolution, mean, var)
+                                                          mask_history, mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var)
 
@@ -627,7 +625,7 @@ class SAHPWrapper(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)

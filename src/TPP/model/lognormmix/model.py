@@ -337,14 +337,14 @@ class LogNormMixWrapper(BasicModule):
         '''
         self.model.eval()
 
-        input_time, input_events, input_intensity, input_mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(input_mask)     # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(input_time, input_events, input_mask, mean, var)
+        mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len]
         
         _, timestamp = \

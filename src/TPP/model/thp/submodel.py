@@ -71,11 +71,46 @@ class THP(nn.Module):
         # Effectively increase the precision.
         integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
                                                                                # [..., integration_sample_rate - 1, num_events]
-        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
-        integral_of_all_events, integral_of_all_events_ps = pack(
-            (torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device), integral_of_all_events), 'b s * ne'
-        )                                                                      # [..., integration_sample_rate, num_events]
         
+        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+        # We have to check the shape.
+        if len(integral_of_all_events.shape) == 5:
+            integral_of_all_events, integral_of_all_events_ps = pack(
+                (torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device), integral_of_all_events), 'b s ne1 * ne'
+            )                                                                  # [..., integration_sample_rate, num_events]
+        elif len(integral_of_all_events.shape) == 4:
+            integral_of_all_events, integral_of_all_events_ps = pack(
+                (torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device), integral_of_all_events), 'b s * ne'
+            )                                                                  # [..., integration_sample_rate, num_events]
+        
+        return integral_of_all_events
+
+
+    def integration_probability_estimator(self, expanded_probability_value, expanded_time, integration_sample_rate):
+        # tensor check
+        assert expanded_probability_value.shape[-2:] == (self.num_events, integration_sample_rate)
+        assert expanded_time.shape[-1] == integration_sample_rate
+        
+        expanded_probability_value_1 = expanded_probability_value[..., :-1]    # [..., integration_sample_rate - 1]
+        expanded_probability_value_2 = expanded_probability_value[..., 1:]     # [..., integration_sample_rate - 1]
+        timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
+
+        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+        integral_of_all_events_1 = (expanded_probability_value_1 * timestamp_for_integral).cumsum(dim = -1)
+                                                                               # [..., integration_sample_rate - 1]
+        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+        integral_of_all_events_2 = (expanded_probability_value_2 * timestamp_for_integral).cumsum(dim = -1)
+                                                                               # [..., integration_sample_rate - 1]
+        # Effectively increase the precision.
+        integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
+                                                                               # [..., integration_sample_rate - 1]
+        
+        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+        # We have to check the shape.
+        integral_of_all_events, integral_of_all_events_ps = pack(
+            (torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device), integral_of_all_events), 'b s ne *'
+        )                                                                      # [..., integration_sample_rate]
+
         return integral_of_all_events
 
 
@@ -225,7 +260,7 @@ class THP(nn.Module):
             # rho: spearman coefficient
             spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * integration_sample_rate])[0]
             if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix], [spearman_matrix, 1]])
+                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * integration_sample_rate], rowvar = False)

@@ -31,7 +31,7 @@ TA = {
 }
 
 
-class FullyNN(nn.Module):
+class TFullyNN(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -44,7 +44,7 @@ class FullyNN(nn.Module):
 
     def __init__(self, d_history, d_intensity, num_events, dropout,d_hidden, n_layers, \
                  n_head, d_qk, d_v, mlp_layers, nonlinear, event_toggle, zero_shift, device):
-        super(FullyNN, self).__init__()
+        super(TFullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
@@ -472,7 +472,7 @@ class FullyNN(nn.Module):
                 # rho: spearman coefficient
                 spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
                 if self.num_events == 2:
-                    spearman_matrix_per_seq = np.array([[1, spearman_matrix], [spearman_matrix, 1]])
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
                 # r: pearson coefficient
                 pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)

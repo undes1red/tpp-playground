@@ -376,7 +376,6 @@ class IFIBCModel(BasicModule):
                         y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
                     )
                 )
-                top_k_acc_single_event_seq.append(1.0)
             top_k_acc.append(top_k_acc_single_event_seq)
 
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
@@ -773,7 +772,7 @@ class IFIBCModel(BasicModule):
         the time-event routine.
         '''
         time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
-            = self.sample_event_time(1, 70, mean, var)
+            = self.sample_event_time(1, self.end_time - self.start_time, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
@@ -789,7 +788,7 @@ class IFIBCModel(BasicModule):
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(1, 70, mean, var)
+            = self.sample_time_event(1, self.end_time - self.start_time, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)

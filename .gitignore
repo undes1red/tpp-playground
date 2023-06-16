@@ -111,8 +111,10 @@ ENV/
 
 # The data, config files, and outputs
 data/
+result*/
 output*/
 raw_input/
+result/
 output/
 model/
 config/

@@ -5,12 +5,12 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from src.TPP.model import memory_ceiling
-from src.TPP.model.tfullynn.submodel import FullyNN
+from src.TPP.model.tfullynn.submodel import TFullyNN
 from src.TPP.model.utils import *
 from src.TPP.model.tfullynn.plot import *
 
 
-class FullyNNModel(BasicModule):
+class TFullyNNModel(BasicModule):
     '''
     The original FullyNN model with dedicated marker prediction module.
     As the time distribution p^*(t) and p^*(m) are independent, only function time_event_prediction() works while
@@ -22,16 +22,16 @@ class FullyNNModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
-                 history_module_layers,
                  mlp_layers,
                  nonlinear,
                  probability_threshold,
                  info_dict,
                  device,
-                 history_module = 'LSTM',
+                 d_hidden, n_layers, \
+                 n_head, d_qk, d_v,
                  event_toggle = False,
                  zero_shift = False):
-        super(FullyNNModel, self).__init__()
+        super(TFullyNNModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.num_events = info_dict['num_events']
@@ -40,10 +40,8 @@ class FullyNNModel(BasicModule):
         self.end_time = info_dict['T']
         self.epsilon = 1e-20
 
-        self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
-                             dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                             mlp_layers = mlp_layers, nonlinear = nonlinear, event_toggle = event_toggle, 
-                             zero_shift = zero_shift, device = device)
+        self.model = TFullyNN(d_history, d_intensity, self.num_events, dropout,d_hidden, n_layers, \
+                             n_head, d_qk, d_v, mlp_layers, nonlinear, event_toggle, zero_shift, device)
 
     def divide_history_and_next(self, input):
         '''

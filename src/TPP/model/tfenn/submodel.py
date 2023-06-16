@@ -6,7 +6,7 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.tfenn.nonneg import NonNegLinear
 from src.TPP.model.utils import L1_distance_across_events
-from src.TPP.model.tfenn_old.transformers import TransEncoder
+from src.TPP.model.tfenn.transformers import TransEncoder
 
 
 class TFENN(nn.Module):
@@ -422,7 +422,7 @@ class TFENN(nn.Module):
             # rho: spearman coefficient
             spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
             if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix], [spearman_matrix, 1]])
+                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
