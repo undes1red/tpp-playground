@@ -110,13 +110,13 @@ ENV/
 *.bin
 
 # The data, config files, and outputs
-data/
-result*/
+/data/
+results*/
 output*/
 raw_input/
-result/
+results/
 output/
-model/
+/model/
 config/
 wandb/
 deprecated/

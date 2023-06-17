@@ -342,12 +342,15 @@ class TFullyNNModel(BasicModule):
 
         return loss
 
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error_and_f1(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
         '''
 
         '''
+
+
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                                  time_next = time_next, mask_next = mask_next, mean = mean, var = var)
+                                                  time_next = time_next, mask_history = mask_history, \
+                                                  mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
 
         if self.event_toggle:
@@ -357,7 +360,7 @@ class TFullyNNModel(BasicModule):
         preparing for multi-event training when needed
         '''
         pred_time.requires_grad = True
-        integral_for_each_event = self.model(events_history, time_history, pred_time, mean = mean, var = var)
+        integral_for_each_event = self.model(events_history, time_history, pred_time, mask_history = mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
         '''
         Obtains intensity values.
@@ -427,7 +430,7 @@ class TFullyNNModel(BasicModule):
 
             if self.event_toggle:
                 taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)     # [batch_size, seq_len, num_events]
-            integral = self.model(events_history, time_history, mask_history, taus, mean, var)
+            integral = self.model(events_history, time_history, taus, mask_history, mean, var)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
             if self.event_toggle:
                 integral = integral.sum(dim = -1)                              # [batch_size, seq_len]
@@ -820,6 +823,7 @@ class TFullyNNModel(BasicModule):
         plots = plot_probability(data, timestamp, opt)
         return plots
 
+
     def debug(self, input_data, opt):
         '''
         Args:
@@ -837,7 +841,7 @@ class TFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         
@@ -920,7 +924,7 @@ class TFullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
