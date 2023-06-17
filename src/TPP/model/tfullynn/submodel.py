@@ -364,7 +364,7 @@ class TFullyNN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mask_history, mask_next, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
