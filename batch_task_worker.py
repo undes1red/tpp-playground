@@ -45,7 +45,7 @@ def task_generator(hyperparameter_list):
     ]
     '''
     file_name = os.path.join(root_path, hyperparameter_list['file_name'])
-    argparser = [opt.procedure_name + '_' + opt.script_type]
+    argparser = opt.procedure_name + '_' + opt.script_type
 
     single_hyperparameters = hyperparameter_list['single']
     index_hyperparameters = hyperparameter_list.get('index')
@@ -67,10 +67,9 @@ parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
 for hp_list in task_generator(parameter_retriver(opt)):
     if not do_not_use_gpu:
         hp_list.append("--cuda")
-    print(hp_list)
-    # process = subprocess.Popen([
-    #         'python3'
-    # ] + hp_list)
-    # process.wait()
+    process = subprocess.Popen([
+            'python3'
+    ] + hp_list)
+    process.wait()
     logger.warning(f'----> Task {task_count} completed. <----')
     task_count += 1
