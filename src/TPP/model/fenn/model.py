@@ -26,6 +26,7 @@ class FENNModel(BasicModule):
                  probability_threshold,
                  info_dict,
                  device,
+                 epsilon = 1e-20,
                  history_module = 'LSTM',
                  zero_shift = False):
         '''
@@ -37,7 +38,7 @@ class FENNModel(BasicModule):
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
-        self.epsilon = 1e-20
+        self.epsilon = epsilon
 
         self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,

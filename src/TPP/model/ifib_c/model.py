@@ -152,7 +152,12 @@ class IFIBCModel(BasicModule):
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         probability_survival = probability_integral_from_t_to_infinite.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
-        time_loss_survival = -torch.log(probability_survival + self.epsilon).sum()
+        # The experiment result shows that the existence of probability_survival could significantly damage the performance on the synthetic dataset.
+        # Given other models are not affected, it is highly possible that I calculate the wrong survival loss.
+        # However, I have no idea why I am wrong and what the correct one should be.
+        # time_loss_survival = -torch.log(probability_survival + self.epsilon).sum()
+        # time_loss_survival = -torch.log(probability_survival).sum()
+        time_loss_survival = 0
 
         loss = time_loss_without_dummy + time_loss_survival
 
