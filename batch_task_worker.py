@@ -1,7 +1,8 @@
 # You can use this file if you are too lazy to create and modify script files.
 # Just pack numerous tasks and run them one by one automatically.
 
-import subprocess, os, argparse, itertools, math, importlib
+import subprocess, os, argparse, itertools, importlib
+from batch_task_worker_utils import task_index_generator, task_counting_generator, remove_empty_str
 from src.taskhost import getLogger
 
 
@@ -30,177 +31,46 @@ else:
     do_not_use_gpu = True
 
 
-def task_index_generator(hyperparameter_list):
+def task_generator(hyperparameter_list):
     '''
-    Special used only
+    [
+        (other single hyperparameters),
+        "counting": 
+        [
+            (hyperparameter lists)
+        ],
+        "index":
+        [
+            (hyperparameter lists)
+        ]
+    ]
     '''
-    head = os.path.join(root_path, hyperparameter_list[0])
-    single_parameters = {}
-    multiple_parameters = {}
+    file_name = os.path.join(root_path, hyperparameter_list['file_name'])
+    argparser = [opt.procedure_name + '_' + opt.script_type]
 
-    last_parameter = ''
-    for items in hyperparameter_list[1:]:
-        if last_parameter == '':
-            '''
-            new arguments:
-            '''
-            last_parameter = items
-        elif last_parameter.startswith('--') and type(items) == list:
-            '''
-            arguments with multiple choices
-            '''
-            multiple_parameters[last_parameter] = items
-            last_parameter = ''
-        elif last_parameter.startswith('--') and items.startswith('--'):
-            '''
-            store_true arguments
-            '''
-            single_parameters[last_parameter] = ''
-            last_parameter = items
-        elif last_parameter.startswith('--') and not items.startswith('--'):
-            '''
-            arguments with single choice
-            '''
-            single_parameters[last_parameter] = items
-            last_parameter = ''
-    if last_parameter != '':
-        single_parameters[last_parameter] = ''
-    
-    # Now, map all fixed argument into a list.
-    fixed_arguments_part = [head] + [opt.procedure_name + '_' + opt.script_type] \
-                                  + list(itertools.chain.from_iterable(single_parameters.items()))
-    
-    count_of_each_multiple_hp = len(multiple_parameters)
+    single_hyperparameters = hyperparameter_list['single']
+    index_hyperparameters = hyperparameter_list.get('index')
+    counting_hyperparameters = hyperparameter_list.get('counting')
 
-    def remove_all(x, bad_item = ''):
-        try:
-            while 1:
-                x.remove(bad_item)
-        except:
-            return x
+    index_hyperparameters_list = task_index_generator(index_hyperparameters)
+    counting_hyperparameters_list = task_counting_generator(counting_hyperparameters)
 
-    if count_of_each_multiple_hp == 0:
-        '''
-        No multi_hps, just return the fixed parameter set.
-        '''
-        yield remove_all(fixed_arguments_part)
-    
-    '''
-    Affirm that all hyperparameter lists have the same length.
-    '''
-    number_of_parameters = len(list(multiple_parameters.values())[0])
-    for hyperparameter in multiple_parameters.values():
-        assert len(hyperparameter) == number_of_parameters, "Index mode requires all parameter list must have the same length!"
+    logger.info(f'We have planned {len(index_hyperparameters_list) * len(counting_hyperparameters_list)} tasks!')
 
-    # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
-    # generation loop.
-    logger.info(f'Totally, {number_of_parameters} tasks are planned.')
-    index_set = range(number_of_parameters)
-
-    for index in index_set:
-        choosed_value = {key: item[index] for (key, item) in multiple_parameters.items()}
-        choosed_value_to_list = list(itertools.chain.from_iterable(choosed_value.items()))
-        final_list = fixed_arguments_part + choosed_value_to_list
-        yield remove_all(final_list)
-        
-
-def task_counting_generator(hyperparameter_list):
-    '''
-    Special used only
-    '''
-    head = os.path.join(root_path, hyperparameter_list[0])
-    single_parameters = {}
-    multiple_parameters = {}
-
-    last_parameter = ''
-    for items in hyperparameter_list[1:]:
-        if last_parameter == '':
-            '''
-            new arguments:
-            '''
-            last_parameter = items
-        elif last_parameter.startswith('--') and type(items) == list:
-            '''
-            arguments with multiple choices
-            '''
-            multiple_parameters[last_parameter] = items
-            last_parameter = ''
-        elif last_parameter.startswith('--') and items.startswith('--'):
-            '''
-            store_true arguments
-            '''
-            single_parameters[last_parameter] = ''
-            last_parameter = items
-        elif last_parameter.startswith('--') and not items.startswith('--'):
-            '''
-            arguments with single choice
-            '''
-            single_parameters[last_parameter] = items
-            last_parameter = ''
-    if last_parameter != '':
-        single_parameters[last_parameter] = ''
-    
-    # Now, map all fixed argument into a list.
-    fixed_arguments_part = [head] + [opt.procedure_name + '_' + opt.script_type] \
-                                  + list(itertools.chain.from_iterable(single_parameters.items()))
-
-    # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
-    # generation loop.
-    multi_hp_count = len(multiple_parameters.values())
-    count_of_each_multiple_hp = [len(item) for item in multiple_parameters.values()]
-    current_index_of_each_list = [0] * multi_hp_count
-    the_number_of_task = math.prod(count_of_each_multiple_hp)
-    logger.info(f'Totally, {the_number_of_task} tasks are planned.')
-
-    def remove_all(x, bad_item = ''):
-        try:
-            while 1:
-                x.remove(bad_item)
-        except:
-            return x
-
-    if count_of_each_multiple_hp == []:
-        # No multiple hp is present.
-        yield remove_all(fixed_arguments_part)
-    else:
-        for _ in range(the_number_of_task):
-            choosed_value = {key: item[index] for (key, item), index in zip(multiple_parameters.items(), current_index_of_each_list)}
-            choosed_value_to_list = list(itertools.chain.from_iterable(choosed_value.items()))
-            final_list = fixed_arguments_part + choosed_value_to_list
-            yield remove_all(final_list)
-
-            current_index_of_each_list[-1] += 1
-            add_mark = False
-            for idx, (current_index, max_unreachable_index) in enumerate(zip(current_index_of_each_list[::-1], count_of_each_multiple_hp[::-1])):
-                if add_mark:
-                    current_index_of_each_list[multi_hp_count - idx - 1] += 1
-                    if current_index_of_each_list[multi_hp_count - idx - 1]  >= max_unreachable_index:
-                        current_index_of_each_list[multi_hp_count - idx - 1] = 0
-                        add_mark = True
-                    else:
-                        add_mark = False
-                if current_index >= max_unreachable_index:
-                    current_index_of_each_list[multi_hp_count - idx - 1] = 0
-                    add_mark = True
-
-def task_generator(hyperparameter_list, type = 'counting'):
-    type_translator = {
-        'counting': task_counting_generator,
-        'index': task_index_generator
-    }
-
-    return type_translator[type](hyperparameter_list)
+    for index_hyperparameter_list in index_hyperparameters_list:
+        for counting_hyperparameter_list in counting_hyperparameters_list:
+            yield remove_empty_str([file_name] + [argparser] + single_hyperparameters + index_hyperparameter_list + counting_hyperparameter_list)
 
 
 task_count = 1
 parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
 parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
-for hp_list in task_generator(parameter_retriver(opt), opt.style):
+for hp_list in task_generator(parameter_retriver(opt)):
     if not do_not_use_gpu:
         hp_list.append("--cuda")
-    process = subprocess.Popen([
-            'python3'
-    ] + hp_list)
-    process.wait()
-    logger.info(f'Task {task_count} completed.')
+    # process = subprocess.Popen([
+    #         'python3'
+    # ] + hp_list)
+    # process.wait()
+    logger.warning(f'----> Task {task_count} completed. <----')
     task_count += 1
