@@ -273,8 +273,8 @@ class TIFIBCModel(BasicModule):
         return loss
 
 
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
+    def mean_absolute_error_and_f1(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
+        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_history, mask_next, mean, var)
         time_next_pred = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         time_next_pred.requires_grad = True                                    # [batch_size, seq_len, num_events]
@@ -761,7 +761,7 @@ class TIFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, \
@@ -893,7 +893,7 @@ class TIFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
