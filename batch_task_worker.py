@@ -20,7 +20,6 @@ parser.add_argument('--GPU', type = int, default = None, help='How many GPU you 
                                                                  or set it to negative number or None for CPU learning.')
 parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
 parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
-parser.add_argument('--style', type = str, default = 'counting', help = 'How do we enumerate hyperparameters from the hyperparameter list?')
 
 opt = parser.parse_args()
 # Environment variables
@@ -54,7 +53,7 @@ def task_generator(hyperparameter_list):
 
     index_hyperparameters_list = task_index_generator(index_hyperparameters)
     counting_hyperparameters_list = task_counting_generator(counting_hyperparameters)
-
+    
     logger.info(f'We have planned {len(index_hyperparameters_list) * len(counting_hyperparameters_list)} tasks!')
 
     for index_hyperparameter_list in index_hyperparameters_list:
@@ -68,6 +67,7 @@ parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
 for hp_list in task_generator(parameter_retriver(opt)):
     if not do_not_use_gpu:
         hp_list.append("--cuda")
+    print(hp_list)
     # process = subprocess.Popen([
     #         'python3'
     # ] + hp_list)

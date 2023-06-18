@@ -115,6 +115,8 @@ def task_counting_generator(hyperparameter_list):
                 if current_index >= max_unreachable_index:
                     current_index_of_each_list[multi_hp_count - idx - 1] = 0
                     add_mark = True
+        
+        return final_hyperparameter_list
 
 
 def remove_empty_str(x):
