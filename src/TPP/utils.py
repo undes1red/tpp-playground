@@ -52,7 +52,7 @@ def suffix(opt, *args):
     shortcut_dict = {
         'model_name': '',
         'lr': 'lr',
-        'batch_size': 'bs',
+        'training_batch_size': 'bs',
         'used_batch_size': 'bs',
         'n_training_steps': 'nts',
         'dataloader_config': '',

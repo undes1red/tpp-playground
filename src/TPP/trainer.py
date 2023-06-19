@@ -107,7 +107,7 @@ class TPPTrainer:
         if not os.path.isdir(self.opt.save_model):
             os.makedirs(self.opt.save_model)
 
-        self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
+        self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         self.output_checkpoint_folder = 'model_' + self.folder_suffix
         self.log_folder = 'log_' + self.folder_suffix
         if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)) and self.rank == 0:
@@ -153,6 +153,7 @@ class TPPTrainer:
         '''
         Start training.
         '''
+        self.evaluation_report(0)
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
@@ -173,7 +174,7 @@ class TPPTrainer:
             '''
             A short report about evaluation and testing.
             '''
-            if current_step % self.opt.n_evaluation_steps == 0 and self.rank == 0:
+            if current_step % self.opt.n_evaluation_steps == 0:
                 self.evaluation_report(current_step)
                         
         if self.rank == 0 and self.opt.log:
@@ -213,30 +214,40 @@ class TPPTrainer:
     def evaluation_report(self, current_step):
         logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
 
+        '''
+        Evaluation on the dev dataset.
+        '''
         eva_report = self.model_class.postprocess(
             evaluation(self.evaluation_data, self.model, self.model_class, device = self.opt.device, \
                        output_length = self.format_dict_length, desc = '  - (Evaluation)   '), procedure = 'Evaluation'
         )
         log_print_format_dict_eva = self.model_class.log_print_format(eva_report, procedure = 'Evaluation')
-        print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_eva)
+        if self.rank == 0:
+            print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_eva)
+
+        '''
+        Evaluation on the test dataset.
+        '''
         test_report = self.model_class.postprocess(
             evaluation(self.test_data, self.model, self.model_class, device = self.opt.device, \
                        output_length = self.format_dict_length, desc = '  - (Test)   '), procedure = 'Test'
         )
         log_print_format_dict_test = self.model_class.log_print_format(test_report, procedure = 'Test')
-        print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_test)
+        if self.rank == 0:
+            print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_test)
 
-        if self.opt.log:
-            self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
-            self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
-        if self.opt.wandb:
-            import wandb
-            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
-                procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
-            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
-                procedure = 'Test'), temp = 'test_'), step = current_step)
-        
-        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
+        if self.rank == 0:
+            if self.opt.log:
+                self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
+                self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
+            if self.opt.wandb:
+                import wandb
+                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
+                    procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
+                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
+                    procedure = 'Test'), temp = 'test_'), step = current_step)
+            
+            self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
 
 
     def save(self, current_step, eva_report_format_dict, test_report_format_dict):

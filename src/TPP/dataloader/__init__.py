@@ -73,15 +73,15 @@ def prepare_dataloaders(opt, rank = 0):
     g.manual_seed(opt.seed + rank)
 
     if not hasattr(opt, 'train') or (hasattr(opt, 'train') and opt.train):
-        train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.batch_size, \
+        train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.training_batch_size, \
             collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
     if not hasattr(opt, 'evaluation') or (hasattr(opt, 'evaluation') and opt.evaluation):
-        evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.batch_size, \
+        evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.evaluation_batch_size, \
             collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
     if not hasattr(opt, 'test') or (hasattr(opt, 'test') and opt.test):
-        test_iterator = DataLoader(test_dataset, batch_size=opt.batch_size, \
+        test_iterator = DataLoader(test_dataset, batch_size=opt.evaluation_batch_size, \
             collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = False)
 

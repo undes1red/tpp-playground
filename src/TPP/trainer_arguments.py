@@ -29,7 +29,8 @@ class TPPTrainerArguments(BasicArguments):
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
         
         # Training procedure related hyperparameters
-        self.parser.add_argument('-b', '--batch_size', type=int, default=2048, help='Batch size')
+        self.parser.add_argument('-tb', '--training_batch_size', type=int, default=2048, help='Batch size of training data.')
+        self.parser.add_argument('-eb', '--evaluation_batch_size', type=int, default=2048, help='Batch size of evaluation and test data.')
         self.parser.add_argument('--grad_clip', type=float, default=0.0, help='Clips gradient norm of an iterable of parameters. It only comes info effect when the argument \
                                                                           value is bigger than 0.')
         
