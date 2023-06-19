@@ -11,19 +11,19 @@ def extract_single_multiple_arguments_from_the_list(hyperparameter_list):
             new arguments:
             '''
             last_parameter = items
-        elif last_parameter.startswith('--') and type(items) == list:
+        elif last_parameter.startswith('-') and type(items) == list:
             '''
             arguments with multiple choices
             '''
             multiple_parameters[last_parameter] = items
             last_parameter = ''
-        elif last_parameter.startswith('--') and items.startswith('--'):
+        elif last_parameter.startswith('-') and items.startswith('--'):
             '''
             store_true arguments
             '''
             single_parameters[last_parameter] = ''
             last_parameter = items
-        elif last_parameter.startswith('--') and not items.startswith('--'):
+        elif last_parameter.startswith('-') and not items.startswith('--'):
             '''
             arguments with single choice
             '''
