@@ -67,9 +67,9 @@ parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
 for hp_list in task_generator(parameter_retriver(opt)):
     if not do_not_use_gpu:
         hp_list.append("--cuda")
-    process = subprocess.Popen([
-            'python3'
-    ] + hp_list)
+    command = ['python3'] + hp_list
+    logger.info(f'Command of task {task_count}: {" ".join(command)}')
+    process = subprocess.Popen(command)
     process.wait()
     logger.warning(f'----> Task {task_count} completed. <----')
     task_count += 1
