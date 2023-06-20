@@ -61,7 +61,7 @@ class generic_dataset(utils.data.Dataset):
         if input_norm_data:
             time_inteval = np.array([])
             for item in self.data['time_seq'].values.tolist():
-                time_inteval = np.concatenate((time_inteval, item[1:-1]))
+                time_inteval = np.concatenate((time_inteval, item[1:] if self.evaluate else item[1:-1]))
             self.mean = time_inteval.mean()
             self.std = time_inteval.std()
             del time_inteval
