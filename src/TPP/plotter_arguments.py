@@ -67,7 +67,8 @@ def Plotter_postprocess(opt, root_path):
     if opt.agg_update_step > 1:
         opt.n_training_steps *= opt.agg_update_step
 
-    opt.batch_size = 1
+    opt.training_batch_size = 1
+    opt.evaluation_batch_size = 1
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
