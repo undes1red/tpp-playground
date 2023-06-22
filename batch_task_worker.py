@@ -47,7 +47,8 @@ def task_generator(hyperparameter_list):
     file_name = os.path.join(root_path, hyperparameter_list['file_name'])
     argparser = opt.procedure_name + '_' + opt.script_type
 
-    single_hyperparameters = hyperparameter_list['single']
+    single_hyperparameters = hyperparameter_list.get('single')
+    single_hyperparameters = single_hyperparameters if single_hyperparameters is not None else ['']
     index_hyperparameters = hyperparameter_list.get('index')
     counting_hyperparameters = hyperparameter_list.get('counting')
 
