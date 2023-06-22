@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import subprocess, os, argparse, itertools, importlib
-from batch_task_worker_utils import task_index_generator, task_counting_generator, remove_empty_str
+from batch_task_worker_utils import task_generator_worker, remove_empty_str
 from src.taskhost import getLogger
 
 
@@ -51,20 +51,18 @@ def task_generator(hyperparameter_list):
     index_hyperparameters = hyperparameter_list.get('index')
     counting_hyperparameters = hyperparameter_list.get('counting')
 
-    index_hyperparameters_list = task_index_generator(index_hyperparameters)
-    counting_hyperparameters_list = task_counting_generator(counting_hyperparameters)
+    index_hyperparameters_list, _ = task_generator_worker(index_hyperparameters, 'index')
+    counting_hyperparameters_list, _ = task_generator_worker(counting_hyperparameters, 'counting')
     
-    the_number_of_task = len(index_hyperparameters_list) * len(counting_hyperparameters_list)
-    logger.info(f'We have planned {the_number_of_task} tasks!')
-
     generated_hyperparameter_list = []
     for index_hyperparameter_list in index_hyperparameters_list:
         for counting_hyperparameter_list in counting_hyperparameters_list:
             generated_hyperparameter_list.append(
                 remove_empty_str([file_name] + [argparser] + single_hyperparameters + index_hyperparameter_list + counting_hyperparameter_list)
             )
-        
-    return generated_hyperparameter_list, the_number_of_task
+
+    logger.info(f'We have planned {len(generated_hyperparameter_list)} tasks!')
+    return generated_hyperparameter_list, len(generated_hyperparameter_list)
 
 
 task_count = 1
@@ -80,7 +78,7 @@ for hp_list in generated_hyperparameter_list:
         hp_list.append("--cuda")
     command = ['python3'] + hp_list
     logger.info(f'Command of task {task_count}/{the_number_of_task}: {" ".join(command)}')
-    process = subprocess.Popen(command)
-    process.wait()
+    # process = subprocess.Popen(command)
+    # process.wait()
     logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
     task_count += 1
