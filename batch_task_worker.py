@@ -1,7 +1,7 @@
 # You can use this file if you are too lazy to create and modify script files.
 # Just pack numerous tasks and run them one by one automatically.
 
-import subprocess, os, argparse, itertools, importlib
+import subprocess, os, argparse, importlib
 from batch_task_worker_utils import task_generator_worker, remove_empty_str
 from src.taskhost import getLogger
 
@@ -79,7 +79,7 @@ for hp_list in generated_hyperparameter_list:
         hp_list.append("--cuda")
     command = ['python3'] + hp_list
     logger.info(f'Command of task {task_count}/{the_number_of_task}: {" ".join(command)}')
-    # process = subprocess.Popen(command)
-    # process.wait()
+    process = subprocess.Popen(command)
+    process.wait()
     logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
     task_count += 1
