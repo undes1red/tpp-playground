@@ -458,7 +458,10 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        while True:
+        MAX_sampled_seq = 2500
+        seq_length = 1
+
+        while seq_length < MAX_sampled_seq:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_time_event(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -472,6 +475,7 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
+            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break
@@ -563,7 +567,10 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        while True:
+        MAX_sampled_seq = 2500
+        seq_length = 1
+
+        while seq_length < MAX_sampled_seq:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_event_time(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -577,6 +584,7 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
+            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break

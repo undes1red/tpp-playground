@@ -54,22 +54,33 @@ def task_generator(hyperparameter_list):
     index_hyperparameters_list = task_index_generator(index_hyperparameters)
     counting_hyperparameters_list = task_counting_generator(counting_hyperparameters)
     
-    logger.info(f'We have planned {len(index_hyperparameters_list) * len(counting_hyperparameters_list)} tasks!')
+    the_number_of_task = len(index_hyperparameters_list) * len(counting_hyperparameters_list)
+    logger.info(f'We have planned {the_number_of_task} tasks!')
 
+    generated_hyperparameter_list = []
     for index_hyperparameter_list in index_hyperparameters_list:
         for counting_hyperparameter_list in counting_hyperparameters_list:
-            yield remove_empty_str([file_name] + [argparser] + single_hyperparameters + index_hyperparameter_list + counting_hyperparameter_list)
+            generated_hyperparameter_list.append(
+                remove_empty_str([file_name] + [argparser] + single_hyperparameters + index_hyperparameter_list + counting_hyperparameter_list)
+            )
+        
+    return generated_hyperparameter_list, the_number_of_task
 
 
 task_count = 1
 parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
 parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
-for hp_list in task_generator(parameter_retriver(opt)):
+generated_hyperparameter_list, the_number_of_task = task_generator(parameter_retriver(opt))
+
+'''
+run all planned tasks via a loop.
+'''
+for hp_list in generated_hyperparameter_list:
     if not do_not_use_gpu:
         hp_list.append("--cuda")
     command = ['python3'] + hp_list
-    logger.info(f'Command of task {task_count}: {" ".join(command)}')
+    logger.info(f'Command of task {task_count}/{the_number_of_task}: {" ".join(command)}')
     process = subprocess.Popen(command)
     process.wait()
-    logger.warning(f'----> Task {task_count} completed. <----')
+    logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
     task_count += 1
