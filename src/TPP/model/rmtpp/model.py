@@ -150,7 +150,7 @@ class RMTPP(BasicModule):
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         probability_survival = integral_time_next.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
-        time_loss_survival = -torch.log(probability_survival + self.epsilon).mean()
+        time_loss_survival = probability_survival.mean()
 
         return time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
                mae, f1, the_number_of_events

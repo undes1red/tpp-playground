@@ -78,7 +78,7 @@ class RMTPPModule(nn.Module):
 
         # Get the intensity function and corresponding integral.
         intensity = torch.exp(time_scalar * time_next) * constant              # [batch_size, seq_len, 1]
-        integral = (intensity - constant) / time_scalar                        # [batch_size, seq_len, 1]
+        integral = (intensity - constant) / time_scalar * var                  # [batch_size, seq_len, 1]
 
         mark = None
         if self.event_toggle:
@@ -125,7 +125,7 @@ class RMTPPModule(nn.Module):
         expanded_time = original_time_expand_normed.unsqueeze(dim = -2)        # [batch_size, seq_len, 1, resolution]
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, 1, resolution]
-        integral_events = (intensity_events - constant) / time_scalar          # [batch_size, seq_len, 1, resolution]
+        integral_events = (intensity_events - constant) / time_scalar * var    # [batch_size, seq_len, 1, resolution]
 
         # aggregated timestamp
         batch_size, seq_len, _ = original_time_expand.shape
@@ -174,7 +174,7 @@ class RMTPPModule(nn.Module):
         expanded_time = original_time_expand_normed.unsqueeze(dim = -2)        # [batch_size, seq_len, 1, resolution]
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, 1, resolution]
-        integral_events = (intensity_events - constant) / time_scalar          # [batch_size, seq_len, 1, resolution]
+        integral_events = (intensity_events - constant) / time_scalar * var    # [batch_size, seq_len, 1, resolution]
 
         # aggregated timestamp
         batch_size, seq_len, _ = original_time_expand.shape
