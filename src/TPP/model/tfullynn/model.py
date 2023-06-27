@@ -241,9 +241,9 @@ class TFullyNNModel(BasicModule):
         '''
         pred_time.requires_grad = True
         time_next.requires_grad = True
-        integral_for_each_event_from_tl_to_pred_time = self.model(events_history, time_history, pred_time, mean = mean, var = var)
+        integral_for_each_event_from_tl_to_pred_time = self.model(events_history, time_history, pred_time, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
-        integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, time_next, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len]
 
         '''
@@ -346,8 +346,6 @@ class TFullyNNModel(BasicModule):
         '''
 
         '''
-
-
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_history = mask_history, \
                                                   mask_next = mask_next, mean = mean, var = var)
