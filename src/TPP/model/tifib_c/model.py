@@ -154,6 +154,7 @@ class TIFIBCModel(BasicModule):
                                                                                # [batch_size, 1]
         time_loss_survival = -torch.log(probability_survival + self.epsilon).sum()
 
+        time_loss_survival = 0
         loss = time_loss_without_dummy + time_loss_survival
 
         # we need time_loss_without_dummy to compare our distribution against the ground truth.
