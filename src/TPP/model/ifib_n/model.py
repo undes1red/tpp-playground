@@ -1,56 +1,67 @@
-import torch
+import torch, copy
 import torch.nn.functional as F
-from einops import rearrange, repeat, reduce
+from einops import repeat, pack
 from scipy.stats import spearmanr
 
 from src.TPP.model.ifib_n.submodel import IFIBN
-from src.TPP.model.utils import BasicModule
-from src.TPP.model.ifib_n.utils import *
+from src.TPP.model.utils import *
 from src.TPP.model.ifib_n.plot import *
 
 
 class IFIBNModel(BasicModule):
+    '''
+    The implementation of IFIB-N(Intensity-free Integral-based MTPP-Numerical).
+    The code of IFIB-C(Intensity-free Integral-based MTPP-Categorical) is in src/TPP/model/ifib.
+
+    Similar to IFIB-C, IFIB-N employs RNN modules as the history encoder. We note that changing the history encoder to
+    Transformer should be simple. No experiments data are available for IFIB-N with Transformers.
+    '''
     def __init__(self, d_history,
                  d_expression,
                  d_pro_integral,
                  dropout,
                  history_module_layers,
                  mlp_layers,
-                 nonlinear,
                  probability_threshold,
                  info_dict,
                  continuous_mark_upperbound,
                  continuous_mark_lowerbound,
                  device,
+                 epsilon = 1e-15,
                  sample_resolution = 50,
                  history_module = 'LSTM',
-                 denominator_shift = 0.0, pretrain = False, alpha = 0.5, beta = 0.1):
+                 denominator_shift = 1e-15, pretrain = False, alpha = 0.5, beta = 0.1):
         super(IFIBNModel, self).__init__()
         self.device = device
         self.probability_threshold = probability_threshold
         self.dim_events = info_dict['dim_events']
+        self.start_time = info_dict['t_0']
+        self.end_time = info_dict['T']
+        self.epsilon = epsilon
         self.continuous_mark_upperbound = continuous_mark_upperbound
         self.continuous_mark_lowerbound = continuous_mark_lowerbound
         self.sample_resolution = sample_resolution
-        self.zero_shift_factor = 1e-12
-        self.point_sampling_pattern = torch.tensor([0.00, 0.05, 0.1, 0.25, 0.5, 0.75], device = self.device)
+        self.point_sampling_pattern = torch.tensor([0.10, 0.25, 0.45, 0.55, 0.75, 0.90], device = self.device)
 
         self.model = IFIBN(d_history = d_history, d_expression = d_expression, d_pro_integral = d_pro_integral, dim_events = self.dim_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                          mlp_layers = mlp_layers, nonlinear = nonlinear, denominator_shift = denominator_shift, 
+                          mlp_layers = mlp_layers, denominator_shift = denominator_shift, 
                           pretrain = pretrain, alpha = alpha, beta = beta, continuous_mark_upperbound = continuous_mark_upperbound, 
                           continuous_mark_lowerbound = continuous_mark_lowerbound, sample_resolution = sample_resolution, device = device)
 
 
     def divide_history_and_next(self, input):
+        '''
+        Extract the history and prediction sequences from the input sequence.
+        '''
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
 
 
-    '''
-    Now the input is a set, not a single array or tensor.
-    '''
     def divide_history_and_next_set(self, input_set):
+        '''
+        Extract the history and prediction sequences from a set of input sequences.
+        '''
         input_history_set = []
         input_next_set = []
         for each_input in input_set:
@@ -61,40 +72,37 @@ class IFIBNModel(BasicModule):
         return input_history_set, input_next_set
 
 
-    def forward(self, input_time, input_events, mask, mean_and_var_events, mean_and_var_time, evaluate):
+    def remove_dummy_event_from_mask(self, mask):
         '''
-        The entrance of the FullyNN wrapper.
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
+        for idx, mask_per_seq in enumerate(mask):
+            dummy_index = mask_per_seq.sum() - 1
+            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
+            mask_without_dummy_per_seq[dummy_index] = 0
+            mask_without_dummy[idx] = mask_without_dummy_per_seq
         
-        Args:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original time sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original event sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        We use mask to mask out unneeded outputs.
-        * mean          type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * var           type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * evaluate      type: bool shape: N/A
-                        perform a model training step when evaluate == False
-                        perform a model evaluate step when evaluate == True
-        
-        Outputs:
-        Refers to train() and evaluate()'s documentation for detailed information.
+        return mask_without_dummy
 
+
+    def forward(self, task_name, *args, **kwargs):
         '''
-        return self.evaluate_procedure(input_time, input_events, mask, mean_and_var_events, mean_and_var_time) if evaluate \
-            else self.train_procedure(input_time, input_events, mask, mean_and_var_events, mean_and_var_time)
+        The entrance of different procedures.
+        '''
+        task_mapper = {
+            'train': self.train_procedure,
+            'evaluate': self.evaluate_procedure,
+            'spearman_and_l1': self.get_spearman_and_l1,
+            'graph': self.plot
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
 
 
     def differentiate_through_cifib_to_get_probability_train(self, time_next, events_next_set, probability_integral):
         '''
-        the value of probability distribution at t, or p(m, t|\mathcal{H})
+        Obtain p(m, t|\mathcal{H}) by backpropagation.
         '''
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral,
@@ -121,7 +129,8 @@ class IFIBNModel(BasicModule):
 
     def differentiate_through_cifib_to_get_probability_test(self, time_next, events_next_set, probability_integral):
         '''
-        the value of probability distribution at t, or p(m, t|\mathcal{H})
+        Obtain p(m, t|\mathcal{H}) by backpropagation.
+        This function might help decrease memory usage during evaluation at the cost of the gradient.
         '''
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral,
@@ -155,7 +164,12 @@ class IFIBNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         
 
-    def train_procedure(self, input_time, input_events, mask, mean_and_var_events, mean_and_var_time):
+    def train_procedure(self, input_time, input_events, mask, mean_and_std_events, mean_and_std_time):
+        '''
+        The forwardpropagation function of the IFIB-N used by train_step()
+        '''
+        self.train()
+
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history_set, events_next_set = self.divide_history_and_next_set(input_events)
                                                                                # 2 * [batch_size, seq_len, dim_events]
@@ -170,13 +184,16 @@ class IFIBNModel(BasicModule):
         '''
         probability_integral_from_t_to_infinite = self.model(events_history_set, events_next_set, \
                                                              time_history, time_next, \
-                                                             mean_and_var_events = mean_and_var_events, \
-                                                             mean_and_var_time = mean_and_var_time)
+                                                             mean_and_std_events = mean_and_std_events, \
+                                                             mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len]
         
 
         check_tensor(probability_integral_from_t_to_infinite)                  # [batch_size, seq_len]
 
+        '''
+        Obtain probability values.
+        '''
         probability_for_each_event = \
             self.differentiate_through_cifib_to_get_probability_train(time_next, events_next_set, probability_integral_from_t_to_infinite)
                                                                                # [batch_size, seq_len]
@@ -188,28 +205,38 @@ class IFIBNModel(BasicModule):
         assert probability_for_each_event.shape == probability_integral_from_t_to_infinite.shape
 
         '''
-        Event loss is absent for CIFIB during training.
+        Remove the probability of the dummy event by mask.
         '''
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
 
-        loss = self.nll_loss(probability = probability_for_each_event, mask_next = mask_next)
-        the_number_of_events = mask_next.sum().item()
+        '''
+        We don't calculate event loss of IFIB-N during training.
+        '''
+        loss = self.nll_loss(probability = probability_for_each_event, mask_next = mask_next_without_dummy)
+
 
         return loss, the_number_of_events
 
 
-    def evaluate_procedure(self, input_time, input_events, mask, mean_and_var_events, mean_and_var_time):
+    def evaluate_procedure(self, input_time, input_events, mask, mean_and_std_events, mean_and_std_time):
+        '''
+        The forwardpropagation function of the IFIB-N used by evaluate_step()
+        '''
+        self.eval()
+
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history_set, events_next_set = self.divide_history_and_next_set(input_events)
                                                                                # 2 * [batch_size, seq_len, dim_events]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
-        mean_time, var_time = mean_and_var_time
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
         batch_size, seq_len = time_history.shape
-        the_number_of_events = mask_next.sum().item()
         
         mae, pred_time = self.mean_absolute_error(events_history_set = events_history_set, time_history = time_history,\
-                                                  time_next = time_next, mask_next = mask_next, mean_and_var_events = mean_and_var_events,\
-                                                  mean_and_var_time = mean_and_var_time)
+                                                  time_next = time_next, mask_next = mask_next_without_dummy, \
+                                                  mean_and_std_events = mean_and_std_events, mean_and_std_time = mean_and_std_time)
                                                                                # 2 * [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_events
 
@@ -224,8 +251,8 @@ class IFIBNModel(BasicModule):
         probability_integral_from_time_next_to_infinite = self.model(events_history_set, \
                                                                      events_next_set, \
                                                                      time_history, time_next, \
-                                                                     mean_and_var_events = mean_and_var_events, \
-                                                                     mean_and_var_time = mean_and_var_time)
+                                                                     mean_and_std_events = mean_and_std_events, \
+                                                                     mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len]
 
         check_tensor(probability_integral_from_time_next_to_infinite)          # [batch_size, seq_len]
@@ -240,12 +267,11 @@ class IFIBNModel(BasicModule):
             events_next_set[idx].requires_grad = False
         time_next.requires_grad = False
 
-        time_next_loss = self.nll_loss(probability = probability_from_time_next_to_infinite, mask_next = mask_next)
-
+        time_next_loss = self.nll_loss(probability = probability_from_time_next_to_infinite, mask_next = mask_next_without_dummy)
 
         '''
         Evalution 2:
-        Sample in the high-dimensional continuous marker space. Find which area has the highest probability and report the
+        Sample in the high-dimensional continuous marker space. Find where has the highest probability and report the
         corresponding negative log-likelihood loss.
         '''
         sampled_normed_location = \
@@ -273,13 +299,14 @@ class IFIBNModel(BasicModule):
         probability_integral_from_pred_time_to_infinite = self.model.sample_evaluate(events_history_set, \
                                                                                      sampled_normed_marks_set, \
                                                                                      time_history, pred_time, \
-                                                                                     mean_and_var_events = mean_and_var_events, \
-                                                                                     mean_and_var_time = mean_and_var_time)
+                                                                                     mean_and_std_events = mean_and_std_events, \
+                                                                                     mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len, resolution ** dim_events]
         check_tensor(probability_integral_from_pred_time_to_infinite)          # [batch_size, seq_len, resolution ** dim_events]
 
         '''
-        Take care of the memory usage here.
+        Obtain probability values.
+        Please take care of memory usage here.
         '''
         probability_from_pred_time_to_infinite \
             = self.differentiate_through_cifib_to_get_probability_test(pred_time, sampled_normed_marks_set, \
@@ -290,6 +317,9 @@ class IFIBNModel(BasicModule):
         for idx, _ in enumerate(sampled_normed_marks_set):
             sampled_normed_marks_set[idx].requires_grad = False
         
+        '''
+        We obtain the predicted coordinate.
+        '''
         max_probability, location = probability_from_pred_time_to_infinite.max(dim = -1)
                                                                                # [batch_size, seq_len] * 2
         
@@ -301,14 +331,15 @@ class IFIBNModel(BasicModule):
                                                                                # [batch_size, seq_len]
             selected_points.append(selected_expanded_each_dimension)
         
-        selected_points, selected_points_ps = pack(selected_points, 'b s *')   # [batch_size, seq_len, dim_events]
-        events_next, events_next_ps = pack(events_next_set, 'b s *')           # [batch_size, seq_len, dim_events]
+        selected_points, _ = pack(selected_points, 'b s *')                    # [batch_size, seq_len, dim_events]
+        events_next, _ = pack(events_next_set, 'b s *')                        # [batch_size, seq_len, dim_events]
 
-        restored_selected_points = self.model.events_restore(selected_points, mean_and_var_events)
+        restored_selected_points = self.model.events_restore(selected_points, mean_and_std_events)
                                                                                # [batch_size, seq_len, dim_events]
+        check_tensor(restored_selected_points, positive = False)
 
-        pred_time_loss = self.nll_loss(probability = max_probability, mask_next = mask_next)
-        predicted_distance = self.calculate_euclidan_distance(restored_selected_points, events_next) * mask_next
+        pred_time_loss = self.nll_loss(probability = max_probability, mask_next = mask_next_without_dummy)
+        predicted_distance = self.calculate_euclidan_distance(restored_selected_points, events_next) * mask_next_without_dummy
                                                                                # [batch_size, seq_len]
 
         return time_next_loss, pred_time_loss, predicted_distance, mae, the_number_of_events
@@ -316,31 +347,27 @@ class IFIBNModel(BasicModule):
 
     def nll_loss(self, probability, mask_next):
         '''
-        The definition of loss.
-    
-        Args:
-            probability:        [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-            mask_next:          [batch_size, seq_len]
+        This function calculates the NLL loss at every predicted event.
         '''
-        log_probability = - torch.log(probability + self.zero_shift_factor)    # [batch_size, seq_len]
+
+        log_probability = - torch.log(probability + self.epsilon)    # [batch_size, seq_len]
         loss = log_probability * mask_next                                     # [batch_size, seq_len]
         loss = torch.sum(loss)
 
         return loss
 
 
-    def mean_absolute_error_and_point_prediction_distance(self, events_history_set, events_next_set, \
-                                   time_history, time_next, mask_history, mask_next, \
-                                   mean_and_var_events, mean_and_var_time):
+    def mean_absolute_error_and_point_prediction_distance(self, events_history_set, events_next_set, time_history, time_next, mask_next,
+                                                          mean_and_std_events, mean_and_std_time):
         '''
         This function calculates the MAE and the Euclidian distance between happened and predicted events.
+        This function is called by get_mae_and_distance().
         '''
 
         batch_size, seq_len = time_history.shape
 
         mae, pred_time = self.mean_absolute_error(events_history_set, time_history, time_next, \
-                                                  mask_next, mean_and_var_events, mean_and_var_time)
-
+                                                  mask_next, mean_and_std_events, mean_and_std_time)
 
         sampled_normed_location = \
             torch.linspace(0, 0.99, self.sample_resolution, device = self.device) * \
@@ -367,8 +394,8 @@ class IFIBNModel(BasicModule):
         probability_integral_from_pred_time_to_infinite = self.model.sample(events_history_set, \
                                                                             sampled_normed_marks_set, \
                                                                             time_history, pred_time, \
-                                                                            mean_and_var_events = mean_and_var_events, \
-                                                                            mean_and_var_time = mean_and_var_time)
+                                                                            mean_and_std_events = mean_and_std_events, \
+                                                                            mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len, resolution ** dim_events]
         check_tensor(probability_integral_from_pred_time_to_infinite)          # [batch_size, seq_len, resolution ** dim_events]
 
@@ -384,8 +411,10 @@ class IFIBNModel(BasicModule):
         for idx, _ in enumerate(sampled_normed_marks_set):
             sampled_normed_marks_set[idx].requires_grad = False
 
-        max_probability, location = probability_from_pred_time_to_infinite.max(dim = -1)
-                                                                               # [batch_size, seq_len] * 2
+        '''
+        We obtain the predicted coordinate.
+        '''
+        _, location = probability_from_pred_time_to_infinite.max(dim = -1)     # [batch_size, seq_len] * 2
         
         selected_location = F.one_hot(location, num_classes = self.sample_resolution ** self.dim_events)
                                                                                # [batch_size, seq_len, dim_events]
@@ -398,7 +427,7 @@ class IFIBNModel(BasicModule):
         selected_points, selected_points_ps = pack(selected_points, 'b s *')   # [batch_size, seq_len, dim_events]
         events_next, events_next_ps = pack(events_next_set, 'b s *')           # [batch_size, seq_len, dim_events]
 
-        restored_selected_points = self.model.events_restore(selected_points, mean_and_var_events)
+        restored_selected_points = self.model.events_restore(selected_points, mean_and_std_events)
                                                                                # [batch_size, seq_len, dim_events]
 
         predicted_distance = self.calculate_euclidan_distance(restored_selected_points, events_next) * mask_next
@@ -407,14 +436,16 @@ class IFIBNModel(BasicModule):
         return mae, predicted_distance
 
 
-    def mean_absolute_error(self, events_history_set, time_history, time_next, mask_next, mean_and_var_events, mean_and_var_time):
+    def mean_absolute_error(self, events_history_set, time_history, time_next, mask_next, mean_and_std_events, mean_and_std_time):
         '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
+        Use bisect method to predict time for the time-event prediction task.
         '''
-        def evaluate(integral_from_zero_to_inf, taus):
+        def get_sum_of_integral(integral_from_zero_to_inf, taus):
+            '''
+            Retrieve the sum of all $ \Lambda^*(m, t) $ over all $ m $ at $ \tau $.
+            '''
             probability_integral_from_t_to_inf = self.model.probability_integral_from_t_all_markers(
-                events_history_set, time_history, taus, mean_and_var_events, mean_and_var_time)
+                events_history_set, time_history, taus, mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len]
             # P_m(t) = \int_{0}^{t}{\int_{R}{p(t, m_1, m_2, m_3, ..., m_t|\mathcal{H})}}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
@@ -422,7 +453,7 @@ class IFIBNModel(BasicModule):
             return probability_integral
 
         def bisect_target(integral_from_zero_to_inf, taus):
-            return evaluate(integral_from_zero_to_inf, taus) - self.probability_threshold
+            return get_sum_of_integral(integral_from_zero_to_inf, taus) - self.probability_threshold
             
         def median_prediction(integral_from_zero_to_inf, l, r):
             for _ in range(50):
@@ -435,7 +466,6 @@ class IFIBNModel(BasicModule):
         
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
-        time_next_zero = torch.zeros_like(time_next)                           # [batch_size, seq_len]
         integral_from_zero_to_inf_across_all_events = torch.ones_like(time_history)
                                                                                # [batch_size, seq_len]
                                                                                # [batch_size, seq_len]
@@ -448,15 +478,15 @@ class IFIBNModel(BasicModule):
 
 
     def mean_absolute_error_e(self, events_history_set, events_next_set, time_history, time_next, \
-                              mask_next, mean_and_var_events, mean_and_var_time):
+                              mask_next, mean_and_std_events, mean_and_std_time):
         '''
-        Well...We will do something totally different by performing event-wise MAE.
-        First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
-        Next, given time predictions. (Expectation? or probability bigger than 0.5?)
+        Evaluate model performance on the event-time task.
         '''
+        self.eval()
+
         batch_size, seq_len = time_history.shape
-        mean_time, var_time = mean_and_var_time
-        mean_events, var_events = mean_and_var_events
+        mean_time, std_time = mean_and_std_time
+        mean_events, std_events = mean_and_std_events
 
         '''
         Evaluation part 1: Find the position where the next event most probably happens.
@@ -488,8 +518,8 @@ class IFIBNModel(BasicModule):
         probability_integral_from_pred_time_to_infinite = self.model.sample(events_history_set, \
                                                                             sampled_normed_marks_set, \
                                                                             time_history, time_next_zero, \
-                                                                            mean_and_var_events = mean_and_var_events, \
-                                                                            mean_and_var_time = mean_and_var_time)
+                                                                            mean_and_std_events = mean_and_std_events, \
+                                                                            mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len, resolution ** dim_events]
         check_tensor(probability_integral_from_pred_time_to_infinite)          # [batch_size, seq_len, resolution ** dim_events]
 
@@ -500,13 +530,14 @@ class IFIBNModel(BasicModule):
             = self.differentiate_through_cifib_to_get_probability_test(time_next_zero, sampled_normed_marks_set, \
                                                                        probability_integral_from_pred_time_to_infinite)
                                                                                # [batch_size, seq_len, resolution ** dim_events]
-        
         time_next_zero.requires_grad = False
         for idx, _ in enumerate(sampled_normed_marks_set):
             sampled_normed_marks_set[idx].requires_grad = False
 
-        max_probability, location = probability_from_zero_to_infinite.max(dim = -1)
-                                                                               # [batch_size, seq_len] * 2
+        '''
+        We obtain the predicted coordinate.
+        '''
+        _, location = probability_from_zero_to_infinite.max(dim = -1)          # [batch_size, seq_len] * 2
         
         selected_location = F.one_hot(location, num_classes = self.sample_resolution ** self.dim_events)
                                                                                # [batch_size, seq_len, dim_events]
@@ -516,10 +547,10 @@ class IFIBNModel(BasicModule):
                                                                                # [batch_size, seq_len]
             selected_points.append(selected_expanded_each_dimension)
         
-        selected_points, selected_points_ps = pack(selected_points, 'b s *')   # [batch_size, seq_len, dim_events]
-        events_next, events_next_ps = pack(events_next_set, 'b s *')           # [batch_size, seq_len, dim_events]
+        selected_points, _ = pack(selected_points, 'b s *')                    # [batch_size, seq_len, dim_events]
+        events_next, _ = pack(events_next_set, 'b s *')                        # [batch_size, seq_len, dim_events]
 
-        restored_selected_points = self.model.events_restore(selected_points, mean_and_var_events)
+        restored_selected_points = self.model.events_restore(selected_points, mean_and_std_events)
                                                                                # [batch_size, seq_len, dim_events]
 
         distance_between_prediction_and_truth = self.calculate_euclidan_distance(restored_selected_points, events_next)[mask_next == 1]
@@ -533,12 +564,12 @@ class IFIBNModel(BasicModule):
         space_point_at_up_right = restored_selected_points + delta             # [batch_size, seq_len, dim_events]
         
         '''
-        Obtain the timestamp that the probability of one event happening in [prediction - 1/2 * delta, prediction + 1/2 * delta]
+        Obtain the timestamp when the probability of one event happening in [prediction - 1/2 * delta, prediction + 1/2 * delta]
         is bigger than self.probability_threshold.
         '''
         pred_time = self.prediction_with_in_given_event_space(events_history_set, time_history, \
                                                               space_point_at_bottom_left, space_point_at_up_right, \
-                                                              mean_and_var_events, mean_and_var_time)
+                                                              mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len]
         
         mae_e = torch.abs(time_next - pred_time)[mask_next == 1]               # [batch_size, seq_len]
@@ -547,18 +578,16 @@ class IFIBNModel(BasicModule):
 
 
     def prediction_with_in_given_event_space(self, events_history_set, time_history, space_point_at_bottom_left, \
-                                             space_point_at_up_right, mean_and_var_events, mean_and_var_time):
+                                             space_point_at_up_right, mean_and_std_events, mean_and_std_time):
         '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
-
+        Use bisect method to predict time for the event-time prediction task.
         '''
-        def evaluate_all_event(taus):
+        def evaluate_in_given_event_space(taus):
             # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
             probability_integral_from_t_to_infinite \
                 = self.model.probability_integral_from_t_given_marker_space(events_history_set, time_history, taus, \
                                                                             space_point_at_bottom_left, space_point_at_up_right, \
-                                                                            mean_and_var_events, mean_and_var_time)
+                                                                            mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len]
             # \int_{0}^{tau}{p(m, \tau|\mathcal{H})d\tau}
             probability_from_zero_to_t = torch.ones_like(probability_integral_from_t_to_infinite) - probability_integral_from_t_to_infinite
@@ -566,7 +595,7 @@ class IFIBNModel(BasicModule):
             return probability_from_zero_to_t
 
         def bisect_target(taus):
-            p_t_m = evaluate_all_event(taus)                                   # [batch_size, seq_len]
+            p_t_m = evaluate_in_given_event_space(taus)                        # [batch_size, seq_len]
             p_gap = p_t_m - self.probability_threshold                         # [batch_size, seq_len]
 
             return p_gap
@@ -580,8 +609,6 @@ class IFIBNModel(BasicModule):
 
             return (l + r)/2
 
-        mean_time, var_time = mean_and_var_time
-        
         l = 0.0001*torch.ones_like(time_history, dtype = torch.float32, device = self.device)
                                                                                # [batch_size, seq_len, num_events]
         r = 1e6*torch.ones_like(time_history, dtype = torch.float32, device = self.device)
@@ -591,6 +618,9 @@ class IFIBNModel(BasicModule):
         return tau_pred
 
 
+    '''
+    Plot utilities.
+    '''
     def plot(self, minibatch, opt):
         plot_type_to_functions = {
             'intensity': self.intensity,
@@ -604,72 +634,35 @@ class IFIBNModel(BasicModule):
 
     def extract_plot_data(self, minibatch):
         '''
-        This function extracts input_time, input_events, input_intensity, mask, mean, and var from the minibatch.
-
-        Args:
-        * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, var)]
-        
-        Outputs:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event timestamp sequence.
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event marks sequence.
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw mask sequence.
-        * mean          type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * var           type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        
+        This function extracts input_time, input_events, input_intensity, mask, mean, and std from a minibatch.
         '''
-        [time_seq, event_seq, score, mask, padded_intensity], mean_and_var_events, mean_and_var_time = minibatch
+        [time_seq, event_seq, score, mask, padded_intensity], mean_and_std_events, mean_and_std_time = minibatch
 
-        return time_seq, event_seq, score, mask, padded_intensity, mean_and_var_events, mean_and_var_time
+        return time_seq, event_seq, score, mask, padded_intensity, mean_and_std_events, mean_and_std_time
 
 
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
         '''
 
-        return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
+        return NotImplementedError('IFIB-N is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
         '''
-        return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
+        return NotImplementedError('IFIB-N is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
         '''
         self.model.eval()
 
-        input_time, input_events_set, score, mask, input_intensity, mean_and_var_events, mean_and_var_time \
+        input_time, input_events_set, score, mask, input_intensity, mean_and_std_events, mean_and_std_time \
             = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -678,7 +671,7 @@ class IFIBNModel(BasicModule):
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probing_probability(events_history_set, time_history, time_next, opt.resolution, mean_and_var_events, mean_and_var_time)
+            self.model.probing_probability(events_history_set, time_history, time_next, opt.resolution, mean_and_std_events, mean_and_std_time)
                                                                                # 2 * [batch_size, seq_len, resolution]
 
         data = {
@@ -703,7 +696,7 @@ class IFIBNModel(BasicModule):
         self.model.eval()
         data = {}
 
-        input_time, input_events_seq, score, mask, padded_intensity, mean_and_var_events, mean_and_var_time \
+        input_time, input_events_seq, score, mask, padded_intensity, mean_and_std_events, mean_and_std_time \
             = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -716,12 +709,12 @@ class IFIBNModel(BasicModule):
         mae, distance_between_prediction_and_truth_after_time \
             = self.mean_absolute_error_and_point_prediction_distance(events_history_set, events_next_set, \
                                                                      time_history, time_next, mask_history, mask_next, \
-                                                                     mean_and_var_events, mean_and_var_time)
+                                                                     mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len]
         
         selected_points, pred_time, distance_between_prediction_and_truth_before_time, mae_e \
             = self.mean_absolute_error_e(events_history_set, events_next_set, time_history, time_next, \
-                                         mask_next, mean_and_var_events, mean_and_var_time)
+                                         mask_next, mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len] * 2 + 2 * float
 
         '''
@@ -773,8 +766,8 @@ class IFIBNModel(BasicModule):
             probability_integral_from_pred_time_to_infinite = self.model.sample(events_history_set, \
                                                                                 sampled_normed_marks_set, \
                                                                                 time_history, each_selected_timestamp, \
-                                                                                mean_and_var_events = mean_and_var_events, \
-                                                                                mean_and_var_time = mean_and_var_time)
+                                                                                mean_and_std_events = mean_and_std_events, \
+                                                                                mean_and_std_time = mean_and_std_time)
                                                                                # [batch_size, seq_len, resolution ** dim_events]
             check_tensor(probability_integral_from_pred_time_to_infinite)      # [batch_size, seq_len, resolution ** dim_events]
     
@@ -806,13 +799,14 @@ class IFIBNModel(BasicModule):
         return plots
 
 
+    '''
+    Evaluation over the entire dataset.
+    These functions are called by task functions in plotter.py
+    '''
     def get_spearman_and_l1(self, input_data, opt):
-        '''
-        Evaluation over the entire dataset.
-        '''
         self.model.eval()
 
-        input_time, input_events_set, score, mask, input_intensity, mean_and_var_events, mean_and_var_time \
+        input_time, input_events_set, score, mask, input_intensity, mean_and_std_events, mean_and_std_time \
             = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history_set, events_next_set = self.divide_history_and_next_set(input_events_set)
@@ -820,7 +814,7 @@ class IFIBNModel(BasicModule):
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probing_probability(events_history_set, time_history, time_next, opt.resolution, mean_and_var_events, mean_and_var_time)
+            self.model.probing_probability(events_history_set, time_history, time_next, opt.resolution, mean_and_std_events, mean_and_std_time)
                                                                                # 2 * [batch_size, seq_len, resolution]
         check_tensor(expand_probability)
 
@@ -853,16 +847,16 @@ class IFIBNModel(BasicModule):
     
 
     def get_mae_and_distance(self, input_data, opt):
-        time_seq, event_seq, score, mask, padded_intensity, mean_and_var_events, mean_and_var_time = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(time_seq)     # [batch_size, seq_len]
+        time_seq, event_seq, score, mask, padded_intensity, mean_and_std_events, mean_and_std_time = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(time_seq)       # [batch_size, seq_len]
         events_history_set, events_next_set = self.divide_history_and_next_set(event_seq)
                                                                                # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
 
-        mae, distance = self.mean_absolute_error_and_point_prediction_distance(events_history_set, events_next_set, \
-                                                                           time_history, time_next, mask_history, mask_next, \
-                                                                           mean_and_var_events, mean_and_var_time)
+        mae, distance = self.mean_absolute_error_and_point_prediction_distance(events_history_set, events_next_set,
+                                                                               time_history, time_next, mask_next,
+                                                                               mean_and_std_events, mean_and_std_time)
                                                                                # [batch_size, seq_len]
         mae, distance = move_from_tensor_to_ndarray(mae, distance)
 
@@ -870,7 +864,7 @@ class IFIBNModel(BasicModule):
 
     
     def get_mae_e_and_distance(self, input_data, opt):
-        time_seq, event_seq, score, mask, padded_intensity, mean_and_var_events, mean_and_var_time = self.extract_plot_data(input_data)
+        time_seq, event_seq, score, mask, padded_intensity, mean_and_std_events, mean_and_std_time = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(time_seq)     # [batch_size, seq_len]
         events_history_set, events_next_set = self.divide_history_and_next_set(event_seq)
                                                                                # [batch_size, seq_len]
@@ -879,7 +873,7 @@ class IFIBNModel(BasicModule):
         # The sum of probability over the mark and time space should be 1
         selected_points, pred_time, distance_between_prediction_and_truth, mae_e \
             = self.mean_absolute_error_e(events_history_set, events_next_set, time_history, time_next, \
-                                         mask_next, mean_and_var_events, mean_and_var_time)
+                                         mask_next, mean_and_std_events, mean_and_std_time)
         
         probability_sum = torch.ones_like(mae_e)
 
@@ -889,25 +883,12 @@ class IFIBNModel(BasicModule):
         return mae_e, distance_between_prediction_and_truth, probability_sum
 
 
-    '''
-    All static methods
-    '''
     def train_step(model, minibatch, device):
-        ''' 
-        Epoch operation in training phase.
-        The input minibatch comprise time sequences.
-
-        Args:
-            minibatch: [batch_size, seq_len]
-                       contains [time_seq, event_seq, score, mask]
-        '''
-    
         model.train()
-        [time_seq, event_seq, score, mask], (mean_events, var_events), (mean_time, var_time) = minibatch
-        loss, the_number_of_events = model(         
-                input_time = time_seq, input_events = event_seq, mask = mask, \
-                mean_and_var_events = (mean_events, var_events), mean_and_var_time = (mean_time, var_time), \
-                evaluate = False
+        [time_seq, event_seq, score, mask], (mean_events, std_events), (mean_time, std_time) = minibatch
+        loss, the_number_of_events = model(
+            task_name = 'train', input_time = time_seq, input_events = event_seq, mask = mask, \
+            mean_and_std_events = (mean_events, std_events), mean_and_std_time = (mean_time, std_time)
         )
         
         loss.backward()
@@ -918,14 +899,11 @@ class IFIBNModel(BasicModule):
     
 
     def evaluation_step(model, minibatch, device):
-        ''' Epoch operation in evaluation phase '''
-    
         model.eval()
-        [time_seq, event_seq, score, mask], (mean_events, var_events), (mean_time, var_time) = minibatch
+        [time_seq, event_seq, score, mask], (mean_events, std_events), (mean_time, std_time) = minibatch
         time_next_loss, pred_time_loss, predicted_distance, mae, the_number_of_events = model(
-                input_time = time_seq, input_events = event_seq, mask = mask, \
-                mean_and_var_events = (mean_events, var_events), mean_and_var_time = (mean_time, var_time), \
-                evaluate = True
+            task_name = 'evaluate', input_time = time_seq, input_events = event_seq, mask = mask, \
+            mean_and_std_events = (mean_events, std_events), mean_and_std_time = (mean_time, std_time)
         )
     
         time_next_avg_loss = time_next_loss.item() / the_number_of_events

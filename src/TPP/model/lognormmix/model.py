@@ -9,11 +9,15 @@ from src.TPP.model.lognormmix.plot import *
 
 class LogNormMixWrapper(BasicModule):
     def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
-                 num_mix_components: int = 16, rnn_type: str = "LSTM", probability_threshold = 0.5):
+                 num_mix_components: int = 16, rnn_type: str = "LSTM", probability_threshold = 0.5, \
+                 survival_loss_during_training = False):
         super(LogNormMixWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.probability_threshold = probability_threshold
+        self.survival_loss_during_training = survival_loss_during_training
+        self.sample_rate = 32
+
 
         self.model = LogNormMix(
             self.num_events + 1,
@@ -109,7 +113,9 @@ class LogNormMixWrapper(BasicModule):
         
         time_loss = self.loss_f(log_prob)
         event_loss = self.loss_f(log_p_event)
-        surv_last_loss = self.loss_f(log_surv_last)
+        surv_last_loss = 0
+        if self.survival_loss_during_training:
+            surv_last_loss = self.loss_f(log_surv_last)
 
         return time_loss + surv_last_loss, time_loss, event_loss, the_number_of_events
 
@@ -172,13 +178,18 @@ class LogNormMixWrapper(BasicModule):
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        probability_threshold = dist.sample((self.sample_rate, *input_time.shape))
+                                                                               # [sample_rate, batch_size, seq_len]
+        probability_threshold = probability_threshold.to(self.device)
+
         def evaluate(taus):
             probability, _ = self.model.log_cdf(input_events, input_time, input_mask, taus, mean, var)
-                                                                               # [batch_size, seq_len + 1]
+                                                                               # [sample_rate, batch_size, seq_len + 1]
             return probability
 
         def bisect_target(taus):
-            return evaluate(taus) - self.probability_threshold
+            return evaluate(taus) - probability_threshold
         
         def median_prediction(l, r):
             for _ in range(30):
@@ -189,13 +200,22 @@ class LogNormMixWrapper(BasicModule):
 
             return (l + r)/2
 
-        l = 0.0001*torch.ones_like(input_events, dtype = torch.float32)        # [batch_size, seq_len + 1]
-        r = 1e6*torch.ones_like(input_events, dtype = torch.float32)           # [batch_size, seq_len + 1]
-        tau_pred = median_prediction(l, r)
-        gap = (tau_pred - input_time) * input_mask                             # [batch_size, seq_len + 1]
-        gap = torch.abs(gap)                                                   # [batch_size, seq_len + 1]
+        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
+                                                                               # [sample_rate, batch_size, seq_len + 1]
+        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len + 1]
+        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len + 1]
 
-        return gap, tau_pred
+        '''
+        log_p, _, _ = self.model.log_prob(input_events, tau_pred, input_mask, mean, var)
+                                                                               # [sample_rate, batch_size, seq_len + 1]
+        p = torch.exp(log_p)                                                   # [sample_rate, batch_size, seq_len + 1]
+        tau_pred = (tau_pred * p).sum(dim = 0)                                 # [batch_size, seq_len + 1]
+        '''
+        
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
+        mae = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len]
+        
+        return mae, tau_pred
     
 
     def plot(self, minibatch, opt):
@@ -512,8 +532,11 @@ class LogNormMixWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        #        ['evaluation_absolute_loss', 'test_absolute_loss']
+        return [evaluation_report_format_dict['absolute_NLL_loss'], 
+                test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
     metric_number = 2 # metric number is the length of the output of choose_metric

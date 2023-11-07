@@ -91,17 +91,21 @@ class TaskHost:
         torch.manual_seed(self.opt.seed)
         np.random.seed(self.opt.seed)
         torch.backends.cudnn.benchmark = False
-        torch.use_deterministic_algorithms(True)
+        torch.use_deterministic_algorithms(False)
+        # torch.use_deterministic_algorithms(True)
         # For debug usage
         # torch.autograd.set_detect_anomaly(True)
 
-        try:
-            mp.set_start_method("forkserver")
-            mp.spawn(self.main, nprocs=self.opt.ngpus, join=True)
-        except Exception:
-            import traceback
-            logger.error(traceback.format_exc())
-            sys.exit(1)
+        if self.opt.multiprocessing:
+            try:
+                mp.set_start_method("forkserver")
+                mp.spawn(self.main, nprocs=self.opt.ngpus, join=True)
+            except Exception:
+                import traceback
+                logger.error(traceback.format_exc())
+                sys.exit(1)
+        else:
+            self.main(rank = 0)
     
 
     def main(self, rank):
@@ -112,7 +116,9 @@ class TaskHost:
         * rank: int
                 Generated and used by mp.spawn().
         '''
-        dist.init_process_group("nccl" if self.opt.cuda else 'gloo', rank=rank, world_size=self.opt.ngpus, timeout=datetime.timedelta(minutes=30))
+
+        if self.opt.multiprocessing:
+            dist.init_process_group("nccl" if self.opt.cuda else 'gloo', rank=rank, world_size=self.opt.ngpus, timeout=datetime.timedelta(minutes=30))
 
         procedure = importlib.import_module('src.' + self.opt.procedure)
 
@@ -135,5 +141,6 @@ class TaskHost:
             import traceback
             logger.error(traceback.format_exc())
             raise
-    
-        dist.destroy_process_group()
+
+        if self.opt.multiprocessing:
+            dist.destroy_process_group()

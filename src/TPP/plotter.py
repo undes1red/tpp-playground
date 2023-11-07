@@ -1,5 +1,6 @@
 import os, torch
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
 from src.TPP.utils import read_yaml, print_args
@@ -62,12 +63,18 @@ class TPPPlotter:
             model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
             model_state_dict = model_raw['model']
             model.load_state_dict(model_state_dict)
+            model.requires_grad_(requires_grad = False)
             logger.info(print_args(self.opt))
-            total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            logger.info(f'Model restore completed. The number of trainable parameters in this model: {total_params}.')
+            trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            self.opt.trainable_parameters = trainable_parameters
+            logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
 
-        self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
+        if self.opt.trainable_parameters == 0 or not self.opt.multiprocessing:
+            self.model = DP(model, device_ids = [rank] if opt.cuda else None)
+        else:
+            self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
         self.model.eval()
         self.task()
     

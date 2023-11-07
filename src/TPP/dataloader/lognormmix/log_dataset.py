@@ -18,7 +18,7 @@ class LogNormDataset(utils.data.Dataset):
     But...what can we do if we need prediction? It is strange.
     '''
 
-    def __init__(self, data, device, property_dict, input_norm_data = True, evaluate = False, shift = False):
+    def __init__(self, data, device, property_dict, input_norm_data = False, evaluate = False, shift = True):
         super(LogNormDataset, self).__init__()
         self.data = data
         self.device = device
@@ -42,7 +42,8 @@ class LogNormDataset(utils.data.Dataset):
 
         # Data preprocessing
         self.data.event = self.data.event.apply(concatenate, item2 = np.array([self.event_num]))
-        self.data.time_seq = self.data.time_seq.apply(np.diff,  prepend = self.start_time, append = self.end_time) + (self.epsilon if shift else 0)
+        self.data.time_seq = self.data.time_seq.apply(np.diff, prepend = self.start_time, append = self.end_time)
+        self.data.time_seq = self.data.time_seq + (self.epsilon if shift else 0)
 
         # Data normalization
         if input_norm_data:

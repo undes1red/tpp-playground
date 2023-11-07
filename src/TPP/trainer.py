@@ -3,6 +3,7 @@ from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
 from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, \
@@ -77,11 +78,12 @@ class TPPTrainer:
 
         if rank == 0:
             trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_parameters = sum(p.numel() for p in model.parameters())
             self.opt.trainable_parameters = trainable_parameters
             self.opt.epoch = opt.n_training_steps/opt.training_size
             logger.info(print_args(self.opt))
             logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
-            logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters}.')
+            logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}.')
     
         '''
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 
@@ -89,8 +91,10 @@ class TPPTrainer:
         '''
         self.sched_optimizer = ScheduledOptim(opt, model, rank)
         
-        self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)
-    
+        if self.opt.trainable_parameters == 0 or not self.opt.multiprocessing:
+            self.model = DP(model, device_ids = [rank] if opt.cuda else None)
+        else:
+            self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)    
         self.task()
     
     
@@ -153,7 +157,7 @@ class TPPTrainer:
         '''
         Start training.
         '''
-        self.evaluation_report(0)
+        # self.evaluation_report(0)
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)

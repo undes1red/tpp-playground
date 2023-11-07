@@ -71,12 +71,18 @@ def spearman_and_l1(model, dataset, desc, opt):
     '''
     spearman = 0
     l1 = 0
+    elapsed_time = 0
+    data_size = 0
     size_of_dataset = len(dataset)
-    for minibatch in tqdm(dataset, desc = f'Spearman and L1 for {desc}'):
-        spearman_for_this_batch, l1_for_this_batch = model('spearman_and_l1', minibatch, opt)               
+    with tqdm(dataset, desc = f'Spearman and L1 for {desc}') as progress_bar:
+        for minibatch in progress_bar:
+            spearman_for_this_batch, l1_for_this_batch = model('spearman_and_l1', minibatch, opt)               
                                                                                # [batch_size, seq_len * resolution]
-        spearman += spearman_for_this_batch
-        l1 += l1_for_this_batch
+            spearman += spearman_for_this_batch
+            l1 += l1_for_this_batch
+
+        elapsed_time = progress_bar.format_dict['elapsed']
+        data_size = progress_bar.format_dict['total']
     
     spearman = spearman / size_of_dataset
     l1 = l1 / size_of_dataset
@@ -85,7 +91,7 @@ def spearman_and_l1(model, dataset, desc, opt):
         os.makedirs(opt.store_dir)
     result_file = os.path.join(opt.store_dir, f'{desc}_spearman_and_l1.txt')
     f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.')
+    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.\n Evaluation speed: {elapsed_time/data_size}s per sequence.')
     f.close()
 
 

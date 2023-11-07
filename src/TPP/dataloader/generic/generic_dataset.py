@@ -32,8 +32,8 @@ class generic_dataset(utils.data.Dataset):
         self.number_of_events = property_dict['num_events']
         self.start_time = property_dict['t_0']
         self.end_time = property_dict['T']
-        self.mean = 0
-        self.std = 1
+        self.mean = property_dict['mean'] if input_norm_data else 0
+        self.std = property_dict['std'] if input_norm_data else 1
 
         '''
         Convert data from list to np.array.
@@ -41,30 +41,19 @@ class generic_dataset(utils.data.Dataset):
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int64)
 
         # Data preprocessing
         # we remove the end dummy event from the sequence when evaluate = True
-        self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
         if self.evaluate:
             self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
         else:
             self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
             self.data.event = self.data.event.apply(append, number = self.number_of_events)
 
+        self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
         self.data.time_seq = self.data.time_seq.apply(prepend, number = 0)
         self.data.event = self.data.event.apply(prepend, number = self.number_of_events)
-
-        # Data normalization
-        # We need it because several datasets' inputs are just so huge that several model can never handle it.
-        # PS: we don't want the append dummy events contaminate the mean and standard deviation.
-        if input_norm_data:
-            time_inteval = np.array([])
-            for item in self.data['time_seq'].values.tolist():
-                time_inteval = np.concatenate((time_inteval, item[1:] if self.evaluate else item[1:-1]))
-            self.mean = time_inteval.mean()
-            self.std = time_inteval.std()
-            del time_inteval
 
         '''
         Fix datatype
@@ -72,7 +61,7 @@ class generic_dataset(utils.data.Dataset):
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int64)
 
 
     def __getitem__(self, index):

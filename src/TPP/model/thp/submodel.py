@@ -74,15 +74,11 @@ class THP(nn.Module):
         
         # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
         # We have to check the shape.
-        if len(integral_of_all_events.shape) == 5:
-            integral_of_all_events, integral_of_all_events_ps = pack(
-                (torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device), integral_of_all_events), 'b s ne1 * ne'
-            )                                                                  # [..., integration_sample_rate, num_events]
-        elif len(integral_of_all_events.shape) == 4:
-            integral_of_all_events, integral_of_all_events_ps = pack(
-                (torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device), integral_of_all_events), 'b s * ne'
-            )                                                                  # [..., integration_sample_rate, num_events]
-        
+        integral_start_from_zero = torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device)
+                                                                               # [..., 1, num_events]
+        integral_of_all_events = torch.concat([integral_start_from_zero, integral_of_all_events], dim = -2)
+                                                                               # [..., integration_sample_rate, num_events]
+
         return integral_of_all_events
 
 
@@ -107,40 +103,46 @@ class THP(nn.Module):
         
         # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
         # We have to check the shape.
-        integral_of_all_events, integral_of_all_events_ps = pack(
-            (torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device), integral_of_all_events), 'b s ne *'
-        )                                                                      # [..., integration_sample_rate]
+        integral_start_from_0 = torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device)
+                                                                               # [..., 1]
+        integral_of_all_events = torch.concat((integral_start_from_0, integral_of_all_events), dim = -1)
+                                                                               # [..., integration_sample_rate]
 
         return integral_of_all_events
 
 
-    def forward(self, time_history, time_next, events_history, mask_history, mask_next):
+    def forward(self, time_history, time_next, events_history, mask_history, mask_next = None):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
         aggregate_time = time_history.cumsum(dim = -1)                         # [batch_size, seq_len]
         # Avoid zero denominator
         aggregate_time = aggregate_time + self.history_time_offset             # [batch_size, seq_len]
+        aggregate_time = rearrange(aggregate_time, f'... -> {"() " * (len(time_next.shape) - len(aggregate_time.shape))}...')
+                                                                               # [..., batch_size, seq_len]
+        history = rearrange(history, f'... -> {"() " * (len(time_next.shape) - len(aggregate_time.shape))}...')
+                                                                               # [..., batch_size, seq_len, d_input]
 
-        scaled_time = (time_next / aggregate_time).unsqueeze(dim = -1)         # [batch_size, seq_len, 1]
+        scaled_time = (time_next / aggregate_time).unsqueeze(dim = -1)         # [..., batch_size, seq_len, 1]
         intensity_all_events = softplus_ext(self.linear(history) + self.alpha * scaled_time, beta = F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [..., batch_size, seq_len, num_events]
         
-        reshaped_aggregate_time = rearrange(time_history.cumsum(dim = -1), '... -> ... 1 1')
-                                                                               # [batch_size, seq_len, 1, 1]
+        reshaped_aggregate_time = rearrange(time_history.cumsum(dim = -1), \
+                                            f'... -> {"() " * (len(time_next.shape) - len(aggregate_time.shape))}... () ()')
+                                                                               # [..., batch_size, seq_len, 1, 1]
         reshaped_aggregate_time = reshaped_aggregate_time + self.history_time_offset
-                                                                               # [batch_size, seq_len, 1, 1]
+                                                                               # [..., batch_size, seq_len, 1, 1]
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
         expanded_scaled_time = self.alpha * expanded_time.unsqueeze(dim = -1) / reshaped_aggregate_time
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
-        intensity_all_events_pre_softplus = self.linear(history)               # [batch_size, seq_len, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+        intensity_all_events_pre_softplus = self.linear(history)               # [..., batch_size, seq_len, num_events]
         intensity_all_events_pre_softplus = repeat(intensity_all_events_pre_softplus, '... ne -> ... r ne', r = self.integration_sample_rate)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
         all_lambda = softplus_ext(intensity_all_events_pre_softplus + expanded_scaled_time, F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
-        integral_all_events = self.integration_estimator(all_lambda, expanded_time, self.integration_sample_rate)[:, :, -1, :]
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+        integral_all_events = self.integration_estimator(all_lambda, expanded_time, self.integration_sample_rate)[..., -1, :]
+                                                                               # [..., batch_size, seq_len, num_events]
         
         return integral_all_events, intensity_all_events
 
@@ -176,8 +178,6 @@ class THP(nn.Module):
         
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, mean, var):
-        assert len(time_next.shape) == 3, "Wrong input time tensor shape."
-
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
@@ -185,27 +185,30 @@ class THP(nn.Module):
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
                                                                                # [integration_sample_rate]
         original_expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier
-                                                                               # [batch_size, seq_len, num_event, integration_sample_rate]
-        expanded_time = original_expanded_time.unsqueeze(dim = -1)             # [batch_size, seq_len, num_event, integration_sample_rate, 1]
-        aggregate_time = rearrange(torch.cumsum(time_history, dim = -1), 'b s -> b s 1 1 1')
-                                                                               # [batch_size, seq_len, 1, 1, 1]
-        aggregate_time = aggregate_time + self.history_time_offset             # [batch_size, seq_len, 1, 1, 1]
-        scaled_expanded_time = expanded_time / aggregate_time                  # [batch_size, seq_len, num_event, integration_sample_rate, 1]
+                                                                               # [..., batch_size, seq_len, num_event, integration_sample_rate]
+        expanded_time = original_expanded_time.unsqueeze(dim = -1)             # [..., batch_size, seq_len, num_event, integration_sample_rate, 1]
+        
+        history = rearrange(history, f'... -> {"() " * (len(time_next.shape) - len(time_history.shape) - 1)}...')
+                                                                               # [..., batch_size, seq_len, d_input]
+        aggregate_time = rearrange(torch.cumsum(time_history, dim = -1), \
+                                   f'... -> {"() " * (len(time_next.shape) - len(time_history.shape) - 1)}... () () ()')
+                                                                               # [..., batch_size, seq_len, 1, 1, 1]
+        aggregate_time = aggregate_time + self.history_time_offset             # [..., batch_size, seq_len, 1, 1, 1]
+        scaled_expanded_time = expanded_time / aggregate_time                  # [..., batch_size, seq_len, num_event, integration_sample_rate, 1]
 
-        intensity_for_each_event = self.linear(history)                        # [batch_size, seq_len, num_events]
-        intensity_for_each_event = rearrange(intensity_for_each_event, '... ne -> ... 1 1 ne')
-                                                                               # [batch_size, seq_len, 1, 1, num_events]
+        intensity_for_each_event = self.linear(history)                        # [..., batch_size, seq_len, num_events]
+        intensity_for_each_event = rearrange(intensity_for_each_event, '... ne -> ... () () ne')
+                                                                               # [..., batch_size, seq_len, 1, 1, num_events]
         expanded_intensity_across_all_events = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, num_events, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
         expanded_integral_across_all_events \
             = self.integration_estimator(expanded_intensity_across_all_events, original_expanded_time, integration_sample_rate)
-                                                                               # [batch_size, seq_len, num_events, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
         
         # aggregated timestamp
-        batch_size, seq_len, num_event, _ = original_expanded_time.shape
         timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, num_event, 1), device = self.device), original_expanded_time.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, num_events, integration_sample_rate]
+            (torch.zeros((*original_expanded_time.shape[:-1], 1), device = self.device), original_expanded_time.diff(dim = -1)),
+            dim = -1)                                                          # [..., batch_size, seq_len, num_events, integration_sample_rate]
         
         return expanded_integral_across_all_events, expanded_intensity_across_all_events, timestamp
     

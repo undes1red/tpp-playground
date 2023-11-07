@@ -41,19 +41,20 @@ class RMTPPModule(nn.Module):
         return time_scalar
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
         '''
         This implementation is in fact an advanced RMTPP with history-event-related time scaler and base intensity.
         '''
         time_history = (time_history) / var
-        time_next = (time_next) / var
 
-        time_history, time_next = time_history.unsqueeze(dim = -1), time_next.unsqueeze(dim = -1)
-                                                                               # [batch_size, seq_len, 1]
+        time_history = time_history.unsqueeze(dim = -1)                        # [batch_size, seq_len, 1]
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.event_toggle:
-            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, input_size]
+            if custom_events_history:
+                events_vec = events_history                                    # [batch_size, seq_len, input_size]
+            else:
+                events_vec = self.event_embedding(events_history)              # [batch_size, seq_len, input_size]
             input_vec = time_vec + events_vec
         else:
             input_vec = time_vec                                               # [batch_size, seq_len, input_size]
@@ -76,18 +77,30 @@ class RMTPPModule(nn.Module):
         # time_scalar can not be zero.
         time_scalar = self.clamp_time_scalar(time_scalar)                      # [batch_size, seq_len, 1]
 
+        time_next = (time_next) / var
+        time_next = time_next.unsqueeze(dim = -1)                              # [..., batch_size, seq_len, 1]
+
+        # reshape the parameters.
+        ein_ops = f'... -> {"() " * (len(time_next.shape) - len(time_scalar.shape))}...'
+        time_scalar = rearrange(time_scalar, ein_ops)                          # [..., batch_size, seq_len, 1]
+        constant = rearrange(constant, ein_ops)                                # [..., batch_size, seq_len, 1]
+
         # Get the intensity function and corresponding integral.
-        intensity = torch.exp(time_scalar * time_next) * constant              # [batch_size, seq_len, 1]
-        integral = (intensity - constant) / time_scalar * var                  # [batch_size, seq_len, 1]
+        intensity = torch.exp(time_scalar * time_next) * constant              # [..., batch_size, seq_len, 1]
+        integral = (intensity - constant) / time_scalar * var                  # [..., batch_size, seq_len, 1]
 
         mark = None
         if self.event_toggle:
             intensity, integral = intensity.sum(dim = -1), integral.sum(dim = -1)
-                                                                               # [batch_size, seq_len]
+                                                                               # [..., batch_size, seq_len]
             mark = self.event_decider(self.event_mapper(hidden_history))       # [batch_size, seq_length, num_events]
 
 
         return integral, intensity, mark, history_part
+    
+
+    def get_event_embedding(self, input_event):
+        return self.event_embedding(input_event)                               # [batch_size, seq_len, input_size]
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, var):

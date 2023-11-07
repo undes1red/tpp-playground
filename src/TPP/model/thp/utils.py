@@ -14,12 +14,37 @@ def get_subsequent_mask(seq):
 
 def softplus_ext(input, beta, threshold = 20):
     '''
-    This softplus function allows beta as a vector.
+    This softplus function allows beta being a vector.
 
     input:     [..., d_input]
     beta:      [d_input]
     threshold: int
     '''
+    if type(beta) == int:
+        return F.softplus(input = input, beta = beta, threshold = threshold)
+
+    assert input.shape[-1] == beta.shape[-1]
+    last_dim = input.shape[-1]
+    result = []
+
+    for index in range(last_dim):
+        result.append(F.softplus(input = input[..., index], beta = beta[index].item(), threshold = threshold))
+
+    result = torch.stack(result, dim = -1)
+
+    return result
+
+'''
+Abandonded
+
+def softplus_ext(input, beta, threshold = 20):
+    \'''
+    This softplus function allows beta being a vector.
+
+    input:     [..., d_input]
+    beta:      [d_input]
+    threshold: int
+    \'''
     if type(beta) == int:
         return F.softplus(input = input, beta = beta, threshold = threshold)
 
@@ -30,8 +55,12 @@ def softplus_ext(input, beta, threshold = 20):
 
     threshold_mask = (input * beta > threshold).int()
     infinity_mask = torch.isinf(output_part_1).int()
-    final_mask = (threshold_mask + infinity_mask).gt(0)
+    mask_for_masked_fill = (threshold_mask + infinity_mask).gt(0)
 
-    output = output_part_1.masked_fill(final_mask, 0) + output_part_2.masked_fill(~final_mask, 0)
+    output = torch.zeros_like(input)
+    output[~mask_for_masked_fill] = output_part_1.masked_select(~mask_for_masked_fill)
+    output[mask_for_masked_fill] = output_part_2.masked_select(mask_for_masked_fill)
 
     return output
+
+    '''

@@ -14,7 +14,8 @@ from src.TPP.model.thp.utils import *
 class THPWrapper(BasicModule):
     def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 0, probability_threshold = 0.5, 
-                 integration_sample_rate = 100, epsilon = 1e-20, history_time_offset = 1.0):
+                 integration_sample_rate = 100, epsilon = 1e-20, history_time_offset = 1.0, 
+                 survival_loss_during_training = False):
         super(THPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -23,6 +24,10 @@ class THPWrapper(BasicModule):
         self.probability_threshold = probability_threshold
         self.epsilon = epsilon
         self.history_time_offset = history_time_offset
+        self.survival_loss_during_training = survival_loss_during_training
+        self.integration_sample_rate = integration_sample_rate
+        self.sample_rate = 32
+
 
         self.model = THP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
                          n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
@@ -116,14 +121,18 @@ class THPWrapper(BasicModule):
              intensity_all_events = intensity_all_events, integral_all_events = integral_all_events,\
              events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
         )
-        # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
-        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
-        integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
-                                                                               # [batch_size, 1]
-        loss_survival = integral_survival.sum()
+
+        loss_survival = 0
+        if self.survival_loss_during_training:
+            # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+            dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+            integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                                   # [batch_size, 1]
+            loss_survival = integral_survival.sum()
+        
         loss = neg_log_likeli_loss_without_dummy + loss_survival
 
-        return neg_log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
+        return loss, neg_log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
 
 
     '''
@@ -202,7 +211,7 @@ class THPWrapper(BasicModule):
         MTPP loss function
         '''
         intensity = torch.sum(intensity_all_events * type_mask, dim = -1)      # [batch_size, seq_len]
-        log_intensity = torch.log(intensity + self.epsilon) * mask_next     # [batch_size, seq_len]
+        log_intensity = torch.log(intensity + self.epsilon) * mask_next        # [batch_size, seq_len]
         intensity_integral = integral_all_events.sum(dim = -1)                 # [batch_size, seq_len]
         ll = -log_intensity + intensity_integral                               # [batch_size, seq_len]
         mtpp_nll_loss = torch.sum(ll)
@@ -242,14 +251,19 @@ class THPWrapper(BasicModule):
         Update: 2022-09-23
         Add event-wise MAE support.
         '''
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
+                                                                               # [sample_rate, batch_size, seq_len]
+        probability_threshold = probability_threshold.to(self.device)
+
         def bisect_target(taus):
             '''
             MTPP loss function
             '''
             integral_all_events, _ = self.model(time_history, taus, events_history, mask_history, mask_next)
-                                                                               # [batch_size, seq_len, num_events]
-            gap = integral_all_events.sum(dim = -1) + torch.log(1 - torch.tensor(self.probability_threshold, device = self.device))
-                                                                               # [batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            gap = integral_all_events.sum(dim = -1) + torch.log(1 - probability_threshold)
+                                                                               # [sample_rate, batch_size, seq_len]
             return gap
 
         def median_prediction(l, r):
@@ -261,13 +275,28 @@ class THPWrapper(BasicModule):
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
-        tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask_next                               # [batch_size, seq_len]
-        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
+        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
+                                                                               # [sample_rate, batch_size, seq_len]
+        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len]
 
-        return gap, tau_pred
+        '''
+        integral_of_each_event, intensity_of_each_event = self.model(time_history, tau_pred, events_history, mask_history, mask_next)
+                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events]
+        
+        intensity_of_all_events = intensity_of_each_event.sum(dim = -1)        # [sample_rate, batch_size, seq_len]
+        integral_of_all_events = integral_of_each_event.sum(dim = -1)          # [sample_rate, batch_size, seq_len]
+
+        probability_of_all_events = intensity_of_all_events * torch.exp(-integral_of_all_events)
+                                                                               # [sample_rate, batch_size, seq_len]
+        tau_pred = (tau_pred * probability_of_all_events).sum(dim = 0)         # [batch_size, seq_len]
+        gap = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
+        '''
+
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
+        mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
+        
+        return mae, tau_pred.detach()
 
 
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var):
@@ -365,30 +394,36 @@ class THPWrapper(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
+        # Preprocess
+        batch_size, seq_len = time_history.shape
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        probability_threshold = dist.sample((self.sample_rate, batch_size, seq_len, self.num_events))
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+        probability_threshold = probability_threshold.to(self.device)
+        p_x = p_x.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
+
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
                 self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, mean, var)
-                                                                               # 2 * [batch_size, seq_len, num_events, resolution, num_events] + [batch_size, seq_len, num_events, resolution]
+                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
-                                                                               # [batch_size, seq_len, num_events, resolution]
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
             intensity_event_mask = torch.diag(torch.ones(self.num_events, device = self.device))
-                                                                               # [batch_size, seq_len, num_events, resolution, num_events]
-            intensity_event_mask = rearrange(intensity_event_mask, 'ne ne1 -> 1 1 ne 1 ne1')
-                                                                               # [batch_size, seq_len, num_events, resolution, num_events]
+                                                                               # [num_events, num_events]
+            intensity_event_mask = rearrange(intensity_event_mask, f'ne ne1 -> {"() " * (len(expanded_intensity_across_events.shape) - 3)}ne () ne1')
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
             expanded_intensity_per_event = (expanded_intensity_across_events * intensity_event_mask).sum(dim = -1)
-                                                                               # [batch_size, seq_len, num_events, resolution]
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
-                                                                               # [batch_size, seq_len, num_events, resolution]
-            expanded_probability_per_event = rearrange(expanded_probability_per_event, 'b s ne r -> b s r ne')
-                                                                               # [batch_size, seq_len, resolution, num_events]
-            probability = self.model.integration_probability_estimator(self, expanded_probability_per_event, timestamp, resolution)[:, :, -1, :]
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+            probability = self.model.integration_probability_estimator(expanded_probability_per_event, timestamp, resolution)[..., -1]
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
             return probability
 
         def bisect_target(taus):
-            p_xt = evaluate_all_event(taus)                                    # [batch_size, seq_len, num_events]
-            p_t_x = p_xt / p_x                                                 # [batch_size, seq_len, num_events]
-            p_gap = p_t_x - self.probability_threshold                         # [batch_size, seq_len, num_events]
+            p_xt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
+            p_t_x = p_xt / p_x                                                 # [sample_rate, batch_size, seq_len, num_events]
+            p_gap = p_t_x - self.probability_threshold                         # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
 
@@ -401,11 +436,29 @@ class THPWrapper(BasicModule):
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
-                                                                               # [batch_size, seq_len, num_events]
-        r = max_val*torch.ones((*time_history.shape, self.num_events), dtype = torch.float32, device = self.device)
-                                                                               # [batch_size, seq_len, num_events]
-        tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len, num_events]
+        l = 0.0001*torch.ones_like(probability_threshold)                      # [sample_rate, batch_size, seq_len, num_events]
+        r = max_val*torch.ones_like(probability_threshold)                     # [sample_rate, batch_size, seq_len, num_events]
+        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len, num_events]
+
+        '''
+        integral_of_each_event, intensity_of_each_event, _ \
+            = self.model.integral_intensity_time_next_3d(events_history, time_history, tau_pred, \
+                                                         mask_history, resolution, mean, var)
+                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events, integration_sample_rate, num_events]
+        integral_sum_of_each_event = integral_of_each_event.sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+        intensity_event_mask = torch.diag(torch.ones(self.num_events, device = self.device))
+                                                                               # [num_events, num_events]
+        intensity_event_mask = rearrange(intensity_event_mask, f'ne ne1 -> {"() " * (len(intensity_of_each_event.shape) - 3)}ne () ne1')
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
+        expanded_intensity_per_event = (intensity_of_each_event * intensity_event_mask).sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+        expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-integral_sum_of_each_event)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+        probability_per_event = expanded_probability_per_event[..., -1]        # [sample_rate, batch_size, seq_len, num_events]
+        tau_pred = (tau_pred * probability_per_event).sum(dim = 0)             # [batch_size, seq_len, num_events]
+        '''
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
 
         return tau_pred
 
@@ -702,8 +755,7 @@ class THPWrapper(BasicModule):
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
         time, events, fact, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        neg_log_likeli_loss, marker_loss, the_number_of_events = model('train', time, events, mask)
-        loss = neg_log_likeli_loss
+        loss, neg_log_likeli_loss, marker_loss, the_number_of_events = model('train', time, events, mask)
         loss.backward()
 
         tpp_loss, mark_loss = neg_log_likeli_loss.item() / the_number_of_events, marker_loss.item() / the_number_of_events
@@ -778,8 +830,11 @@ class THPWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        #        ['evaluation_absolute_loss', 'test_absolute_loss']
+        return [evaluation_report_format_dict['absolute_NLL_loss'], 
+                test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
     metric_number = 2 # metric number is the length of the output of choose_metric

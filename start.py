@@ -10,8 +10,8 @@ main_procedure_translator = {
     'TPP_plot': 'TPP',
 
     # Outlier-directed missing data imputation
-    'missing_train': 'missing',
-    'missing_evaluate': 'missing',
+    'ehd_train': 'ehd',
+    'ehd_plot': 'ehd',
 
     'Transformers': 'Transformers',
     'fakenews': 'fakenews'
@@ -23,8 +23,8 @@ sub_procedure_translator = {
     'TPP_plot': 'Plotter',
 
     # Outlier-directed missing data imputation
-    'missing_train': 'Trainer',
-    'missing_evaluate': 'Plotter',
+    'ehd_train': 'Trainer',
+    'ehd_plot': 'Plotter',
 
     'Transformers': 'Trainer',
     'fakenews': 'Trainer'
@@ -41,13 +41,6 @@ if __name__ == '__main__':
         # Temporal point process
         'TPP_train',
         'TPP_plot',
-
-        # Outlier-directed missing data imputation
-        'missing_train',
-        'missing_evaluate'
-
-        # 'Transformers',
-        # 'fakenews'
         ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

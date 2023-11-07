@@ -20,7 +20,7 @@ class IFIBC(nn.Module):
     '''
 
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, epsilon, pretrain, alpha, beta, device):
+                 mlp_layers, nonlinear, epsilon, device):
         super(IFIBC, self).__init__()
         self.device = device
         self.num_events = num_events
@@ -48,29 +48,17 @@ class IFIBC(nn.Module):
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.layer_activation = nn.Tanh()
 
-        # We might need these two factors to control the vector's norm.
-        if pretrain:
-            # alpha
-            self.output_factor = nn.Parameter(torch.tensor(alpha,  device = self.device, requires_grad = True))
-            # beta
-            self.residual_factor = nn.Parameter(torch.tensor(beta, device = self.device, requires_grad = True))
-        else:
-            # alpha
-            self.output_factor = torch.tensor(alpha,  device = self.device)
-            # beta
-            self.residual_factor = torch.tensor(beta, device = self.device)
-
         self.nonneg_activation = nn.Softplus()
         self.nonneg_factor = nn.ReLU()
         self.nonneg_integral = nn.Sigmoid()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
         '''
         Args:
-            events_history: [batch_size, seq_len]
+            events_history: [batch_size, seq_len] or [batch_size, seq_len, d_history] if custom_events_history = True
             time_history:   [batch_size, seq_len]
-            time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
+            time_next:      [..., batch_size, seq_len, num_events]
             mask:           [batch_size, seq_len]
         '''
 
@@ -79,9 +67,11 @@ class IFIBC(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
+        if custom_events_history:
+            events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
+        else:
+            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
+        history, _ = pack([events_embeddings, time_history], 'b s *')          # [batch_size, seq_len, d_history + 1]
 
         # Reshape hidden output for full connection layers.
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
@@ -92,42 +82,39 @@ class IFIBC(nn.Module):
         '''
         Obtain timestamp embeddings.
         '''
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
-        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [batch_size, seq_len, num_events]
+        time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
+        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [..., batch_size, seq_len, num_events]
 
         time_embedding = time_next.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
         time_zero_embedding = time_next_zero.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
         
-        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, num_events, d_intensity]
-        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [batch_size, seq_len, num_events, d_intensity]
+        time_embedding = self.time_mapper(time_embedding)                      # [..., batch_size, seq_len, num_events, d_intensity]
+        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [..., batch_size, seq_len, num_events, d_intensity]
         
-        output = time_embedding + hidden_history                               # [batch_size, seq_len, num_events, d_intensity]
-        output_zero = time_zero_embedding + hidden_history                     # [batch_size, seq_len, num_events, d_intensity]
+        hidden_history = rearrange(hidden_history, f'... -> {"() " * (len(time_embedding.shape) - len(hidden_history.shape))}...')         
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
+        output = time_embedding + hidden_history                               # [..., batch_size, seq_len, num_events, d_intensity]
+        output_zero = time_zero_embedding + hidden_history                     # [..., batch_size, seq_len, num_events, d_intensity]
 
         for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, num_events, d_intensity]
-            output = layer(output)                                             # [batch_size, seq_len, num_events, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, num_events, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+            output = layer(output)                                             # [..., batch_size, seq_len, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [..., batch_size, seq_len, num_events, d_intensity]
 
-            residual_zero = output_zero                                        # [batch_size, seq_len, num_events, d_intensity]
-            output_zero = layer(output_zero)                                   # [batch_size, seq_len, num_events, d_intensity]
-            output_zero = self.layer_activation(output_zero)                   # [batch_size, seq_len, num_events, d_intensity]
-            output_zero = self.nonneg_factor(self.residual_factor) * residual_zero + self.nonneg_factor(self.output_factor) * output_zero
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+            output_zero = layer(output_zero)                                   # [..., batch_size, seq_len, num_events, d_intensity]
+            output_zero = self.layer_activation(output_zero)                   # [..., batch_size, seq_len, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
 
-        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
-                                                                               # [batch_size, seq_len, num_events, 1]
-        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
-                                                                               # [batch_size, seq_len, num_events, 1]
+        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output) - time_next.unsqueeze(dim = -1))
+                                                                               # [..., batch_size, seq_len, num_events, 1]
+        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero) - time_next_zero.unsqueeze(dim = -1))
+                                                                               # [..., batch_size, seq_len, num_events, 1]
 
         probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [..., batch_size, seq_len, num_events]
         probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... ne 1 -> ... ()', 'sum')
-                                                                               # [batch_size, seq_len, 1]
+                                                                               # [..., batch_size, seq_len, 1]
 
         return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.epsilon)
 
@@ -176,17 +163,11 @@ class IFIBC(nn.Module):
         output_zero = time_zero_embedding + sampled_history_embedding          # [number_of_sampled_sequences, 1, num_events, d_intensity]
 
         for layer in self.mlp:
-            residual = output                                                  # [number_of_sampled_sequences, 1, num_events, d_intensity]
             output = layer(output)                                             # [number_of_sampled_sequences, 1, num_events, d_intensity]
             output = self.layer_activation(output)                             # [number_of_sampled_sequences, 1, num_events, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [number_of_sampled_sequences, 1, num_events, d_intensity]
 
-            residual_zero = output_zero                                        # [number_of_sampled_sequences, 1, num_events, d_intensity]
             output_zero = layer(output_zero)                                   # [number_of_sampled_sequences, 1, num_events, d_intensity]
             output_zero = self.layer_activation(output_zero)                   # [number_of_sampled_sequences, 1, num_events, d_intensity]
-            output_zero = self.nonneg_factor(self.residual_factor) * residual_zero + self.nonneg_factor(self.output_factor) * output_zero
-                                                                               # [number_of_sampled_sequences, 1, num_events, d_intensity]
 
         probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
                                                                                # [number_of_sampled_sequences, 1, num_events, 1]
@@ -245,11 +226,8 @@ class IFIBC(nn.Module):
         output = emb_time_expand + hidden_history                              # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         expand_integral = self.nonneg_integral(-self.aggregate(output))        # [batch_size, seq_len, resolution, num_events, 1]
         
@@ -277,6 +255,10 @@ class IFIBC(nn.Module):
             'b s *')                                                           # [batch_size, seq_len, resolution]
 
         return expand_probability, timestamp
+
+
+    def get_event_embedding(self, input_event):
+        return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
@@ -324,11 +306,8 @@ class IFIBC(nn.Module):
 
 
         for layer in self.mlp:
-            residual = output                                                  # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = layer(output)                                             # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
-            output = self.nonneg_factor(self.residual_factor) * residual + self.nonneg_factor(self.output_factor) * output
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         expand_integral = self.nonneg_activation(-self.aggregate(output))      # [batch_size, seq_len, resolution, num_events, 1]
         expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events]
@@ -341,8 +320,7 @@ class IFIBC(nn.Module):
 
 
         # Gradient 1: Integral -> time
-        events_probability_at_each_interpolated_timestamp = \
-        - torch.autograd.grad(
+        events_probability_at_each_interpolated_timestamp = - torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),

@@ -8,6 +8,8 @@ class BasicArguments:
                             help='Set global random seed.')
         self.parser.add_argument('--cuda', action='store_true', 
                             help="Set it to true if you want to use GPU to accelerate model training.")
+        self.parser.add_argument("-mp", "--multiprocessing", type = bool, default = False,
+                            help="Use this handle to turn multiprocessing on and off.")
         self.parser.add_argument("--ngpus", type=int, default=1,
                             help="If you want to train your model on multiple GPUs, please set this parameter with integer bigger than 1. We haven't verified this functionality with ngpus > 1, so multi-GPU training might not work.")
 

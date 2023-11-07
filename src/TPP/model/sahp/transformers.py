@@ -32,7 +32,8 @@ class TransformerEncoder(nn.Module):
         # OPTIONAL recurrent layer, this sometimes helps
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
 
-    def forward(self, event_time, event_type, non_pad_mask):
+
+    def forward(self, time_history, events_history, non_pad_mask, custom_events_history = False):
         """
         Return intensity functions' values for all events and time and events, if possible, predictions.
         Args:
@@ -41,20 +42,21 @@ class TransformerEncoder(nn.Module):
         3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
         """
 
-        enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
+        enc_output = self.encoder(time_history, events_history, non_pad_mask, custom_events_history)
+                                                                               # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
 
         return enc_output
 
 
+    def get_event_embedding(self, input_event):
+        return self.encoder.get_event_embedding(input_event)                   # [batch_size, seq_len, d_input]
+
+
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
-
-    def __init__(
-            self,
-            num_types, d_input, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout, 
-            device):
+    def __init__(self, num_types, d_input, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout, device):
         super(Encoder, self).__init__()
         self.device = device
         self.d_input = d_input
@@ -72,7 +74,8 @@ class Encoder(nn.Module):
                              d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
             for _ in range(n_layers)])
 
-    def forward(self, event_type, event_time, non_pad_mask):
+
+    def forward(self, time_history, events_history, non_pad_mask, custom_events_history):
         """
         Encode event sequences via masked self-attention.
         Args:
@@ -83,8 +86,8 @@ class Encoder(nn.Module):
 
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
-        _, seq_len = event_type.shape
-        self_attn_mask_subseq = get_subsequent_mask(event_time)
+        _, seq_len = events_history.shape[:2]
+        self_attn_mask_subseq = get_subsequent_mask(time_history)
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
                                                                                # [batch_size, seq_len]
         self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s s_1', s_1 = seq_len)
@@ -92,11 +95,14 @@ class Encoder(nn.Module):
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
         # Time Embedding
-        time_emb = self.position_emb(event_type, event_time)                   # [batch_size, seq_len, d_input]
+        time_emb = self.position_emb(events_history, time_history)             # [batch_size, seq_len, d_input]
 
         # Event Embedding
-        if event_type != None:
-            events_emb = self.event_emb(event_type)                            # [batch_size, seq_len, d_input]
+        if events_history != None:
+            if custom_events_history:
+                events_emb = events_history
+            else:
+                events_emb = self.event_emb(events_history)                    # [batch_size, seq_len, d_input]
         else:
             events_emb = torch.zeros_like(time_emb, device = self.device)      # [batch_size, seq_len, d_input]
         mingled_emb = time_emb + events_emb                                    # [batch_size, seq_len, d_input]
@@ -108,6 +114,10 @@ class Encoder(nn.Module):
                 self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
 
         return mingled_emb
+    
+
+    def get_event_embedding(self, input_event):
+        return self.event_emb(input_event)                                     # [batch_size, seq_len, d_input]
 
 
 class RNN_layers(nn.Module):

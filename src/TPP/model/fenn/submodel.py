@@ -23,7 +23,7 @@ class FENN(nn.Module):
         '''
         Should we compress marker information into the history embedding?
 
-        Ceveat:
+        Caveat:
         FullyNN can not distinguish different markers because of computation graph overlap.
         It is expected that the original FullyNN achieves very inferior marker prediction performance in spite of the model size.
         '''
@@ -58,7 +58,7 @@ class FENN(nn.Module):
         self.nonneg_activation = nn.Softplus()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var):
+    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
         '''
         The forwardpropagation function of FENN, triggered by pytorch.
 
@@ -86,9 +86,11 @@ class FENN(nn.Module):
         '''
 
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-        time_next = (time_next - mean) / var                                   # [batch_size, seq_len, num_events]
         
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
+        if custom_events_history:
+            events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
+        else:
+            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
         
         # Reshape hidden output for full connection layers.
@@ -96,39 +98,46 @@ class FENN(nn.Module):
 
         hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events, d_history]
-        
+
+        time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
         time_embedding = time_next.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
 
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity]
-        time_embedding = self.time_mapper(time_embedding)                      # [batch_size, seq_len, num_events, d_intensity]
-        output = self.layer_activation(time_embedding + hidden_history)        # [batch_size, seq_len, num_events, d_intensity]
+        time_embedding = self.time_mapper(time_embedding)                      # [..., batch_size, seq_len, num_events, d_intensity]
+        hidden_history = rearrange(hidden_history, f'... -> {"() " * (len(time_embedding.shape) - len(hidden_history.shape))}...')         
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
+        output = self.layer_activation(time_embedding + hidden_history)        # [..., batch_size, seq_len, num_events, d_intensity]
 
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, num_events, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, num_events, d_intensity]
+            output = nonneg_layer(output)                                      # [..., batch_size, seq_len, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [..., batch_size, seq_len, num_events, d_intensity]
 
-        integral = self.nonneg_activation(self.aggregate(output))              # [batch_size, seq_len, num_events, 1]
+        integral = self.nonneg_activation(self.aggregate(output))              # [..., batch_size, seq_len, num_events, 1]
 
         if self.zero_shift:
             zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [..., batch_size, seq_len, num_events]
             zero_time_embedding = zero.unsqueeze(dim = -1) * self.non_neg(self.weight_for_t)
-                                                                               # [batch_size, seq_len, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
 
-            zero_time_embedding = self.time_mapper(zero_time_embedding)        # [batch_size, seq_len, num_events, d_intensity]
-            zero_output = self.activate(zero_time_embedding + hidden_history)  # [batch_size, seq_len, num_events, d_intensity]
+            zero_time_embedding = self.time_mapper(zero_time_embedding)        # [..., batch_size, seq_len, num_events, d_intensity]
+            zero_output = self.activate(zero_time_embedding + hidden_history)  # [..., batch_size, seq_len, num_events, d_intensity]
             for nonneg_layer in self.mlp:
-                zero_output = nonneg_layer(zero_output)                        # [batch_size, seq_len, num_events, d_intensity]
-                zero_output = self.activate(zero_output)                       # [batch_size, seq_len, num_events, d_intensity]
+                zero_output = nonneg_layer(zero_output)                        # [..., batch_size, seq_len, num_events, d_intensity]
+                zero_output = self.activate(zero_output)                       # [..., batch_size, seq_len, num_events, d_intensity]
             
-            zero_integral = self.nonneg_activation(self.aggregate(zero_output))# [batch_size, seq_len, num_events, 1]
-            integral = integral - zero_integral.detach()                       # [batch_size, seq_len, num_events, 1]
+            zero_integral = self.nonneg_activation(self.aggregate(zero_output))# [..., batch_size, seq_len, num_events, 1]
+            integral = integral - zero_integral.detach()                       # [..., batch_size, seq_len, num_events, 1]
 
-        integral = integral.squeeze(dim = -1)                                  # [batch_size, seq_len, num_events]
+        integral = integral.squeeze(dim = -1)                                  # [..., batch_size, seq_len, num_events]
 
         return integral
     
+
+    def get_event_embedding(self, input_event):
+        return self.events(input_event)                                        # [batch_size, seq_len, d_history]
+
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, var):
         '''
@@ -246,7 +255,7 @@ class FENN(nn.Module):
         * time_history    type: torch.tensor shape: [batch_size, seq_len]
                           Historical time sequences. Similar to events_history, we always generate
                           this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
+        * time_next       type: torch.tensor shape: [..., batch_size, seq_len, num_events]
                           When the next event actually happens. 
         * resolution      type: int shape: N/A
                           How many values do we need in each time interval [t_{i}, t_{i + 1}].
@@ -285,30 +294,32 @@ class FENN(nn.Module):
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
-        original_time_expand = time_next.unsqueeze(dim = -2) * rearrange(time_multiplier, 'r -> 1 1 r 1')
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        original_time_expand = time_next.unsqueeze(dim = -2) * rearrange(time_multiplier, f'r -> {"() " * (len(time_next.shape) - 1)}r 1')
+                                                                               # [..., batch_size, seq_len, resolution, num_events]
         time_expand = repeat(original_time_expand.clone(), '... -> ... ne', ne = self.num_events)                     
-                                                                               # [batch_size, seq_len, resolution, num_events, num_events]
+                                                                               # [..., batch_size, seq_len, resolution, num_events, num_events]
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events, num_events]
+        normed_time_expand = (time_expand - mean) / var                        # [..., batch_size, seq_len, resolution, num_events, num_events]
 
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
-        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
-        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+        hidden_history = rearrange(hidden_history, f'... -> {"() " * (len(emb_normed_time_expand.shape) - len(hidden_history.shape))} ...')
+                                                                               # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
 
         '''
         Get intensity integrals.
         '''
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+            output = nonneg_layer(output)                                      # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
 
-        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, num_events, 1]
+        expand_integral = self.nonneg_activation(self.aggregate(output))       # [..., batch_size, seq_len, resolution, num_events, num_events, 1]
 
         if self.zero_shift:
-            integral_at_zero = rearrange(expand_integral[:, :, 0, :, :, :].detach(), 'b s ne ne1 1 -> b s 1 ne ne1 1')
-            expand_integral = expand_integral - integral_at_zero               # [batch_size, seq_len, 1, num_events, num_events, 1]
+            integral_at_zero = rearrange(expand_integral[..., 0, :, :, :].detach(), '... ne ne1 1 -> ... () ne ne1 1')
+            expand_integral = expand_integral - integral_at_zero               # [..., batch_size, seq_len, 1, num_events, num_events, 1]
 
         '''
         Get intensity values at every sampled $ t $.
@@ -317,20 +328,18 @@ class FENN(nn.Module):
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events, num_events]
+        )[0]                                                                   # [..., batch_size, seq_len, resolution, num_events, num_events]
         time_expand.requires_grad = False
 
-        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events, num_events]
-        expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events, num_events]
+        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [..., batch_size, seq_len, resolution, num_events, num_events]
+        expand_intensity = expand_intensity.detach()                           # [..., batch_size, seq_len, resolution, num_events, num_events]
 
         '''
         Restore the original timestamp
         '''
-        batch_size, seq_len = events_history.shape
-        dummy_inception = torch.zeros((batch_size, seq_len, 1, self.num_events), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -2)],
-            'b s * ne')                                                        # [batch_size, seq_len, resolution, num_events]
+        dummy_inception = torch.zeros_like(time_next).unsqueeze(dim = -2)      # [..., batch_size, seq_len, resolution, num_events]
+        timestamp = torch.cat([dummy_inception, original_time_expand.diff(dim = -2)], dim = -2)
+                                                                               # [..., batch_size, seq_len, resolution, num_events]
 
         return expand_integral, expand_intensity, timestamp
 

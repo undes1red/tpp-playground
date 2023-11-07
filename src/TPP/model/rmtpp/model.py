@@ -9,8 +9,8 @@ from src.TPP.model.rmtpp.plot import *
 
 class RMTPP(BasicModule):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
-                 output_size, limited_history_norm, time_scalar_min = 1e-4, 
-                 probability_threshold = 0.5):
+                 output_size, limited_history_norm, time_scalar_min = 1e-20, epsilon = 1e-20,
+                 probability_threshold = 0.5, survival_loss_during_training = False):
         super(RMTPP, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -19,11 +19,14 @@ class RMTPP(BasicModule):
         self.event_toggle = event_toggle
         self.limited_history_norm = limited_history_norm
         self.probability_threshold = probability_threshold
-        self.epsilon = 1e-20
+        self.epsilon = epsilon
+        self.survival_loss_during_training = survival_loss_during_training
+        self.sample_rate = 32
 
         self.model = RMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
                                  dropout = dropout, num_events = self.num_events, output_size = output_size, event_toggle = event_toggle, 
                                  limited_history_norm = limited_history_norm, time_scalar_min = time_scalar_min, device = device)
+
 
     def forward(self, task_name, *args, **kwargs):
         '''
@@ -58,14 +61,16 @@ class RMTPP(BasicModule):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot
+            'graph': self.plot,
         }
 
         return task_mapper[task_name](*args, **kwargs)
 
+
     def divide_history_and_next(self, input):
         history, next = input[:, :-1].clone(), input[:, 1:].clone()
         return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
+
 
     def remove_dummy_event_from_mask(self, mask):
         '''
@@ -79,6 +84,7 @@ class RMTPP(BasicModule):
             mask_without_dummy[idx] = mask_without_dummy_per_seq
         
         return mask_without_dummy
+
 
     def train_procedure(self, events, time, mask, mean, var):
         events_history, events_next = self.divide_history_and_next(events)
@@ -100,13 +106,18 @@ class RMTPP(BasicModule):
         # event_loss_without_dummy = \sum{x_i}{CrossEntropyLoss(\hat{x_i}, x_i)} for all real-world events.
         loss_without_dummy, time_loss_without_dummy, events_loss_without_dummy = \
                    self.loss_function(intensity, integral, mark, events_next_without_dummy, mask_next_without_dummy)
-        # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
-        dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
-        probability_survival = integral.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1).sum()
+        
+        probability_survival = 0
+        if self.survival_loss_during_training:
+            # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
+            dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
+            probability_survival = integral.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1).sum()
                                                                                # [batch_size, 1]
-        loss = loss_without_dummy + probability_survival                       # [batch_size]
+
+        loss = loss_without_dummy + probability_survival
 
         return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
+
 
     def evaluate_procedure(self, events, time, mask, mean, var):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
@@ -155,6 +166,7 @@ class RMTPP(BasicModule):
         return time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
                mae, f1, the_number_of_events
 
+
     def loss_function(self, intensity, integral, mark, events_next, mask_next):
         # temporal point process loss
         # intensity shape: [batch, seq_length]
@@ -180,9 +192,10 @@ class RMTPP(BasicModule):
 
         return loss, time_loss, events_loss
 
+
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
-        integral, intensity, mark, constant = self.model(events_history, time_history, pred_time, mean, var)
+        _, _, mark, _ = self.model(events_history, time_history, pred_time, mean, var)
 
         predicted_events = torch.argmax(mark, dim = -1)[mask_next == 1]        # [batch_size, seq_len]
         events_true = events_next[mask_next == 1]                              # [batch_size, seq_len]
@@ -192,19 +205,24 @@ class RMTPP(BasicModule):
 
         return mae, f1
 
+
     def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
+                                                                               # [sample_rate, batch_size, seq_len]
+        probability_threshold = probability_threshold.to(self.device)
+
         def evaluate(taus):
             integral, _, _, _ = self.model(events_history, time_history, taus, mean, var)
-                                                                               # [batch_size, seq_len]
-
+                                                                               # [sample_rate, batch_size, seq_len]
             return integral
 
         def bisect_target(taus):
-            return evaluate(taus) + torch.log(1 - torch.tensor(self.probability_threshold, device = self.device))
+            return evaluate(taus) + torch.log(1 - probability_threshold)
             
         def median_prediction(l, r):
             for _ in range(50):
@@ -215,13 +233,24 @@ class RMTPP(BasicModule):
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
-        tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask_next                               # [batch_size, seq_len]
-        gap = torch.abs(gap)                                                   # [batch_size, seq_len]
+        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
+                                                                               # [sample_rate, batch_size, seq_len]
+        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len]
 
-        return gap, tau_pred
+        '''
+        integral, intensity, _, _ = self.model(events_history, time_history, tau_pred, mean, var)
+                                                                               # [sample_rate, batch_size, seq_len] * 2
+        probability_of_each_event = intensity * torch.exp(-integral)           # [sample_rate, batch_size, seq_len]
+        tau_pred = (tau_pred * probability_of_each_event).sum(dim = 0)         # [batch_size, seq_len]
+        gap = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
+        '''
+
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
+        mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
+
+        return mae, tau_pred.detach()
+
 
     def plot(self, minibatch, opt):
         plot_type_to_functions = {
@@ -232,6 +261,7 @@ class RMTPP(BasicModule):
         }
     
         return plot_type_to_functions[opt.plot_type](minibatch, opt)
+
 
     def extract_plot_data(self, minibatch):
         '''
@@ -259,6 +289,7 @@ class RMTPP(BasicModule):
         mean, var = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, var
+
 
     def intensity(self, input_data, opt):
         '''
@@ -298,6 +329,7 @@ class RMTPP(BasicModule):
         
         return plots
 
+
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -334,6 +366,7 @@ class RMTPP(BasicModule):
             }
         plots = plot_integral(data, timestamp, opt)
         return plots
+
 
     def probability(self, input_data, opt):
         '''
@@ -374,6 +407,7 @@ class RMTPP(BasicModule):
         plots = plot_probability(data, timestamp, opt)
         return plots
 
+
     def debug(self, input_data, opt):
         '''
         Args:
@@ -410,6 +444,7 @@ class RMTPP(BasicModule):
         plots = plot_debug(data, timestamp, opt)
 
         return plots
+
 
     '''
     Evaluation over the entire dataset.
@@ -458,6 +493,7 @@ class RMTPP(BasicModule):
 
         return spearman, l1
     
+
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -472,8 +508,10 @@ class RMTPP(BasicModule):
 
         return mae, f1_1
 
+
     def get_mae_e_and_f1(self, input_data, opt):
         raise NotImplemented("RMTPP is a TPP model, so MAE-E is not supported.")
+
 
     def train_step(model, minibatch, device):
         model.train()
@@ -489,6 +527,7 @@ class RMTPP(BasicModule):
 
         return time_loss_without_dummy, fact, events_loss
 
+
     def evaluation_step(model, minibatch, device):
         model.eval()
 
@@ -503,6 +542,7 @@ class RMTPP(BasicModule):
         mae = mae.sum().item() / the_number_of_events
 
         return time_loss_time_next_without_dummy, time_loss_survival, fact, events_loss_time_next_without_dummy, mae, f1
+
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -550,12 +590,17 @@ class RMTPP(BasicModule):
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
     
+
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-                test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
+        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
+        #        ['evaluation_absolute_loss', 'test_absolute_loss']
+        return [evaluation_report_format_dict['absolute_NLL_loss'], 
+                test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
+
 
     metric_number = 2 # metric number is the length of the output of choose_metric

@@ -4,10 +4,10 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 
 ## Model Zoo
 
-1. Dynamic-Weight-Generation-based FullyNN variant  (Done)
+1. Dynamic-Weight-Generation-based FullyNN variant  (Deprecated)
 2. FullyNN (Omi et al. Done)
-3. CTLSTM (Mei et al. Done)
-4. RMTPP (Du et al. Done with several training issues.)
+3. CTLSTM (Mei et al. Deprecated)
+4. RMTPP (Du et al. Done)
 5. ifl-tpp (Shchur et al. Done)
 6. NeuralODE (Chen et al. Done)
 7. NeuralEventODE (Chen et al. Planning)
