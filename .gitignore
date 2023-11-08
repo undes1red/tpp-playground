@@ -121,6 +121,7 @@ config/
 wandb/
 deprecated/
 *.pkl
+archive/
 
 # The test scripts
 scripts*/

@@ -30,6 +30,7 @@ class IFIBCModel(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate
+        self.bisect_early_stop_threshold = 1e-5
 
         self.model = IFIBC(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
@@ -331,7 +332,7 @@ class IFIBCModel(BasicModule):
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
                 index += 1
-                if v.abs().max() < 1e-4:
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
                     break
                 if index > 50:
                     break
@@ -468,11 +469,17 @@ class IFIBCModel(BasicModule):
             return p_gap
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         

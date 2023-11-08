@@ -24,6 +24,7 @@ class RHP(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
+        self.bisect_early_stop_threshold = 1e-5
 
         self.model = RHPModule(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                                d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
@@ -265,11 +266,17 @@ class RHP(BasicModule):
             return evaluate(taus) + torch.log(1 - torch.tensor(self.probability_threshold, device = self.device))
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         
@@ -430,11 +437,17 @@ class RHP(BasicModule):
             return p_gap
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         

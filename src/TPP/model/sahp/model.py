@@ -24,6 +24,7 @@ class SAHPWrapper(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
+        self.bisect_early_stop_threshold = 1e-5
 
         self.model = SAHP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
                           n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
@@ -264,11 +265,17 @@ class SAHPWrapper(BasicModule):
             return evaluate(taus) + torch.log(1 - probability_threshold)
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         
@@ -429,11 +436,17 @@ class SAHPWrapper(BasicModule):
             return p_gap
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         

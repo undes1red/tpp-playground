@@ -17,7 +17,7 @@ class LogNormMixWrapper(BasicModule):
         self.probability_threshold = probability_threshold
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
-
+        self.bisect_early_stop_threshold = 1e-5
 
         self.model = LogNormMix(
             self.num_events + 1,
@@ -192,11 +192,17 @@ class LogNormMixWrapper(BasicModule):
             return evaluate(taus) - probability_threshold
         
         def median_prediction(l, r):
-            for _ in range(30):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
 

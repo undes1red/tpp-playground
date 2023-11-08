@@ -27,6 +27,7 @@ class THPWrapper(BasicModule):
         self.survival_loss_during_training = survival_loss_during_training
         self.integration_sample_rate = integration_sample_rate
         self.sample_rate = 32
+        self.bisect_early_stop_threshold = 1e-5
 
 
         self.model = THP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
@@ -267,11 +268,17 @@ class THPWrapper(BasicModule):
             return gap
 
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         
@@ -428,11 +435,17 @@ class THPWrapper(BasicModule):
             return p_gap
 
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         
