@@ -6,19 +6,19 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from src.TPP.model.utils import *
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
 from src.TPP.model.marked_rmtpp.plot import *
+from src.TPP.model import its_lower_bound, its_upper_bound
 
 
 class MRMTPP(BasicModule):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, 
                  output_size, limited_history_norm, time_scalar_min = 1e-20, epsilon = 1e-20,
-                 probability_threshold = 0.5, survival_loss_during_training = False):
+                 survival_loss_during_training = False):
         super(MRMTPP, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
         self.limited_history_norm = limited_history_norm
-        self.probability_threshold = probability_threshold
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
@@ -209,7 +209,7 @@ class MRMTPP(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
                                                                                # [sample_rate, batch_size, seq_len]
         probability_threshold = probability_threshold.to(self.device)
@@ -355,7 +355,7 @@ class MRMTPP(BasicModule):
         '''
         # Preprocess
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, batch_size, seq_len, self.num_events))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
         probability_threshold = probability_threshold.to(self.device)

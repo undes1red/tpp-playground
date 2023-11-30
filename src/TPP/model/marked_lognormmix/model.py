@@ -6,16 +6,16 @@ from src.TPP.model.marked_lognormmix.log_norm_mix import MarkedLogNormMix
 from src.TPP.model.utils import BasicModule, move_from_tensor_to_ndarray
 from src.TPP.model.marked_lognormmix.plot import *
 from src.TPP.model.utils import *
+from src.TPP.model import its_lower_bound, its_upper_bound
 
 
 class MarkedLogNormMixWrapper(BasicModule):
     def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
-                 num_mix_components: int = 16, rnn_type: str = "LSTM", probability_threshold = 0.5, \
+                 num_mix_components: int = 16, rnn_type: str = "LSTM", \
                  survival_loss_during_training = False):
         super(MarkedLogNormMixWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
-        self.probability_threshold = probability_threshold
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.bisect_early_stop_threshold = 1e-5
@@ -175,7 +175,7 @@ class MarkedLogNormMixWrapper(BasicModule):
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, *input_time.shape))
                                                                                # [sample_rate, batch_size, seq_len]
         probability_threshold = probability_threshold.to(self.device)
@@ -285,7 +285,7 @@ class MarkedLogNormMixWrapper(BasicModule):
 
         # Preprocess
         batch_size, seq_len = input_events.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, batch_size, seq_len, self.num_events + 1))
                                                                                # [sample_rate, batch_size, seq_len + 1, num_events + 1]
         probability_threshold = probability_threshold.to(self.device)
@@ -509,13 +509,20 @@ class MarkedLogNormMixWrapper(BasicModule):
             seq_len = mask_per_seq.sum()
             expand_probability_per_seq = rearrange(expand_probability_per_seq, 'a b ... -> (a b) ...')
                                                                                # [batch_size, seq_len, resolution, num_marks] + [batch_size, seq_len, resolution]
+            expand_probability_per_seq = move_from_tensor_to_ndarray(expand_probability_per_seq)
+
             # rho: spearman coefficient
-            spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * opt.resolution])[0]
-            if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+            if self.num_events == 1:
+                spearman_matrix_per_seq = np.array([[1.,],])
+            else:
+                spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * opt.resolution])[0]
+                if self.num_events == 2:
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * opt.resolution], rowvar = False)
+            if self.num_events == 1:
+                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * opt.resolution], 
                                             resolution = opt.resolution, num_events = self.num_events + 1,

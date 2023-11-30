@@ -30,6 +30,16 @@ class TPPTrainer:
         }
 
 
+    def get_procedure_monitor_dict(self):
+        return {
+            'num_format': {'lr': ':8.5f', 'tensor_memory_consumption': ':5f', 'reserved_memory': ':5f'},
+            'suffix': {'lr': '', 'tensor_memory_consumption': 'MiB', 'reserved_memory': 'MiB'},
+            'lr': self.sched_optimizer.get_lr(),
+            'tensor_memory_consumption': torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024,
+            'reserved_memory': torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024,
+        }
+
+
     def work(self, rank, opt):
         '''
         The entry function for TaskHost to start the task.
@@ -205,7 +215,11 @@ class TPPTrainer:
         log_print_format_dict = self.model_class.log_print_format(report_sum, procedure = 'Training')
         if self.opt.log:
             self.transform_report_sum_into_recording_df(**log_print_format_dict, procedure = 'Training', current_step = current_step)
-        print_performances(logger = logger, procedure='Training', lr = self.sched_optimizer.get_lr(), **log_print_format_dict)
+        procedure_monitor_dict = self.get_procedure_monitor_dict()
+        print_performances(logger = logger, procedure = 'Training', \
+                           model_performance_dict = log_print_format_dict,
+                           procedure_monitor_dict = procedure_monitor_dict)
+
         if self.opt.wandb:
             import wandb
             wandb.log(
@@ -227,7 +241,10 @@ class TPPTrainer:
         )
         log_print_format_dict_eva = self.model_class.log_print_format(eva_report, procedure = 'Evaluation')
         if self.rank == 0:
-            print_performances(logger = logger, procedure='Evaluation', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_eva)
+            procedure_monitor_dict = self.get_procedure_monitor_dict()
+            print_performances(logger = logger, procedure = 'Evaluation', \
+                               model_performance_dict = log_print_format_dict_eva,
+                               procedure_monitor_dict = procedure_monitor_dict)
 
         '''
         Evaluation on the test dataset.
@@ -238,7 +255,10 @@ class TPPTrainer:
         )
         log_print_format_dict_test = self.model_class.log_print_format(test_report, procedure = 'Test')
         if self.rank == 0:
-            print_performances(logger = logger, procedure='Test', lr = self.sched_optimizer.get_lr(), **log_print_format_dict_test)
+            procedure_monitor_dict = self.get_procedure_monitor_dict()
+            print_performances(logger = logger, procedure = 'Test', \
+                               model_performance_dict = log_print_format_dict_test,
+                               procedure_monitor_dict = procedure_monitor_dict)
 
         if self.rank == 0:
             if self.opt.log:
@@ -259,7 +279,6 @@ class TPPTrainer:
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
-        # if self.opt.save_model and current_step > self.opt.n_warmup_steps:
         if self.opt.save_model:
             if self.opt.save_mode == 'all':
                 model_name = os.path.join(

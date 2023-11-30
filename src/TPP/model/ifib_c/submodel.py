@@ -4,7 +4,7 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 from src.TPP.model.ifib_c.nonneg import NonNegLinear
 
 
@@ -106,9 +106,11 @@ class IFIBC(nn.Module):
             output_zero = self.layer_activation(output_zero)                   # [..., batch_size, seq_len, num_events, d_intensity]
                                                                                # [..., batch_size, seq_len, num_events, d_intensity]
 
-        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output) - time_next.unsqueeze(dim = -1))
+        # probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output) - time_next.unsqueeze(dim = -1))
+        probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
                                                                                # [..., batch_size, seq_len, num_events, 1]
-        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero) - time_next_zero.unsqueeze(dim = -1))
+        # probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero) - time_next_zero.unsqueeze(dim = -1))
+        probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
                                                                                # [..., batch_size, seq_len, num_events, 1]
 
         probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
@@ -346,7 +348,7 @@ class IFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         probability_for_each_event = \
-            rearrange(events_probability_at_each_interpolated_timestamp.detach().cpu(), 'b s r ne -> b (s r) ne')
+            rearrange(events_probability_at_each_interpolated_timestamp, 'b s r ne -> b (s r) ne')
                                                                            # [batch_size, seq_len * resolution, num_events]
         
         spearman_matrix = []
@@ -355,13 +357,21 @@ class IFIBC(nn.Module):
         for _, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in \
                                               enumerate(zip(probability_for_each_event, mask, time_next)):
             seq_len = mask_per_seq.sum()
+            expand_probability_per_seq = move_from_tensor_to_ndarray(expand_probability_per_seq)
+
             # rho: spearman coefficient
-            spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
-            if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+            if self.num_events == 1:
+                spearman_matrix_per_seq = np.array([[1.,],])
+            else:
+                spearman_matrix_per_seq = spearmanr(expand_probability_per_seq[:seq_len * resolution])[0]
+                if self.num_events == 2:
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
+            if self.num_events == 1:
+                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
+            
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
                                             resolution = resolution, num_events = self.num_events,

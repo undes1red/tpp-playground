@@ -25,14 +25,30 @@ def lst_divide(lst, denominator):
 
 
 # How to print formated logs via logger and format definitions.
-def print_performances(logger, procedure, lr = None, num_format = None, **kwargs):
-    if num_format is None or len(num_format) != len(kwargs):
-        logger.exception('Bad num_format dictoinary.')
+def print_performances(logger, procedure, model_performance_dict, procedure_monitor_dict):
+    info_model_performance, kwargs_model_performance \
+        = print_performance_worker(logger, 'model_performance', **model_performance_dict)
+    info_procedure_monitor, kwargs_procedure_monitor \
+        = print_performance_worker(logger, 'procedure_monitor', **procedure_monitor_dict)
+    
+    info = f'{procedure:12}'
+    info += info_model_performance.format_map(kwargs_model_performance)
+    info += info_procedure_monitor.format_map(kwargs_procedure_monitor)
+    
+    logger.info(info)
 
-    info = f'{procedure:12}' + (f' ,lr: {lr:8.5f}' if lr else '')
+
+def print_performance_worker(logger, dict_label, num_format = None, suffix = None, **kwargs):
+    if num_format is None or len(num_format) != len(kwargs):
+        logger.exception(f'{dict_label} mismatches its num_format dict!')
+    if suffix is not None and len(suffix) != len(kwargs):
+        logger.exception(f'{dict_label} mismatches its suffix dict!')
+
+    info = ''
     for key in kwargs.keys():
-        info += ' ,' + key + ': {' + key + num_format[key] + '}'
-    logger.info(info.format_map(kwargs))
+        info += (''.join([' ,', key, ': {', key, num_format[key], '}']) + ('' if suffix is None else f'{suffix[key]}'))
+    
+    return info, kwargs
 
 
 # Read and convert a YAML file into a dict object.

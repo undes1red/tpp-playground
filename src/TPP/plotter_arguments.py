@@ -14,6 +14,8 @@ class TPPPlotterArguments(BasicArguments):
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in {root}/src/TPP/dataloader.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of dataloader config file used during training. We only need the filename, not the relative path.')
+        self.parser.add_argument('--combine_used_and_current_dataloader_config', action='store_true', \
+                                 help='Combine the settings defined in used_dataloader_config and dataloader_config when set. If the same key-value pairs are detected in both setting files, we always select values in used_dataloader_config.')
 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='How many steps did we use to train this model?')
@@ -75,6 +77,10 @@ def Plotter_postprocess(opt, root_path):
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
 
+    if opt.combine_used_and_current_dataloader_config:
+        opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
+        opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None
+    
     # locate where checkpoints are stored.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
     folder_suffix = 'model_' + model_hyperparameters

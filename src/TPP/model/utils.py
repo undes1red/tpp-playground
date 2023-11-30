@@ -12,7 +12,11 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
     @abstractmethod
     def forward(self, *args):
         '''
+        The entry function of all model. Pytorch can automatically move the data batch to correct device 
+        because we pack all model by DistributedParallel(DP) or DistributedDataParallel(DDP), .
+        However, this feature only works when you access the model through forward().
         '''
+        return NotImplementedError('Please Implement forward()!')
     
     @staticmethod
     @abstractmethod
@@ -20,6 +24,8 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         '''
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the training dataset.
         '''
+        return NotImplementedError('Please Implement train_step()!')
+
 
     @staticmethod
     @abstractmethod
@@ -27,13 +33,17 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         '''
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.
         '''
+        return NotImplementedError('Please Implement evaluation_step()!')
+
 
     @staticmethod
     @abstractmethod
-    def postprocess(input):
+    def postprocess(input, procedure):
         '''
-        The input is the output of function train_step() or function evaluation_step(). You should return a list
+        You can do whatever postprocess here on the raw results from train_step() and evaluation_step().
+        The input is the output of function train_step() or function evaluation_step(). You should return a list.
         '''
+        return input
 
     '''
     The input of log_print_format() and logfile_print_format() is the output object of function postprocess()
@@ -73,6 +83,7 @@ class BasicModule(nn.Module, metaclass = ABCMeta):
         You'd better to mark the name of each object in the output list as a reminder, like:
         [relative loss on evaluation dataset, relative loss on test dataset]
         '''
+        return NotImplementedError('please tell us which metric is lower indicates a better checkpoint.')
 
 '''
 commonly used functions

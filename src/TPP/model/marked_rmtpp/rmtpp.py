@@ -4,7 +4,7 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from einops import rearrange, reduce, repeat
-from src.TPP.model.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 
 class MRMTPPModule(nn.Module):
@@ -45,7 +45,7 @@ class MRMTPPModule(nn.Module):
         '''
         This implementation is in fact an advanced RMTPP with history-event-related time scaler and base intensity.
         '''
-        time_history = (time_history) / var
+        time_history = (time_history - mean) / var
         time_history = time_history.unsqueeze(dim = -1)                        # [batch_size, seq_len, 1]
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
 
@@ -93,7 +93,7 @@ class MRMTPPModule(nn.Module):
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, var):
-        time_history = ((time_history) / var).unsqueeze(dim = -1)
+        time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         events_vec = self.event_embedding(events_history)                      # [batch_size, seq_len, input_size]
@@ -142,7 +142,7 @@ class MRMTPPModule(nn.Module):
         '''
         Shape of time_next: [..., batch_size, seq_len, num_events]
         '''
-        time_history = ((time_history) / var).unsqueeze(dim = -1)
+        time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         events_vec = self.event_embedding(events_history)                      # [batch_size, seq_len, input_size]
@@ -216,7 +216,7 @@ class MRMTPPModule(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask_next):
-        time_history = ((time_history) / var).unsqueeze(dim = -1)
+        time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         events_vec = self.event_embedding(events_history)                      # [batch_size, seq_len, input_size]
@@ -264,10 +264,8 @@ class MRMTPPModule(nn.Module):
         data['expand_intensity_for_each_event'] = intensity                    # [batch_size, seq_len, resolution, num_events]
         data['expand_integral_for_each_event'] = integral                      # [batch_size, seq_len, resolution, num_events]
 
-        expand_intensity = rearrange(intensity.detach().cpu(), 'b s r ne -> b (s r) ne')
-                                                                               # [batch_size, seq_len * integration_sample_rate, num_event]
-        expand_integral = rearrange(integral.detach().cpu(), 'b s r ne -> b (s r) ne')
-                                                                               # [batch_size, seq_len * integration_sample_rate, num_event]
+        expand_intensity = rearrange(intensity, 'b s r ne -> b (s r) ne')      # [batch_size, seq_len * integration_sample_rate, num_event]
+        expand_integral = rearrange(integral, 'b s r ne -> b (s r) ne')        # [batch_size, seq_len * integration_sample_rate, num_event]
             
         spearman_matrix = []
         pearson_matrix = []
@@ -275,15 +273,22 @@ class MRMTPPModule(nn.Module):
         for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
             in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
             seq_len = mask_per_seq.sum()
-
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
+            probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
+
             # rho: spearman coefficient
-            spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
-            if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+            if self.num_events == 1:
+                spearman_matrix_per_seq = np.array([[1.,],])
+            else:
+                spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
+                if self.num_events == 2:
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
+            if self.num_events == 1:
+                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
+            
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
                                             resolution = resolution, num_events = self.num_events,

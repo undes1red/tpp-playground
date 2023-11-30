@@ -1,32 +1,42 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from src.TPP.model.sahp.selfattn import SelfAttn
 
-
-class TransformerLayer(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, dropout = 0.1):
-        super(TransformerLayer, self).__init__()
+class SelfAttn(nn.Module):
+    '''
+    SelfAttn module, the heart of transformers' layer
+    '''
+    def __init__(self, temperature, attn_dropout, device):
+        super(SelfAttn, self).__init__()
         self.device = device
+        self.temperature = temperature
 
-        self.attn = MultiheadAttention(n_head = n_head, d_input = d_input, d_qk = d_qk,
-                                       d_v = d_v, device = self.device, dropout = dropout)
-        self.ffn = FFN(d_input = d_input, d_hidden = d_hidden, device = self.device, dropout = dropout)
+        self.dropout = nn.Dropout(attn_dropout)
 
-    def forward(self, x, self_attn_mask, non_pad_mask):
+    def forward(self, q, k, v, mask = None):
         '''
         Args:
-        1. x: input tensor. shape: [batch_size, seq_len, d_input]
-        2. self_attn_mask: mask tensor for used by self attention. shape: [seq_len, seq_len]
-        3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
-        Outputs:
-        '''
-        output, attn = self.attn(x, x, x, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
 
-        output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        1. q: input tensor. shape: [batch_size, seq_len, n_head, d_qk]
+        2. k: input tensor. shape: [batch_size, seq_len, n_head, d_qk]
+        3. v: input tensor. shape: [batch_size, seq_len, n_head, d_v]
+        4. mask: mask_out several values in the attention matrices. shape: [seq_len, seq_len]
+
+        Output:
+        1. output: the result of self attention. shape: [batch_size, seq_len, n_head, d_v]
+        '''
+
+        q /= self.temperature                                                  # [batch_size, seq_len, n_head, d_qk]
+
+        attn = torch.einsum('...jkl, ...mkl -> ...kjm', q, k)                  # [batch_size, n_head, seq_len, seq_len]
+
+        if mask is not None:
+            attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
+
+        attn = self.dropout(F.softmax(attn, dim = -1))                         # [batch_size, n_head, seq_len, seq_len]
+        output = torch.einsum('...jkl, ...ljn -> ...kjn', attn, v)             # [batch_size, seq_len, n_head, d_v]
 
         return output, attn
 
@@ -100,12 +110,12 @@ class MultiheadAttention(nn.Module):
         return output, attn
 
 
-class FFN(nn.Module):
+class PositionwiseFeedForward(nn.Module):
     '''
     Feedforward module next to the Transformers layer.
     '''
     def __init__(self, d_input, d_hidden, device, dropout = 0.1):
-        super(FFN, self).__init__()
+        super(PositionwiseFeedForward, self).__init__()
         self.device = device
         
         self.w_1 = nn.Linear(d_input, d_hidden, device = self.device)

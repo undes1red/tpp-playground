@@ -5,7 +5,7 @@ from einops import rearrange, repeat, reduce, pack
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 
 class RHPModule(nn.Module):
@@ -161,7 +161,7 @@ class RHPModule(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
 
         integral_all_events = self.integration_estimator(expanded_intensity_all_events, \
-                                                         expanded_time, self.integration_sample_rate)[:, :, -1, :]
+                                                         expanded_time, self.integration_sample_rate)[..., -1, :]
                                                                                # [..., batch_size, seq_len, num_events]
 
         return integral_all_events, intensity_all_events
@@ -222,10 +222,9 @@ class RHPModule(nn.Module):
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
         # Obtain timestamp
-        timestamp, timestamp_ps = pack(
-            (torch.zeros_like(time_next), expanded_time.diff(dim = -1)),
-            'b s ne *'
-        )                                                                      # [batch_size, seq_len, num_events, integration_sample_rate]
+        timestamp = torch.concat(
+            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time.diff(dim = -1)], dim = -1
+        )                                                                      # [..., batch_size, seq_len, num_events, integration_sample_rate]
 
         return expanded_integral_all_events, expanded_intensity_all_events, timestamp
 
@@ -266,9 +265,9 @@ class RHPModule(nn.Module):
         # THP always assumes that the event information is present.
         # So model_probe_function() always provides spearman, pearson coefficient and L1 distance.
 
-        expand_intensity = rearrange(expanded_intensity_all_events.detach().cpu(), 'b s r ne -> b (s r) ne')
+        expand_intensity = rearrange(expanded_intensity_all_events, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * integration_sample_rate, num_event]
-        expand_integral = rearrange(expanded_integral_all_events.detach().cpu(), 'b s r ne -> b (s r) ne')
+        expand_integral = rearrange(expanded_integral_all_events, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * integration_sample_rate, num_event]
             
         spearman_matrix = []
@@ -277,15 +276,22 @@ class RHPModule(nn.Module):
         for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
             in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
             seq_len = mask_per_seq.sum()
-
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
+            probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
+
             # rho: spearman coefficient
-            spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * integration_sample_rate])[0]
-            if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+            if self.num_events == 1:
+                spearman_matrix_per_seq = np.array([[1.,],])
+            else:
+                spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * integration_sample_rate])[0]
+                if self.num_events == 2:
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * integration_sample_rate], rowvar = False)
+            if self.num_events == 1:
+                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
+            
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
                                             resolution = integration_sample_rate, num_events = self.num_events,

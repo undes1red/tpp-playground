@@ -5,16 +5,16 @@ from einops import rearrange, reduce, repeat
 from src.TPP.model.lognormmix.log_norm_mix import LogNormMix
 from src.TPP.model.utils import BasicModule, move_from_tensor_to_ndarray
 from src.TPP.model.lognormmix.plot import *
+from src.TPP.model import its_lower_bound, its_upper_bound
 
 
 class LogNormMixWrapper(BasicModule):
     def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
-                 num_mix_components: int = 16, rnn_type: str = "LSTM", probability_threshold = 0.5, \
+                 num_mix_components: int = 16, rnn_type: str = "LSTM", \
                  survival_loss_during_training = False):
         super(LogNormMixWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
-        self.probability_threshold = probability_threshold
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.bisect_early_stop_threshold = 1e-5
@@ -178,7 +178,7 @@ class LogNormMixWrapper(BasicModule):
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, *input_time.shape))
                                                                                # [sample_rate, batch_size, seq_len]
         probability_threshold = probability_threshold.to(self.device)

@@ -45,6 +45,17 @@ def prepare_dataloaders(opt, rank = 0):
     
     dataloader_config_dict = read_yaml(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
 
+    # Read in the used_dataloader_config
+    used_dataloader_config_dict = {}
+    try:
+        if opt.combine_used_and_current_dataloader_config:
+            used_dataloader_config_dict = read_yaml(opt.abs_used_dataloader_config) if opt.abs_used_dataloader_config else {}
+    except AttributeError as e:
+        logger.warning('combine_used_and_current_dataloader_config unset! Possibly we are training a model. We will ignore it.')
+
+    # apply used_dataloader_config to current dataloader config
+    dataloader_config_dict.update(used_dataloader_config_dict)
+
     if rank == 0:
         if opt.abs_dataloader_config is None:
             logger.info(f"No custom dataloader settings! We will use the default dataloader settings.")

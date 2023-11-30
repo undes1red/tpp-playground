@@ -24,19 +24,33 @@ class generic_continuous_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, property_dict, evaluate = False, shift_time = False, norm_time = False, norm_coordinate = False):
+    def __init__(self, data, device, property_dict, evaluate = False, shift_time = False, \
+                 norm_time = False, norm_coordinate = False, split_event_dimension = False, norm_by_min_max = False):
         super(generic_continuous_dataset, self).__init__()
         self.data = data
         self.device = device
         self.evaluate = evaluate
-        self.dim_events = property_dict['dim_events']
+        self.split_event_dimension = split_event_dimension
+        self.dim_events = property_dict['dim_marks']
         self.start_time = property_dict['t_0']
         self.end_time = property_dict['T']
-        self.mean_time = property_dict['mean_time'] if norm_time else 0
-        self.std_time = property_dict['std_time'] if norm_time else 1
-        self.mean_coordinate = np.array(property_dict['mean_coordinate'], dtype = np.float32) if norm_coordinate else np.array([0.0] * self.dim_events, dtype = np.float32)
-        self.std_coordinate = np.array(property_dict['std_coordinate'], dtype = np.float32) if norm_coordinate else np.array([1.0] * self.dim_events, dtype = np.float32)
 
+        if norm_by_min_max:
+            '''
+            If norm_by_min_max = True
+            self.mean_time -> the minimum.
+            self.std_time -> the difference between minimum and maximum.
+            But here we don't change the variable name. The user should comfirm which normalization method they are using.
+            '''
+            self.mean_time = property_dict['min_time'] if norm_time else 0
+            self.std_time = (property_dict['max_time'] - property_dict['min_time']) if norm_time else 1
+            self.mean_coordinate = np.array(property_dict['min_coordinate'], dtype = np.float32) if norm_coordinate else np.array([0.0] * self.dim_events, dtype = np.float32)
+            self.std_coordinate = np.array(property_dict['max_coordinate'], dtype = np.float32) - np.array(property_dict['min_coordinate'], dtype = np.float32) if norm_coordinate else np.array([1.0] * self.dim_events, dtype = np.float32)
+        else:
+            self.mean_time = property_dict['mean_time'] if norm_time else 0
+            self.std_time = property_dict['std_time'] if norm_time else 1
+            self.mean_coordinate = np.array(property_dict['mean_coordinate'], dtype = np.float32) if norm_coordinate else np.array([0.0] * self.dim_events, dtype = np.float32)
+            self.std_coordinate = np.array(property_dict['std_coordinate'], dtype = np.float32) if norm_coordinate else np.array([1.0] * self.dim_events, dtype = np.float32)
 
         '''
         Convert data from list to np.array.
@@ -105,7 +119,11 @@ class generic_continuous_dataset(utils.data.Dataset):
             padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'mean')
             padded_event = np.pad(item[1], ((0, pad_length), (0, 0)), mode = 'constant', constant_values = [0] * self.dim_events)
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
-            padded_item = [padded_time_seq, np.array_split(padded_event, self.dim_events, axis = -1), padded_score, mask]
+            if self.split_event_dimension:
+                padded_item = [padded_time_seq, np.array_split(padded_event, self.dim_events, axis = -1), padded_score, mask]
+            else:
+                padded_item = [padded_time_seq, padded_event, padded_score, mask]
+
             if self.evaluate:
                 padded_intensity = np.pad(item[3], (0, pad_length), mode = 'constant', constant_values = 0)
                 padded_item.append(padded_intensity)

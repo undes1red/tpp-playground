@@ -12,7 +12,7 @@ from src.TPP.model.attnhp.transformers import EncoderLayer, MultiHeadAttention
 
 class ATTNHP(nn.Module):
     def __init__(self, device, num_events, d_input, d_time, n_layers, n_head, dropout, integration_sample_rate,
-                 d_inner, use_norm, sharing_param_layer):
+                 use_norm, sharing_param_layer):
         super(ATTNHP, self).__init__()
         self.num_events = num_events
         self.device = device
@@ -21,9 +21,9 @@ class ATTNHP(nn.Module):
         self.d_input = d_input
         self.d_time = d_time
 
-        self.div_term = torch.exp(torch.arange(0, d_time, 2) * -(math.log(10000.0) / d_time)).reshape(1, 1, -1)
+        self.div_term = torch.exp(torch.arange(0, d_time, 2, device = self.device) * -(math.log(10000.0) / d_time)).reshape(1, 1, -1)
         # here num_types already includes [PAD], [BOS], [EOS]
-        self.Emb = nn.Embedding(self.num_types, d_input, padding_idx = self.num_events)
+        self.Emb = nn.Embedding(self.num_events + 1, d_input, padding_idx = self.num_events, device = self.device)
         self.n_layers = n_layers
         self.n_head = n_head
         self.sharing_param_layer = sharing_param_layer
@@ -32,13 +32,12 @@ class ATTNHP(nn.Module):
             for i in range(n_head):
                 self.heads.append(
                     nn.ModuleList(
-                        [EncoderLayer(
-                            d_input + d_time,
-                            MultiHeadAttention(1, d_input + d_time, d_input, dropout, output_linear=False),
-                            # PositionwiseFeedForward(d_input + d_time, d_inner, dropout),
-                            use_residual=False,
-                            dropout=dropout
-                        )
+                        [
+                            EncoderLayer(d_model = d_input + d_time,
+                                         self_attn = MultiHeadAttention(1, d_input + d_time, d_input, dropout, output_linear = False, device = self.device),
+                                         use_residual = False,
+                                         dropout = dropout, 
+                                         device = self.device)
                             for _ in range(n_layers)
                         ]
                     )
@@ -49,12 +48,12 @@ class ATTNHP(nn.Module):
             for i in range(n_head):
                 self.heads.append(
                     nn.ModuleList(
-                        [EncoderLayer(
-                            d_input + d_time,
-                            MultiHeadAttention(1, d_input + d_time, d_input, dropout, output_linear=False),
-                            # PositionwiseFeedForward(d_input + d_time, d_inner, dropout),
-                            use_residual=False,
-                            dropout=dropout
+                        [
+                            EncoderLayer(d_model = d_input + d_time,
+                                         self_attn = MultiHeadAttention(1, d_input + d_time, d_input, dropout, output_linear = False, device = self.device),
+                                         use_residual = False,
+                                         dropout = dropout,
+                                         device = self.device
                         )
                             for _ in range(0)
                         ]
@@ -63,8 +62,8 @@ class ATTNHP(nn.Module):
             self.heads = nn.ModuleList(self.heads)
         self.use_norm = use_norm
         if use_norm:
-            self.norm = nn.LayerNorm(d_input)
-        self.inten_linear = nn.Linear(d_input * n_head, self.event_num)
+            self.norm = nn.LayerNorm(d_input, device = self.device)
+        self.inten_linear = nn.Linear(d_input * n_head, self.num_events, device = self.device)
         self.softplus = nn.Softplus()
         self.eps = torch.finfo(torch.float32).eps
         # self.add_bos = dataset.add_bos
@@ -72,25 +71,22 @@ class ATTNHP(nn.Module):
 
 
     def compute_temporal_embedding(self, time):
-        batch_size = time.size(0)
-        seq_len = time.size(1)
-        pe = torch.zeros(batch_size, seq_len, self.d_time).to(time.device)
+        pe = torch.zeros(*(time.shape), self.d_time, device = self.device)
         _time = time.unsqueeze(-1)
-        div_term = self.div_term.to(time.device)
-        pe[..., 0::2] = torch.sin(_time * div_term)
-        pe[..., 1::2] = torch.cos(_time * div_term)
+        pe[..., 0::2] = torch.sin(_time * self.div_term)
+        pe[..., 1::2] = torch.cos(_time * self.div_term)
         # pe = pe * non_pad_mask.unsqueeze(-1)
         return pe
 
 
-    def forward_pass(self, init_cur_layer_, tem_enc, tem_enc_layer, enc_input, combined_mask, batch_non_pad_mask=None):
+    def forward_pass(self, init_cur_layer_, tem_enc, tem_enc_layer, enc_input, combined_mask, batch_non_pad_mask = None):
         cur_layers = []
-        seq_len = enc_input.size(1)
+        seq_len = enc_input.size(-2)
         for head_i in range(self.n_head):
-            cur_layer_ = init_cur_layer_
+            cur_layer_ = init_cur_layer_                                       # [batch_size, seq_len, d_input]
             for layer_i in range(self.n_layers):
-                layer_ = torch.cat([cur_layer_, tem_enc_layer], dim=-1)
-                _combined_input = torch.cat([enc_input, layer_], dim=1)
+                layer_ = torch.cat([cur_layer_, tem_enc_layer], dim = -1)      # [...batch_size, seq_len, d_input + d_time]
+                _combined_input = torch.cat([enc_input, layer_], dim = -2)     # [...batch_size, 2 * seq_len, d_input + d_time]
                 if self.sharing_param_layer:
                     enc_layer = self.heads[head_i][0]
                 else:
@@ -98,26 +94,42 @@ class ATTNHP(nn.Module):
                 enc_output = enc_layer(
                     _combined_input,
                     combined_mask
-                )
+                )                                                              # [...batch_size, 2 * seq_len, d_input + d_time]
                 if batch_non_pad_mask is not None:
                     _cur_layer_ = enc_output[:, seq_len:, :] * (batch_non_pad_mask.unsqueeze(-1))
                 else:
                     _cur_layer_ = enc_output[:, seq_len:, :]
 
                 # add residual connection
-                cur_layer_ = torch.tanh(_cur_layer_) + cur_layer_
-                enc_input = torch.cat([enc_output[:, :seq_len, :], tem_enc], dim=-1)
+                cur_layer_ = torch.tanh(_cur_layer_) + cur_layer_              # [...batch_size, seq_len, d_input]
+                enc_input = torch.cat([enc_output[:, :seq_len, :], tem_enc], dim = -1)
+                                                                               # [...batch_size, seq_len, d_input + d_time]
                 # non-residual connection
                 # cur_layer_ = torch.tanh(_cur_layer_)
 
                 # enc_output *= _combined_non_pad_mask.unsqueeze(-1)
                 # layer_ = torch.tanh(enc_output[:, enc_input.size(1):, :])
                 if self.use_norm:
-                    cur_layer_ = self.norm(cur_layer_)
-            cur_layers.append(cur_layer_)
-        cur_layer_ = torch.cat(cur_layers, dim=-1)
+                    cur_layer_ = self.norm(cur_layer_)                         # [...batch_size, seq_len, d_input]
+            cur_layers.append(cur_layer_)                                      # n_head * [...batch_size, seq_len, d_input]
+        cur_layer_ = torch.cat(cur_layers, dim = -1)                           # [...batch_size, seq_len, n_head * d_input]
 
         return cur_layer_
+    
+
+    def add_decorative_dimensions(self, input, tensor_start_with_decorative_dimensions):
+        '''
+        tensor_start_with_decorative_dimensions: must looks like a tensor with shape [..., batch_size, seq_len]
+        '''
+        number_of_additional_dimensions = range(len(tensor_start_with_decorative_dimensions.shape) - 2)
+        einop = '... -> ' + ' '.join([f'a_{i}' for i in number_of_additional_dimensions]) + ' ...'
+        dimension_dict = {f'a_{i}': value for i, value in zip(number_of_additional_dimensions, tensor_start_with_decorative_dimensions.shape)}
+        output = repeat(input, einop, **dimension_dict)                        # [..., batch_size, seq_len, d_input]
+        
+        # Make it compatible with other attnhp codes.
+        output = rearrange(output, '... sl di -> (...) sl di')                 # [...batch_size, seq_len, d_input]
+
+        return output
 
 
     def hidden_rep_encoder(self, event_seqs, time_seqs, batch_non_pad_mask, attention_mask, extra_times = None):
@@ -125,25 +137,41 @@ class ATTNHP(nn.Module):
         tem_enc *= batch_non_pad_mask.unsqueeze(-1)                            # [batch_size, seq_len, d_time]
         enc_input = torch.tanh(self.Emb(event_seqs))                           # [batch_size, seq_len, d_input]
         init_cur_layer_ = torch.zeros_like(enc_input)                          # [batch_size, seq_len, d_input]
+
         layer_mask = (torch.eye(attention_mask.size(1), device = self.device) < 1).unsqueeze(0).expand_as(attention_mask)
                                                                                # [batch_size, seq_len, seq_len]
         if extra_times is None:
             tem_enc_layer = tem_enc                                            # [batch_size, seq_len, d_time]
         else:
-            tem_enc_layer = self.compute_temporal_embedding(extra_times)       # [batch_size, seq_len, d_time]
-            tem_enc_layer *= batch_non_pad_mask.unsqueeze(-1)                  # [batch_size, seq_len, d_time]
-        # batch_size * (seq_len) * (2 * seq_len)
-        _combined_mask = torch.cat([attention_mask, layer_mask], dim=-1)
-        # batch_size * (2 * seq_len) * (2 * seq_len)
+            tem_enc_layer = self.compute_temporal_embedding(extra_times)       # [..., batch_size, seq_len, d_time]
+            tem_enc_layer *= batch_non_pad_mask.unsqueeze(-1)                  # [..., batch_size, seq_len, d_time]
+            tem_enc_layer = rearrange(tem_enc_layer, '... sl di -> (...) sl di')
+                                                                               # [...batch_size, seq_len, d_input]
+
+        _combined_mask = torch.cat([attention_mask, layer_mask], dim=-1)       # [batch_size, seq_len, 2 * seq_len]
         contextual_mask = torch.cat([attention_mask, torch.ones_like(layer_mask)], dim=-1)
-        _combined_mask = torch.cat([contextual_mask, _combined_mask], dim=1)
-        enc_input = torch.cat([enc_input, tem_enc], dim=-1)
-        cur_layer_ = self.forward_pass(init_cur_layer_, tem_enc, tem_enc_layer, enc_input, _combined_mask, batch_non_pad_mask)
+                                                                               # [batch_size, seq_len, 2 * seq_len]
+        _combined_mask = torch.cat([contextual_mask, _combined_mask], dim=1)   # [batch_size, 2 * seq_len, 2 * seq_len]
+        enc_input = torch.cat([enc_input, tem_enc], dim=-1)                    # [batch_size, seq_len, d_input + d_time]
+
+        enc_input = self.add_decorative_dimensions(enc_input, extra_times)     # [...batch_size, seq_len, d_input]
+        init_cur_layer_ = self.add_decorative_dimensions(init_cur_layer_, extra_times)
+                                                                               # [...batch_size, seq_len, d_input]
+        _combined_mask = self.add_decorative_dimensions(_combined_mask, extra_times)
+                                                                               # [...batch_size, 2 * seq_len, 2 * seq_len]
+        tem_enc = self.add_decorative_dimensions(tem_enc, extra_times)         # [...batch_size, seq_len, d_time]
+        extended_batch_non_pad_mask = self.add_decorative_dimensions(batch_non_pad_mask, extra_times)
+                                                                               # [..., batch_size, seq_len]
+        extended_batch_non_pad_mask = rearrange(extended_batch_non_pad_mask, '... sl -> (...) sl')
+                                                                               # [...batch_size, seq_len]
+        cur_layer_ = self.forward_pass(init_cur_layer_, tem_enc, tem_enc_layer, enc_input, _combined_mask, extended_batch_non_pad_mask)
+                                                                               # [batch_size, seq_len, d_input]
 
         return cur_layer_
 
 
-    def forward(self, time_history, time_next, events_history, mask_history):
+    def forward(self, absolute_time_history, absolute_time_next, relative_time_history, relative_time_next, \
+                events_history, mask_history, mask_next):
         '''
         time_seq: absolute timestamps
         time_delta_seq: relative timestamps, seemingly not used in this model.
@@ -156,26 +184,52 @@ class ATTNHP(nn.Module):
         event_seq[:, :-1] <-> events_history
         event_seq[:, 1:] <-> events_next
 
-        time_seq[:, :-1] <-> time_history
-        time_seq[:, 1:] <-> time_next
+        time_seq[:, :-1] <-> absolute_time_history
+        time_seq[:, 1:] <-> absolute_time_next
+
+        time_delta_seq[:, :-1] <-> relative_time_history
+        time_delta_seq[:, 1:] <-> relative_time_next
 
         batch_non_pad_mask[:, :-1] <-> mask_history
         batch_non_pad_mask[:, 1:] <-> mask_next
 
         attention_mask <-> an upper triangle matrix.
+        It seems that the original code uses attention mask[:, 1:, :-1] rather than the full mask
+        because they assume that bos always presents.
+        
+        If the length of a sequence is 5 (without bos and eos dummy events)
+        attention_mask:
+          [1, 1, 1, 1, 1]
+          [0, 1, 1, 1, 1]
+          [0, 0, 1, 1, 1]
+          [0, 0, 0, 1, 1]
+          [0, 0, 0, 0, 1]
+        attention_mask[:, 1:, :-1](We directly generate this tensor and name it the new "attention_mask".):
+          [0, 1, 1, 1]
+          [0, 0, 1, 1]
+          [0, 0, 0, 1]
+          [0, 0, 0, 0]
         '''
 
         '''
         original batch
         time_seq, time_delta_seq, event_seq, batch_non_pad_mask, attention_mask, type_mask = batch
         '''
+        #0. preprocessing
+        batch_size_with_decoration = absolute_time_next.shape[:-1]
+        attention_mask = torch.ones(*(absolute_time_history.shape), absolute_time_history.shape[-1], device = self.device)
+                                                                               # [batch_size, seq_len, seq_len]
+        attention_mask = torch.triu(attention_mask, diagonal = 1)              # [batch_size, seq_len, seq_len]
+
         # 1. compute event-loglik
-        enc_out = self.hidden_rep_encoder(events_history, time_history, \
-                                          batch_non_pad_mask[:, 1:], attention_mask[:, 1:, :-1], \
-                                          time_next)                           # [batch_size, seq_len, d_input * n_head]
-        event_lambdas = self.softplus(self.inten_linear(enc_out))              # [batch_size, seq_len, num_events]
+        enc_out = self.hidden_rep_encoder(events_history, absolute_time_history, \
+                                          mask_next, attention_mask, absolute_time_next)
+                                                                               # [...batch_size, seq_len, d_input * n_head]
+        event_lambdas = self.softplus(self.inten_linear(enc_out))              # [...batch_size, seq_len, num_events]
+        event_lambdas = event_lambdas.view(*(absolute_time_next.shape), self.num_events)
+                                                                               # [..., batch_size, seq_len, num_events]
         # original: 1->1, 2->2
-        # event_lambdas = torch.sum(enc_inten * type_mask, dim=2) + self.eps
+        # event_lambdas = torch.sum(enc_inten * type_mask, dim = 2) + self.eps # [batch_size, seq_len]
         # now: 1->2, 2->3
         # event_lambdas = enc_inten + self.eps
         # in case event_lambdas == 0
@@ -192,42 +246,47 @@ class ATTNHP(nn.Module):
 
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
                                                                                # [integration_sample_rate]
-        diff_time = time_next.unsqueeze(dim = -1) * time_multiplier            # [batch_size, seq_len, integration_sample_rate]
+        einop = f'... -> ...{" ()" * len(relative_time_next.shape)}'
+        time_multiplier = rearrange(time_multiplier, einop)                    # [integration_sample_rate, batch_size, seq_len]
+        diff_time = relative_time_next * mask_next                             # [..., batch_size, seq_len]
+        temp_time = diff_time.unsqueeze(dim = 0) * time_multiplier             # [integration_sample_rate, ..., batch_size, seq_len]
+        temp_time = rearrange(temp_time, 'isr ... bs sl -> isr (... bs) sl')   # [integration_sample_rate, ...batch_size, seq_len]
 
-
-
-        step = 20
-        if not self.add_bos:
-            extended_time_seq = torch.cat([torch.zeros(time_seq.size(0), 1, device = self.device), time_seq], dim=-1)
-            diff_time = (time_seq[:, :] - extended_time_seq[:, :-1]) * batch_non_pad_mask[:, :]
-            temp_time = diff_time.unsqueeze(0) * \
-                        torch.rand([self.integration_sample_rate, *diff_time.size()], device=time_seq.device)
-            temp_time += extended_time_seq[:, :-1].unsqueeze(0)
-            all_lambda = self._compute_intensities_fast(event_seq, time_seq, batch_non_pad_mask, attention_mask,
-                                                        temp_time, step)
-        else:
-            # why non_pad_mask start from 1?
-            # think about a simple case: [e] [e] [pad] (non_pad_mask: 1 1 0)
-            # you want to compute the first interval only, so if you use non_pad_mask[:, :-1] (1, 1),
-            # you will compute both the first and the second intervals!
-            diff_time = (time_seq[:, 1:] - time_seq[:, :-1]) * batch_non_pad_mask[:, 1:]
-            temp_time = diff_time.unsqueeze(0) * \
-                        torch.rand([self.integration_sample_rate, *diff_time.size()], device=time_seq.device)
-            temp_time += time_seq[:, :-1].unsqueeze(0)
-            # for interval computation, we will never use the last event -- that is why we have -1 in
-            # event_seq, time_seq, attention_mask
-            all_lambda = self._compute_intensities_fast(event_seq[:, :-1], time_seq[:, :-1], batch_non_pad_mask[:, 1:],
-                                                        attention_mask[:, 1:, :-1],
-                                                        temp_time, step)
-
+        # The original ANHP always assumes that self.add_bos = True.
+        # Thus we safely remove the codes when self.add_bos = False
+        # why non_pad_mask start from 1?
+        # think about a simple case: [e] [e] [pad] (non_pad_mask: 1 1 0)
+        # you want to compute the first interval only, so if you use non_pad_mask[:, :-1] (1, 1),
+        # you will compute both the first and the second intervals!
+        repeated_absolute_time_history = self.add_decorative_dimensions(absolute_time_history, absolute_time_next)
+                                                                               # [..., batch_size, seq_len]
+        repeated_absolute_time_history = rearrange(repeated_absolute_time_history, '... bs sl -> (... bs) sl')
+                                                                               # [...batch_size, seq_len]
+        temp_time += repeated_absolute_time_history.unsqueeze(0)               # [integration_sample_rate, ...batch_size, seq_len]
+        # for interval computation, we will never use the last event -- that is why we have -1 in
+        # event_seq, time_seq, attention_mask
+        einop = '... bs sl -> (... bs) sl'
+        reshaped_events_history = rearrange(self.add_decorative_dimensions(events_history, absolute_time_next), einop)
+                                                                               # [...batch_size, seq_len]
+        reshaped_absolute_time_history = rearrange(self.add_decorative_dimensions(absolute_time_history, absolute_time_next), einop)
+                                                                               # [...batch_size, seq_len]
+        reshaped_mask_next = rearrange(self.add_decorative_dimensions(mask_next, absolute_time_next), einop)
+                                                                               # [...batch_size, seq_len]
+        reshaped_attention_mask = self.add_decorative_dimensions(attention_mask, absolute_time_next)
+                                                                               # [...batch_size, seq_len, seq_len]
+        all_lambda = self._compute_intensities_fast(reshaped_events_history, reshaped_absolute_time_history, \
+                                                    reshaped_mask_next, reshaped_attention_mask,temp_time)
+                                                                               # [integration_sample_rate, ...batch_size, seq_len, num_events]
+        
         # 2.3 compute the empirical expectation of the summation
-        all_lambda = all_lambda.sum(dim=0) / self.integration_sample_rate
-        non_event_ll = all_lambda * diff_time
+        all_lambda = all_lambda.sum(dim = 0) / self.integration_sample_rate    # [...batch_size, seq_len, num_events]
+        all_lambda = all_lambda.view(*diff_time.shape, self.num_events)        # [..., batch_size, seq_len, num_events]
+        integral_lambda = all_lambda * diff_time.unsqueeze(dim = -1)           # [batch_size, seq_len, num_events]
 
-        return non_event_ll, event_lambdas
+        return integral_lambda, event_lambdas
 
 
-    def _compute_intensities_fast(self, event_seq, time_seq, batch_non_pad_mask, attention_mask, temp_time, step=20):
+    def _compute_intensities_fast(self, event_seq, time_seq, batch_non_pad_mask, attention_mask, temp_time, step = 20):
         # fast version, can only use in log-likelihood computation
         # assume we will sample the same number of times in each interval of the event_seqs
         all_lambda = []
@@ -243,12 +302,9 @@ class ATTNHP(nn.Module):
             _batch_non_pad_mask = batch_non_pad_mask.unsqueeze(0).expand(_step, -1, -1).reshape(_step * batch_size, -1)
             _attn_mask = attention_mask.unsqueeze(0).expand(_step, -1, -1, -1).reshape(_step * batch_size, seq_len,
                                                                                        seq_len)
-            _enc_output = self.hidden_rep_encoder(_types, _times,
-                                                  _batch_non_pad_mask,
-                                                  _attn_mask,
-                                                  _extra_time)
+            _enc_output = self.hidden_rep_encoder(_types, _times, _batch_non_pad_mask, _attn_mask, _extra_time)
             all_lambda.append(self.softplus(self.inten_linear(_enc_output)).reshape(_step, batch_size, seq_len, -1))
-        all_lambda = torch.cat(all_lambda, dim=0)
+        all_lambda = torch.cat(all_lambda, dim = 0)
         return all_lambda
 
 

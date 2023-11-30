@@ -241,7 +241,7 @@ def plot_debug(data, timestamp, opt):
     top_k = data['top_k']                                                      # [batch_size, num_events - 1]
     for idx, top_k_per_seq in enumerate(top_k):
         data_top_k_per_seq = {
-            'x': np.arange(1, num_events),
+            'x': np.arange(1, max(num_events, 2)),
             'y': top_k_per_seq,
             'marks': 'Top-K accuracy'
         }

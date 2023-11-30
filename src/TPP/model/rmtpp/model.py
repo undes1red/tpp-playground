@@ -5,12 +5,13 @@ from scipy.stats import spearmanr
 from src.TPP.model.utils import *
 from src.TPP.model.rmtpp.rmtpp import RMTPPModule
 from src.TPP.model.rmtpp.plot import *
+from src.TPP.model import its_lower_bound, its_upper_bound
 
 
 class RMTPP(BasicModule):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
                  output_size, limited_history_norm, time_scalar_min = 1e-20, epsilon = 1e-20,
-                 probability_threshold = 0.5, survival_loss_during_training = False):
+                 survival_loss_during_training = False):
         super(RMTPP, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -18,7 +19,6 @@ class RMTPP(BasicModule):
         self.end_time = info_dict['T']
         self.event_toggle = event_toggle
         self.limited_history_norm = limited_history_norm
-        self.probability_threshold = probability_threshold
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
@@ -212,7 +212,7 @@ class RMTPP(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
                                                                                # [sample_rate, batch_size, seq_len]
         probability_threshold = probability_threshold.to(self.device)

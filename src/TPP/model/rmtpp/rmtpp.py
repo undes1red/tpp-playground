@@ -45,7 +45,7 @@ class RMTPPModule(nn.Module):
         '''
         This implementation is in fact an advanced RMTPP with history-event-related time scaler and base intensity.
         '''
-        time_history = (time_history) / var
+        time_history = (time_history - mean) / var
 
         time_history = time_history.unsqueeze(dim = -1)                        # [batch_size, seq_len, 1]
 
@@ -104,7 +104,7 @@ class RMTPPModule(nn.Module):
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, var):
-        time_history = ((time_history) / var).unsqueeze(dim = -1)
+        time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:
@@ -153,7 +153,7 @@ class RMTPPModule(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask_next):
-        time_history = ((time_history) / var).unsqueeze(dim = -1)
+        time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
         if self.num_events > 1:

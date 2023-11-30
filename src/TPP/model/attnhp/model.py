@@ -12,13 +12,11 @@ from src.TPP.model.utils import *
 '''
 d_model -> d_input
 d_time -> d_time
-
 '''
 class ATTNHPWrapper(BasicModule):
-    def __init__(self, info_dict, device, d_input = 64, d_time = 64, n_layers = 3, \
-                 n_head = 3, dropout = 0.1, epsilon = 1e-20, d_inner=128, use_norm=False, \
-                 sharing_param_layer=False, probability_threshold = 0.5, integration_sample_rate = 100, \
-                 survival_loss_during_training = False):
+    def __init__(self, info_dict, device, d_input = 64, d_time = 64, n_layers = 3, n_head = 3, \
+                 dropout = 0.1, epsilon = 1e-20, use_norm = False, sharing_param_layer = False, \
+                 probability_threshold = 0.5, integration_sample_rate = 100, survival_loss_during_training = False):
         super(ATTNHPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -28,11 +26,12 @@ class ATTNHPWrapper(BasicModule):
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_rate = 32
+        self.sample_rate = 2
+        self.bisect_early_stop_threshold = 1e-5
 
         self.model = ATTNHP(num_events = self.num_events, d_input = d_input, d_time = d_time, n_layers = n_layers, \
-                            n_head = n_head, dropout = dropout, d_inner = d_inner, use_norm = use_norm, \
-                            sharing_param_layer = sharing_param_layer, device = device, integration_sample_rate = integration_sample_rate)
+                            n_head = n_head, dropout = dropout, use_norm = use_norm, sharing_param_layer = sharing_param_layer, \
+                            device = device, integration_sample_rate = integration_sample_rate)
     
 
     def divide_history_and_next(self, input):
@@ -105,18 +104,24 @@ class ATTNHPWrapper(BasicModule):
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
+        absolute_time = time.cumsum(dim = -1)                                  # [batch_size, seq_len + 1]
 
-        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        absolute_time_history, absolute_time_next = self.divide_history_and_next(absolute_time)
+                                                                               # [batch_size, seq_len] * 2
+        relative_time_history, relative_time_next = self.divide_history_and_next(time)
+                                                                               # [batch_size, seq_len] * 2
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-
-        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
-                                                                               # 2 * [batch_size, seq_len, num_events]
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
         event_next_without_dummy = (mask_next_without_dummy * events_next).long()
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
+
+        integral_all_events, intensity_all_events \
+            = self.model(absolute_time_history, absolute_time_next, \
+                         relative_time_history, relative_time_next, \
+                         events_history, mask_history, mask_next_without_dummy)# 2 * [batch_size, seq_len, num_events]
 
         # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
         log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
@@ -149,7 +154,12 @@ class ATTNHPWrapper(BasicModule):
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
-        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        absolute_time = time.cumsum(dim = -1)                                  # [batch_size, seq_len + 1]
+
+        absolute_time_history, absolute_time_next = self.divide_history_and_next(absolute_time)
+                                                                               # [batch_size, seq_len] * 2
+        relative_time_history, relative_time_next = self.divide_history_and_next(time)
+                                                                               # [batch_size, seq_len] * 2
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
@@ -158,16 +168,23 @@ class ATTNHPWrapper(BasicModule):
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        mae, pred_time = self.mean_absolute_error(time_history = time_history, time_next = time_next, \
+        mae, pred_time = self.mean_absolute_error(absolute_time_history = absolute_time_history, \
+                                                  absolute_time_next = absolute_time_next, \
+                                                  relative_time_history = relative_time_history, \
+                                                  relative_time_next = relative_time_next, \
                                                   events_history = events_history, mask_history = mask_history, \
                                                   mask_next = mask_next_without_dummy)
                                                                                # [batch_size, seq_len] * 2
         mae = mae.sum().item() / the_number_of_events
 
         integral_all_events_time_next, intensity_all_events_time_next \
-            = self.model(time_history, time_next, events_history, mask_history)# 2 * [batch_size, seq_len, num_events]
+            = self.model(absolute_time_history, absolute_time_next, \
+                         relative_time_history, relative_time_next, \
+                         events_history, mask_history, mask_next_without_dummy)# 2 * [batch_size, seq_len, num_events]
         integral_all_events_pred_time, intensity_all_events_pred_time \
-            = self.model(time_history, pred_time, events_history, mask_history)# 2 * [batch_size, seq_len, num_events]
+            = self.model(absolute_time_history, absolute_time_history + pred_time, \
+                         relative_time_history, pred_time, \
+                         events_history, mask_history, mask_next_without_dummy)# 2 * [batch_size, seq_len, num_events]
 
         events_true = event_next_without_dummy[mask_next_without_dummy == 1]
         predicted_events_pred_time = torch.argmax(intensity_all_events_pred_time, dim = -1)[mask_next_without_dummy == 1]
@@ -238,7 +255,8 @@ class ATTNHPWrapper(BasicModule):
         return mae, f1
 
 
-    def mean_absolute_error(self, time_history, time_next, events_history, mask_history, mask_next):
+    def mean_absolute_error(self, absolute_time_history, absolute_time_next, relative_time_history, \
+                            relative_time_next, events_history, mask_history, mask_next):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -246,35 +264,48 @@ class ATTNHPWrapper(BasicModule):
         Update: 2022-09-23
         Add event-wise MAE support.
         '''
+        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        probability_threshold = dist.sample((self.sample_rate, *relative_time_next.shape))
+                                                                               # [sample_rate, batch_size, seq_len]
+        probability_threshold = probability_threshold.to(self.device)
+
         def evaluate(taus):
-            '''
-            Args:
-            1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-            2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-            3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
-            '''
+            absolute_time_after_tau = absolute_time_history.unsqueeze(dim = 0) + taus
+                                                                               # [sample_rate, batch_size, seq_len]
             expanded_integral_all_events, _, = \
-                self.model(time_history, taus, events_history, mask_history)   # [batch_size, seq_len, num_events]
-            expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [batch_size, seq_len]
+                self.model(absolute_time_history = absolute_time_history, absolute_time_next = absolute_time_after_tau, \
+                           relative_time_history = relative_time_history, relative_time_next = taus, \
+                           events_history = events_history, mask_history = mask_history, mask_next = mask_next)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
 
             return expanded_integral
 
         def bisect_target(taus):
-            return evaluate(taus) + torch.log(1 - torch.tensor(self.probability_threshold, device = self.device))
+            return evaluate(taus) + torch.log(1 - probability_threshold)
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         
-        l = 0.0001*torch.ones_like(time_history, dtype = torch.float32)        # [batch_size, seq_len]
-        r = 1e6*torch.ones_like(time_history, dtype = torch.float32)           # [batch_size, seq_len]
-        tau_pred = median_prediction(l, r)                                     # [batch_size, seq_len]
-        gap = (tau_pred - time_next) * mask_next                               # [batch_size, seq_len]
+        l = 0.0001*torch.ones((self.sample_rate, *relative_time_next.shape), dtype = torch.float32, device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+        r = 1e6*torch.ones((self.sample_rate, *relative_time_next.shape), dtype = torch.float32, device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len]
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
+        gap = (tau_pred - relative_time_next) * mask_next                      # [batch_size, seq_len]
         gap = torch.abs(gap)                                                   # [batch_size, seq_len]
 
         return gap, tau_pred
@@ -329,23 +360,25 @@ class ATTNHPWrapper(BasicModule):
         f1 = []
         top_k_acc = []
         for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_to_inf):
-            f1.append(f1_score(y_true = ground_truth_per_seq.detach().cpu(),
-                               y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
+            ground_truth_per_seq, probability_integral_per_seq = \
+                move_from_tensor_to_ndarray(ground_truth_per_seq, probability_integral_per_seq)
+            y_pred = np.argmax(probability_integral_per_seq, axis = -1)
+
+            f1.append(f1_score(y_true = ground_truth_per_seq, y_pred = y_pred, average = 'macro'))
             
             top_k_acc_per_seq = []
             if self.num_events > 2:
                 for k in range(1, self.num_events):
                     top_k_acc_per_seq.append(
-                        top_k_accuracy_score(y_true = ground_truth_per_seq.detach().cpu(),
-                                             y_score = probability_integral_per_seq.detach().cpu(),
+                        top_k_accuracy_score(y_true = ground_truth_per_seq,
+                                             y_score = probability_integral_per_seq,
                                              k = k,
                                              labels = np.arange(self.num_events))
                     )
             else:
                 top_k_acc_per_seq.append(
                     accuracy_score(
-                        y_true = ground_truth_per_seq.detach().cpu(),
-                        y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
+                        y_true = ground_truth_per_seq, y_pred = y_pred
                     )
                 )
             top_k_acc.append(top_k_acc_per_seq)
@@ -406,11 +439,17 @@ class ATTNHPWrapper(BasicModule):
             return p_gap
             
         def median_prediction(l, r):
-            for _ in range(50):
+            index = 0
+            while True:
                 c = (l + r)/2
                 v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
+                index += 1
+                if (l - r).abs().max() < self.bisect_early_stop_threshold:
+                    break
+                if index > 50:
+                    break
 
             return (l + r)/2
         

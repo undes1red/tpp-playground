@@ -5,7 +5,7 @@ import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.fenn.nonneg import NonNegLinear
-from src.TPP.model.utils import L1_distance_across_events
+from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 
 class FENN(nn.Module):
@@ -433,9 +433,9 @@ class FENN(nn.Module):
         data['expand_integral_for_each_event'] = expand_integral               # [batch_size, seq_len, resolution, num_events]
 
 
-        expand_intensity = rearrange(expand_intensity.detach().cpu(), 'b s r ne -> b (s r) ne')
+        expand_intensity = rearrange(expand_intensity, 'b s r ne -> b (s r) ne')
                                                                            # [batch_size, seq_len * resolution, num_event]
-        expand_integral = rearrange(expand_integral.detach().cpu(), 'b s r ne -> b (s r) ne')
+        expand_integral = rearrange(expand_integral, 'b s r ne -> b (s r) ne')
                                                                            # [batch_size, seq_len * resolution, num_event]
         
         spearman_matrix = []
@@ -446,17 +446,25 @@ class FENN(nn.Module):
             seq_len = mask_per_seq.sum()
 
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
+            probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
+
             # rho: spearman coefficient
-            spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
-            if self.num_events == 2:
-                spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+            if self.num_events == 1:
+                spearman_matrix_per_seq = np.array([[1.,],])
+            else:
+                spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * resolution])[0]
+                if self.num_events == 2:
+                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
+            if self.num_events == 1:
+                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
+
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
-                                            resolution = resolution, num_events = self.num_events,
-                                            time_next = time_next_per_seq[:seq_len])
+                                                          resolution = resolution, num_events = self.num_events,
+                                                          time_next = time_next_per_seq[:seq_len])
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)

@@ -4,6 +4,7 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
+from src.TPP.model import its_lower_bound, its_upper_bound
 from src.TPP.model.ifib_c.submodel import IFIBC
 from src.TPP.model.utils import *
 from src.TPP.model.ifib_c.plot import *
@@ -16,14 +17,12 @@ class IFIBCModel(BasicModule):
                  history_module_layers,
                  mlp_layers,
                  nonlinear,
-                 probability_threshold,
                  info_dict,
                  device,
                  history_module = 'LSTM', survival_loss_during_training = False,
                  epsilon = 0.0, sample_rate = 32):
         super(IFIBCModel, self).__init__()
         self.device = device
-        self.probability_threshold = probability_threshold
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
@@ -33,8 +32,8 @@ class IFIBCModel(BasicModule):
         self.bisect_early_stop_threshold = 1e-5
 
         self.model = IFIBC(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
-                          dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                          mlp_layers = mlp_layers, nonlinear = nonlinear, epsilon = epsilon, device = device)
+                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
+                           mlp_layers = mlp_layers, nonlinear = nonlinear, epsilon = epsilon, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -305,7 +304,7 @@ class IFIBCModel(BasicModule):
         '''
         The input should be the original minibatch
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
                                                                                # [sample_rate, batch_size, seq_len]
         probability_threshold = probability_threshold.to(self.device)
@@ -397,22 +396,24 @@ class IFIBCModel(BasicModule):
         f1 = []
         top_k_acc = []
         for (events_next_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_from_zero_to_infinite):
-            f1.append(f1_score(y_true = events_next_per_seq.detach().cpu(),
-                          y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu(), average = 'macro'))
+            events_next_per_seq, probability_integral_per_seq = \
+                move_from_tensor_to_ndarray(events_next_per_seq, probability_integral_per_seq)
+            y_pred = np.argmax(probability_integral_per_seq, axis = -1)
+
+            f1.append(f1_score(y_true = events_next_per_seq, y_pred = y_pred, average = 'macro'))
             top_k_acc_single_event_seq = []
             if self.num_events > 2:
                 for k in range(1, self.num_events):
                     top_k_acc_single_event_seq.append(
-                        top_k_accuracy_score(y_true = events_next_per_seq.detach().cpu(),
-                                             y_score = probability_integral_per_seq.detach().cpu(),
+                        top_k_accuracy_score(y_true = events_next_per_seq,
+                                             y_score = probability_integral_per_seq,
                                              k = k,
                                              labels = np.arange(self.num_events))
                     )
             else:
                 top_k_acc_single_event_seq.append(
                     accuracy_score(
-                        y_true = events_next_per_seq.detach().cpu(),
-                        y_pred = torch.argmax(probability_integral_per_seq, dim = -1).detach().cpu()
+                        y_true = events_next_per_seq, y_pred = y_pred
                     )
                 )
             top_k_acc.append(top_k_acc_single_event_seq)
@@ -446,7 +447,7 @@ class IFIBCModel(BasicModule):
 
         # Preprocess
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         probability_threshold = dist.sample((self.sample_rate, batch_size, seq_len, self.num_events))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
         probability_threshold = probability_threshold.to(self.device)
@@ -576,7 +577,7 @@ class IFIBCModel(BasicModule):
             '''
             First, we randomly generate the probability_threshold from a uniform distribution.
             '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+            dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
             sampled_threshold = dist.sample((number_of_sampled_sequences, 1))  # [number_of_sampled_sequences, 1]
             sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1]
 
@@ -684,7 +685,7 @@ class IFIBCModel(BasicModule):
             '''
             First, we randomly generate the probability_threshold from a uniform distribution.
             '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
+            dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
             sampled_threshold = dist.sample((number_of_sampled_sequences, 1, self.num_events))
                                                                                # [number_of_sampled_sequences, 1, num_events]
             sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1, num_events]

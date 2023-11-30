@@ -59,7 +59,7 @@ class Encoder(nn.Module):
         self_attn_mask_subseq = get_subsequent_mask(event_time)
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
                                                                                # [batch_size, seq_len]
-        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s s_1', s_1 = seq_len)
+        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s_1 s', s_1 = seq_len)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 

@@ -20,9 +20,10 @@ def attention(query, key, value, mask=None, dropout=None):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, n_head, d_input, d_model, dropout=0.1, output_linear=False):
+    def __init__(self, n_head, d_input, d_model, dropout = 0.1, output_linear = False, device = None):
         super(MultiHeadAttention, self).__init__()
         assert d_model % n_head == 0
+        self.device = device
         self.n_head = n_head
         self.d_k = d_model // n_head
         self.d_v = self.d_k
@@ -30,12 +31,12 @@ class MultiHeadAttention(nn.Module):
         self.output_linear = output_linear
 
         if output_linear:
-            self.linears = nn.ModuleList([nn.Linear(d_input, d_model) for _ in range(3)] + [nn.Linear(d_model, d_model), ])
+            self.linears = nn.ModuleList([nn.Linear(d_input, d_model, device = self.device) for _ in range(3)] + [nn.Linear(d_model, d_model, device = self.device), ])
         else:
-            self.linears = nn.ModuleList([nn.Linear(d_input, d_model) for _ in range(3)])
+            self.linears = nn.ModuleList([nn.Linear(d_input, d_model, device = self.device) for _ in range(3)])
         #for i in range(len(self.linears)):
             #nn.init.xavier_uniform_(self.linears[i].weight)
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p = dropout)
 
     def forward(self, query, key, value, mask):
         if mask is not None:
@@ -59,9 +60,10 @@ class MultiHeadAttention(nn.Module):
 
 class SublayerConnection(nn.Module):
     # used for residual connnection
-    def __init__(self, d_model, dropout):
+    def __init__(self, d_model, dropout, device):
         super(SublayerConnection, self).__init__()
-        self.norm = nn.LayerNorm(d_model)
+        self.device = device
+        self.norm = nn.LayerNorm(d_model, device = self.device)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, sublayer):
@@ -83,13 +85,14 @@ class PositionwiseFeedForward(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_model, self_attn, feed_forward=None, use_residual=False, dropout=0.1):
+    def __init__(self, device, d_model, self_attn, feed_forward=None, use_residual=False, dropout=0.1):
         super(EncoderLayer, self).__init__()
+        self.device = device
         self.self_attn = self_attn
         self.feed_forward = feed_forward
         self.use_residual = use_residual
         if use_residual:
-            self.sublayer = nn.ModuleList([SublayerConnection(d_model, dropout) for _ in range(2)])
+            self.sublayer = nn.ModuleList([SublayerConnection(d_model, dropout, device = self.device) for _ in range(2)])
         self.d_model = d_model
 
     def forward(self, x, mask):
