@@ -15,7 +15,7 @@ class TPPPlotterArguments(BasicArguments):
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of dataloader config file used during training. We only need the filename, not the relative path.')
         self.parser.add_argument('--combine_used_and_current_dataloader_config', action='store_true', \
-                                 help='Combine the settings defined in used_dataloader_config and dataloader_config when set. If the same key-value pairs are detected in both setting files, we always select values in used_dataloader_config.')
+                                 help='Combine the settings defined in used_dataloader_config and dataloader_config when set. Settings in dataloader_config will be overwritten by used_dataloader_config if exists in used_dataloader_config.')
 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='How many steps did we use to train this model?')

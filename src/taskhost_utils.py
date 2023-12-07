@@ -1,4 +1,5 @@
 import logging
+import sys
 
 
 def getLogger(name = None, root = True):
@@ -19,7 +20,7 @@ def getLogger(name = None, root = True):
     if (logger.hasHandlers()):
         logger.handlers.clear()
     # create console handler and set level to debug
-    ch = logging.StreamHandler()
+    ch = logging.StreamHandler(sys.stdout)
     # create formatter
     formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d]: %(message)s', datefmt = '%Y-%m-%d %H:%M:%S')
     # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

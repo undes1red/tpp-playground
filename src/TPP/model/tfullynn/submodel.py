@@ -4,11 +4,13 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.fullynn.nonneg import NonNegLinear
+from src.TPP.model.tfullynn.nonneg import NonNegLinear
+from src.TPP.model.tfullynn.transformers import TransEncoder
+from src.TPP.model.tfullynn.activate import *
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 
-class FullyNN(nn.Module):
+class TFullyNN(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -19,9 +21,9 @@ class FullyNN(nn.Module):
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, event_toggle, zero_shift, device):
-        super(FullyNN, self).__init__()
+    def __init__(self, d_history, d_intensity, num_events, dropout,d_hidden, n_layers, \
+                 n_head, d_qk, d_v, mlp_layers, event_toggle, zero_shift, device):
+        super(TFullyNN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.event_toggle = event_toggle
@@ -38,16 +40,8 @@ class FullyNN(nn.Module):
         FullyNN can not distinguish different markers because of computation graph overlap.
         It is expected that the original FullyNN achieves very inferior marker prediction performance in spite of the model size.
         '''
-        if self.event_toggle:
-            self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
-        else:
-            self.events = None
-        
-        try:
-            self.his_encoder = getattr(nn, history_module)(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
-                        batch_first = True, dropout = dropout, device = device)
-        except:
-            raise Exception(f'Unknown history module {history_module}.')
+        self.his_encoder = TransEncoder(num_events, d_history, d_hidden, n_layers, \
+                                        n_head, d_qk, d_v, dropout, event_toggle, device = self.device)
 
         '''
         Map the time number into a vector.
@@ -67,12 +61,11 @@ class FullyNN(nn.Module):
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
         ])
-        self.layer_activation = nn.Tanh()
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.nonneg_activation = nn.Softplus()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
+    def forward(self, events_history, time_history, time_next, mask_history, mean, var):
         '''
         The forwardpropagation function of FullyNN, triggered by pytorch.
 
@@ -102,27 +95,16 @@ class FullyNN(nn.Module):
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
         time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
         
-        if self.event_toggle:
-            if custom_events_history:
-                events_embeddings = events_history                             # [batch_size, seq_len, d_history]
-            else:
-                events_embeddings = self.events(events_history)                # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-        
-        # Reshape hidden output for full connection layers.
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
-
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         if self.event_toggle:
             hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events, d_history]
         
         time_embedding = time_next.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [..., batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+                                                                               # [..., batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [..., batch_size, seq_len, d_intensity]
 
-        hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [batch_size, seq_len, d_intensity]
+        hidden_history = self.history_mapper(hidden_history)                   # [..., batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [..., batch_size, seq_len, d_intensity]
         time_embedding = self.time_mapper(time_embedding)                      # [..., batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [..., batch_size, seq_len, d_intensity]
         hidden_history = rearrange(hidden_history, f'... -> {"() " * (len(time_embedding.shape) - len(hidden_history.shape))}...')         
                                                                                # [..., batch_size, seq_len, num_events, d_intensity] if self.event_toggle else [..., batch_size, seq_len, d_intensity]
@@ -152,13 +134,9 @@ class FullyNN(nn.Module):
         integral = integral.squeeze(dim = -1)                                  # [..., batch_size, seq_len, num_events] if self.event_toggle else [..., batch_size, seq_len]
 
         return integral
-
-
-    def get_event_embedding(self, input_event):
-        return self.events(input_event)                                        # [batch_size, seq_len, d_history]
     
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, var):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
@@ -195,14 +173,8 @@ class FullyNN(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-        
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         if self.event_toggle:
@@ -273,7 +245,7 @@ class FullyNN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, var):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
@@ -310,14 +282,8 @@ class FullyNN(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack([events_embeddings, time_history], 'b s *')
-                                                                               # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-        
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne ne1 di', r = resolution, ne = self.num_events, ne1 = self.num_events)
@@ -378,7 +344,7 @@ class FullyNN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask_next):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -392,16 +358,8 @@ class FullyNN(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        if self.event_toggle:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-            history, history_ps = pack(
-                [events_embeddings, time_history],
-                'b s *'
-            )                                                                  # [batch_size, seq_len, d_history + 1]
-        else:
-            history = rearrange(time_history, '... -> ... 1')                  # [batch_size, seq_len, 1]
-        
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         if self.event_toggle:
@@ -489,6 +447,7 @@ class FullyNN(nn.Module):
             for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
                 in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
                 seq_len = mask_per_seq.sum()
+
                 probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
                 probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
 
@@ -504,7 +463,7 @@ class FullyNN(nn.Module):
                 pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
                 if self.num_events == 1:
                     pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
-                
+
                 # L^1 metric
                 L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
                                                               resolution = resolution, num_events = self.num_events,

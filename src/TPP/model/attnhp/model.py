@@ -16,13 +16,12 @@ d_time -> d_time
 class ATTNHPWrapper(BasicModule):
     def __init__(self, info_dict, device, d_input = 64, d_time = 64, n_layers = 3, n_head = 3, \
                  dropout = 0.1, epsilon = 1e-20, use_norm = False, sharing_param_layer = False, \
-                 probability_threshold = 0.5, integration_sample_rate = 100, survival_loss_during_training = False):
+                 integration_sample_rate = 100, survival_loss_during_training = False):
         super(ATTNHPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
-        self.probability_threshold = probability_threshold
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training

@@ -16,8 +16,8 @@ parser.add_argument('--script_type', type = str, choices = ['train', 'plot'], de
                                      help = 'You can use this only argument to select what you want to do.')
 parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
                                      help = 'You need this argument to select the proper parameter set.')
-parser.add_argument('--GPU', type = int, default = None, help='How many GPU you want to use? Set it to None to use all GPUs, \
-                                                                 or set it to negative number or None for CPU learning.')
+parser.add_argument('--GPU', type = int, default = None, help='How many GPU you want to use? Set it to a positive number to use all GPUs, \
+                                                                 or set it to a negative number or None to go CPU-only.')
 parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
 parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
 
@@ -66,7 +66,7 @@ def task_generator(hyperparameter_list):
     return generated_hyperparameter_list, len(generated_hyperparameter_list)
 
 
-task_count = 1
+task_count = 0
 parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
 parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
 generated_hyperparameter_list, the_number_of_task = task_generator(parameter_retriver(opt))
@@ -74,12 +74,36 @@ generated_hyperparameter_list, the_number_of_task = task_generator(parameter_ret
 '''
 run all planned tasks via a loop.
 '''
+failed_tasks = {}
 for hp_list in generated_hyperparameter_list:
+    task_count += 1
+
+    # Assemble the command string.
     if not do_not_use_gpu:
         hp_list.append("--cuda")
     command = ['python3'] + hp_list
-    logger.info(f'Command of task {task_count}/{the_number_of_task}: {" ".join(command)}')
-    process = subprocess.Popen(command)
-    process.wait()
-    logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
-    task_count += 1
+    command_string = " ".join(command)
+    logger.warning(f'----> Task {task_count}/{the_number_of_task} started. <----')
+    logger.info(f'Command of task {task_count}/{the_number_of_task}: {command_string}')
+
+    # Create and run the task.
+    try:
+        subprocess.run(command_string, shell = True, check = True, stderr = subprocess.PIPE)
+        logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
+    except subprocess.CalledProcessError as e:
+        failed_tasks[task_count] = e
+        logger.warning(f'----> Task {task_count}/{the_number_of_task} Failed!. <----')
+
+# Report the execution sumamry:
+logger.warning(f'==========================================')
+logger.warning(f'                Summary                   ')
+logger.warning(f'==========================================')
+if len(failed_tasks) == 0:
+    logger.info(f'All {the_number_of_task} tasks have successfully completed.')
+else:
+    logger.warning(f'{len(failed_tasks)} tasks have failed. Please check what is wrong and fix them!')
+    for index, error_info in failed_tasks.items():
+        logger.warning(f'----> Task {index} has failed. <----')
+        logger.warning(f'Return Code: {error_info.returncode}.')
+        logger.warning(f'Task Command: {error_info.cmd}.')
+        logger.warning(f'Exception: {error_info.stderr.decode("UTF-8")}.')

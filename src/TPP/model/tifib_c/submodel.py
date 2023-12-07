@@ -5,10 +5,12 @@ import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
-from src.TPP.model.ifib_c.nonneg import NonNegLinear
+from src.TPP.model.tifib_c.transformers import TransEncoder
+from src.TPP.model.tifib_c.nonneg import NonNegLinear
+from src.TPP.model.tifib_c.activate import *
 
 
-class IFIBC(nn.Module):
+class TIFIBC(nn.Module):
     '''
     This is our implementation of Omi's paper: Fully Neural Network based Model for General Temporal Point Processes
     Hope it can work properly.
@@ -19,21 +21,15 @@ class IFIBC(nn.Module):
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
 
-    def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, epsilon, device):
-        super(IFIBC, self).__init__()
+    def __init__(self, d_history, d_intensity, num_events, dropout, d_hidden, n_layers, \
+                 n_head, d_qk, d_v, mlp_layers, epsilon, device):
+        super(TIFIBC, self).__init__()
         self.device = device
         self.num_events = num_events
         self.epsilon = epsilon
 
-        self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
-
-        try:
-            self.his_encoder = getattr(nn, history_module)(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
-                        batch_first = True, dropout = dropout, device = device)
-        except:
-            raise Exception(f'Unknown history module {history_module}.')
-
+        self.his_encoder = TransEncoder(num_events, d_history, d_hidden, n_layers, \
+                                        n_head, d_qk, d_v, dropout, device = self.device)
 
         self.weight_for_t = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
         nn.init.xavier_uniform_(self.weight_for_t)
@@ -46,19 +42,18 @@ class IFIBC(nn.Module):
         ])
 
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
-        self.layer_activation = nn.Tanh()
 
         self.nonneg_activation = nn.Softplus()
         self.nonneg_factor = nn.ReLU()
         self.nonneg_integral = nn.Sigmoid()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
+    def forward(self, events_history, time_history, time_next, mask_history, mean, var):
         '''
         Args:
-            events_history: [batch_size, seq_len] or [batch_size, seq_len, d_history] if custom_events_history = True
+            events_history: [batch_size, seq_len]
             time_history:   [batch_size, seq_len]
-            time_next:      [..., batch_size, seq_len, num_events]
+            time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             mask:           [batch_size, seq_len]
         '''
 
@@ -67,14 +62,8 @@ class IFIBC(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        if custom_events_history:
-            events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
-        else:
-            events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-        history, _ = pack([events_embeddings, time_history], 'b s *')          # [batch_size, seq_len, d_history + 1]
-
-        # Reshape hidden output for full connection layers.
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity]
@@ -92,7 +81,7 @@ class IFIBC(nn.Module):
         
         time_embedding = self.time_mapper(time_embedding)                      # [..., batch_size, seq_len, num_events, d_intensity]
         time_zero_embedding = self.time_mapper(time_zero_embedding)            # [..., batch_size, seq_len, num_events, d_intensity]
-        
+
         hidden_history = rearrange(hidden_history, f'... -> {"() " * (len(time_embedding.shape) - len(hidden_history.shape))}...')         
                                                                                # [..., batch_size, seq_len, num_events, d_intensity]
         output = time_embedding + hidden_history                               # [..., batch_size, seq_len, num_events, d_intensity]
@@ -106,14 +95,14 @@ class IFIBC(nn.Module):
             output_zero = self.layer_activation(output_zero)                   # [..., batch_size, seq_len, num_events, d_intensity]
 
         probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
-                                                                               # [..., batch_size, seq_len, num_events, 1]
+                                                                               # [batch_size, seq_len, num_events, 1]
         probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero)) + self.epsilon
-                                                                               # [..., batch_size, seq_len, num_events, 1]
+                                                                               # [batch_size, seq_len, num_events, 1]
 
         probability_integral_from_t_to_inf = rearrange(probability_integral_from_t_to_inf, '... 1 -> ...')
-                                                                               # [..., batch_size, seq_len, num_events]
+                                                                               # [batch_size, seq_len, num_events]
         probability_integral_from_tl_to_inf = reduce(probability_integral_from_tl_to_inf, '... ne 1 -> ... ()', 'sum')
-                                                                               # [..., batch_size, seq_len, 1]
+                                                                               # [batch_size, seq_len, 1]
 
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
@@ -132,12 +121,16 @@ class IFIBC(nn.Module):
         '''
         sampled_time_history = (sampled_time_history - mean) / var             # [number_of_sampled_sequences, sampled_seq_len]
 
+        # FIXME: history embedding from Transformer.
+        sampled_history_embedding = self.his_encoder(sampled_events_history, sampled_time_history, torch.ones_like(sampled_events_history))
+                                                                               # [batch_size, seq_len, d_history]
+        '''
         sampled_events_embeddings = self.events(sampled_events_history)        # [number_of_sampled_sequences, sampled_seq_len, d_history]
         sampled_history, sampled_history_ps = pack([sampled_events_embeddings, sampled_time_history], 'b s *')
                                                                                # [number_of_sampled_sequences, sampled_seq_len, d_history + 1]
-
-        # Reshape hidden output for full connection layers.
         _, (sampled_history_embedding, _) = self.his_encoder(sampled_history)  # [1, number_of_sampled_sequences, d_history]
+        '''
+        # Reshape hidden output for full connection layers.
         sampled_history_embedding = rearrange(sampled_history_embedding, 'l nss dh -> nss l dh')
                                                                                # [number_of_sampled_sequences, 1, d_history]
         sampled_history_embedding = repeat(sampled_history_embedding, 'b s dh -> b s ne dh', ne = self.num_events)
@@ -181,7 +174,7 @@ class IFIBC(nn.Module):
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
 
-    def probability(self, events_history, time_history, time_next, resolution, mean, var):
+    def probability(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -196,10 +189,8 @@ class IFIBC(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
-
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
@@ -257,11 +248,7 @@ class IFIBC(nn.Module):
         return expand_probability, timestamp
 
 
-    def get_event_embedding(self, input_event):
-        return self.events(input_event)                                        # [batch_size, seq_len, d_history]
-
-
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -275,10 +262,8 @@ class IFIBC(nn.Module):
         '''
         time_history = (time_history - mean) / var                             # [batch_size, seq_len]
 
-        events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
-
-        hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(events_history, time_history, mask_history)
+                                                                               # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
@@ -321,7 +306,8 @@ class IFIBC(nn.Module):
 
 
         # Gradient 1: Integral -> time
-        events_probability_at_each_interpolated_timestamp = - torch.autograd.grad(
+        events_probability_at_each_interpolated_timestamp = \
+        - torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
@@ -353,9 +339,9 @@ class IFIBC(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for _, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in \
-                                              enumerate(zip(probability_for_each_event, mask, time_next)):
-            seq_len = mask_per_seq.sum()
+        for _, (expand_probability_per_seq, mask_next_per_seq, time_next_per_seq) in \
+                                              enumerate(zip(probability_for_each_event, mask_next, time_next)):
+            seq_len = mask_next_per_seq.sum()
             expand_probability_per_seq = move_from_tensor_to_ndarray(expand_probability_per_seq)
 
             # rho: spearman coefficient
@@ -370,7 +356,7 @@ class IFIBC(nn.Module):
             pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
             if self.num_events == 1:
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
-            
+
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
                                             resolution = resolution, num_events = self.num_events,

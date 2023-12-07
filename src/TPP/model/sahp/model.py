@@ -12,7 +12,7 @@ from src.TPP.model.utils import *
 
 class SAHPWrapper(BasicModule):
     def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, step = 4,
+                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32, step = 4,
                  integration_sample_rate = 100, survival_loss_during_training = False):
         super(SAHPWrapper, self).__init__()
         self.device = device
@@ -22,7 +22,7 @@ class SAHPWrapper(BasicModule):
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_rate = 32
+        self.sample_rate = sample_rate
         self.step = step
         self.bisect_early_stop_threshold = 1e-5
 
@@ -478,7 +478,7 @@ class SAHPWrapper(BasicModule):
         tau_pred = []
         batch_size, seq_len = time_history.shape
         dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
+        p_x = p_x.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
 
         for sub_sample_rate in sample_rate_list:
             probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))

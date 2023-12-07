@@ -106,6 +106,8 @@ class TaskHost:
                 sys.exit(1)
         else:
             self.main(rank = 0)
+
+        sys.exit(0)
     
 
     def main(self, rank):

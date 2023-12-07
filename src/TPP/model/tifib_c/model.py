@@ -5,23 +5,22 @@ from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
 from src.TPP.model import its_lower_bound, its_upper_bound
-from src.TPP.model.ifib_c.submodel import IFIBC
+from src.TPP.model.tifib_c.submodel import TIFIBC
 from src.TPP.model.utils import *
-from src.TPP.model.ifib_c.plot import *
+from src.TPP.model.tifib_c.plot import *
 
 
-class IFIBCModel(BasicModule):
+class TIFIBCModel(BasicModule):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
-                 history_module_layers,
                  mlp_layers,
-                 nonlinear,
                  info_dict,
-                 device,
-                 history_module = 'LSTM', survival_loss_during_training = False,
-                 epsilon = 0.0, sample_rate = 32, step = 32):
-        super(IFIBCModel, self).__init__()
+                 device, d_hidden, n_layers,
+                 n_head, d_qk, d_v,
+                 epsilon = 0.0, sample_rate = 32, step = 32,
+                 survival_loss_during_training = False):
+        super(TIFIBCModel, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
@@ -32,9 +31,8 @@ class IFIBCModel(BasicModule):
         self.step = step
         self.bisect_early_stop_threshold = 1e-5
 
-        self.model = IFIBC(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
-                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                           mlp_layers = mlp_layers, nonlinear = nonlinear, epsilon = epsilon, device = device)
+        self.model = TIFIBC(d_history, d_intensity, self.num_events, dropout, d_hidden, n_layers, \
+                            n_head, d_qk, d_v, mlp_layers, epsilon, device)
 
 
     def divide_history_and_next(self, input):
@@ -75,7 +73,7 @@ class IFIBCModel(BasicModule):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'graph': self.plot
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -101,7 +99,7 @@ class IFIBCModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
         time_next.requires_grad = True
@@ -109,7 +107,8 @@ class IFIBCModel(BasicModule):
         '''
         \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
         '''
-        probability_integral_from_t_to_infinite = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        probability_integral_from_t_to_infinite = self.model(events_history, time_history, time_next, mask_history, 
+                                                             mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
 
         '''
@@ -129,7 +128,7 @@ class IFIBCModel(BasicModule):
         '''
         Remove the probability of the dummy event by mask.
         '''
-        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
@@ -149,21 +148,18 @@ class IFIBCModel(BasicModule):
 
         # Time loss: -log p(t) = \sum_{i = 1}^{N}{\lambda_{k}(t_i)} + \int_{t_0}^{t_N}{\sum_{k}\lambda_k^(\tau)d\tau}
         time_loss_without_dummy = self.nll_loss(probability = probability_for_each_event, \
-                                                mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
+                                                mask_next = mask_next_without_dummy, \
+                                                events_next = events_next_without_dummy)
         time_loss_survival = 0
         if self.survival_loss_during_training:
             # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau} = -\log(1 - P(t)) = -log(IFIB-C(t)).
             dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
             probability_survival = probability_integral_from_t_to_infinite.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
-            # The experiment result shows that the existence of probability_survival could significantly damage the performance on the synthetic dataset.
-            # Given other models are not affected, it is highly possible that I calculate the wrong survival loss.
-            # However, I have no idea why I am wrong and what the correct one should be.
-            time_loss_survival = -torch.log(probability_survival).sum()
-
+            time_loss_survival = -torch.log(probability_survival + self.epsilon).sum()
+    
         loss = time_loss_without_dummy + time_loss_survival
 
-        # we need time_loss_without_dummy to compare our distribution against the ground truth.
         return loss, time_loss_without_dummy, events_loss, the_number_of_events
 
 
@@ -173,7 +169,7 @@ class IFIBCModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
         
         '''
         Remove the probability of the dummy event by mask.
@@ -183,7 +179,8 @@ class IFIBCModel(BasicModule):
         the_number_of_events = mask_next_without_dummy.sum().item()
         
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                                  time_next = time_next, mask_next = mask_next_without_dummy, mean = mean, var = var)
+                                                  time_next = time_next, mask_history = mask_history, \
+                                                  mask_next = mask_next_without_dummy, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_events
 
@@ -195,11 +192,11 @@ class IFIBCModel(BasicModule):
         time_next.requires_grad = True                                         # [batch_size, seq_len, num_events]
         pred_time.requires_grad = True                                         # [batch_size, seq_len, num_events]
 
-        probability_integral_from_zero_to_infinite = self.model(events_history, time_history, time_zero, mean = mean, var = var)
+        probability_integral_from_zero_to_infinite = self.model(events_history, time_history, time_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
-        probability_integral_from_pred_time_to_infinite = self.model(events_history, time_history, pred_time, mean = mean, var = var)
+        probability_integral_from_pred_time_to_infinite = self.model(events_history, time_history, pred_time, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
-        probability_integral_from_time_next_to_infinite = self.model(events_history, time_history, time_next, mean = mean, var = var)
+        probability_integral_from_time_next_to_infinite = self.model(events_history, time_history, time_next, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
 
         probability_for_each_event_at_pred_time = - torch.autograd.grad(
@@ -236,7 +233,7 @@ class IFIBCModel(BasicModule):
         f1_pred_at_pred_time = f1_score(y_true = events_true, y_pred = events_pred_index_at_pred_time, average = 'macro')
 
         '''
-        Event loss. Event predictions are made with time predictions at time_next.
+        Event loss. Event predictions are made with time predictions  at time_next.
         '''
         log_probability_for_each_event_at_time_next = torch.log(probability_for_each_event_at_time_next + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
@@ -279,13 +276,13 @@ class IFIBCModel(BasicModule):
         return loss
 
 
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
+    def mean_absolute_error_and_f1(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
+        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_history, mask_next, mean, var)
         time_next_pred = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         time_next_pred.requires_grad = True                                    # [batch_size, seq_len, num_events]
 
-        probability_integral_from_pred_to_infinite = self.model(events_history, time_history, time_next_pred, mean = mean, var = var)
+        probability_integral_from_pred_to_infinite = self.model(events_history, time_history, time_next_pred, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral_from_pred_to_infinite,
@@ -301,7 +298,11 @@ class IFIBCModel(BasicModule):
         return mae, f1
 
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+        '''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+        '''
         # Preprocess
         sample_rate_list = []
         remaining_sample_rate = self.sample_rate
@@ -311,24 +312,24 @@ class IFIBCModel(BasicModule):
         sample_rate_list[-1] += remaining_sample_rate
 
         def evaluate(integral_from_zero_to_inf, taus):
-            taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
-            probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
+            probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mask_history, mean, var)
+                                                                               # [batch_size, seq_len, num_events]
             # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
+                                                                               # [batch_size, seq_len, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
-                                                                               # [sample_rate, batch_size, seq_len]
+                                                                               # [batch_size, seq_len]
             return probability_integral
 
-        def bisect_target(integral_from_zero_to_inf, taus, probability_threshold):
+        def bisect_target(integral_from_zero_to_inf, taus):
             return evaluate(integral_from_zero_to_inf, taus) - probability_threshold
             
-        def median_prediction(integral_from_zero_to_inf, l, r, probability_threshold):
+        def median_prediction(integral_from_zero_to_inf, l, r):
             index = 0
             while True:
                 c = (l + r)/2
-                v = bisect_target(integral_from_zero_to_inf, c, probability_threshold)
+                v = bisect_target(integral_from_zero_to_inf, c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
                 index += 1
@@ -338,7 +339,7 @@ class IFIBCModel(BasicModule):
                     break
             
             return (l + r)/2
-
+        
         tau_pred = []
         dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
 
@@ -356,37 +357,16 @@ class IFIBCModel(BasicModule):
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
             integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(integral_from_zero_to_inf, l, r, probability_threshold))
-                                                                               # [sub_sample_rate, batch_size, seq_len]
-
-        '''
-        tau_pred_detached = tau_pred.detach()                                  # [sample_rate, batch_size, seq_len]
-        tau_pred_detached.requires_grad = True
-        tau_pred_repeated_detached = repeat(tau_pred_detached, '... -> ... ne', ne = self.num_events)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        probability_integral_from_t_to_inf = self.model(events_history, time_history, tau_pred_repeated_detached, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        probability_for_each_event_at_pred_time = - torch.autograd.grad(
-            outputs = probability_integral_from_t_to_inf,
-            inputs = tau_pred_repeated_detached,
-            grad_outputs = torch.ones_like(probability_integral_from_t_to_inf)
-        )[0]                                                                   # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred_detached.requires_grad = False
-        probability_for_each_event_at_pred_time = probability_for_each_event_at_pred_time.sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len]
-        tau_pred = (tau_pred * probability_for_each_event_at_pred_time).sum(dim = 0)
-                                                                               # [batch_size, seq_len]
-        gap = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
-        '''
+            tau_pred.append(median_prediction(integral_from_zero_to_inf, l, r))# [sub_sample_rate, batch_size, seq_len]
 
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
 
-        return mae, tau_pred.detach()
+        return mae, tau_pred
 
 
-    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var):
+    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
         '''
         Well...We will do something totally different by performing event-wise MAE.
         First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
@@ -397,7 +377,7 @@ class IFIBCModel(BasicModule):
         time_zero = repeat(time_zero, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
 
         probability_integral_from_zero_to_infinite = \
-            self.model(events_history, time_history, time_zero, mean = mean, var = var)
+            self.model(events_history, time_history, time_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
 
         probability_integral_sum = reduce(probability_integral_from_zero_to_infinite, 'b s ne -> b s', 'sum')
@@ -423,11 +403,7 @@ class IFIBCModel(BasicModule):
                                              labels = np.arange(self.num_events))
                     )
             else:
-                top_k_acc_single_event_seq.append(
-                    accuracy_score(
-                        y_true = events_next_per_seq, y_pred = y_pred
-                    )
-                )
+                top_k_acc_single_event_seq.append(accuracy_score(y_true = events_next_per_seq, y_pred = y_pred))
             top_k_acc.append(top_k_acc_single_event_seq)
 
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
@@ -436,8 +412,9 @@ class IFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
 
         # step 2: get the time prediction for that kind of event
-        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
-                                                                  probability_integral_from_zero_to_infinite, mean, var)
+        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, mask_history, \
+                                                                  probability_integral_from_zero_to_infinite, \
+                                                                  mean, var)
                                                                                # [batch_size, seq_len, num_events]
         mae_per_event_pure_predict = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - time_next) * mask_next
                                                                                # [batch_size, seq_len, num_events]
@@ -451,7 +428,7 @@ class IFIBCModel(BasicModule):
                (mae_per_event_pure_predict, mae_per_event)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, p_m, mean, var):
+    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_m, mean, var):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -466,25 +443,25 @@ class IFIBCModel(BasicModule):
 
         def evaluate_all_event(taus):
             # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
-            probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mean = mean, var = var)
+            probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mask_history, mean = mean, var = var)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             # \int_{0}^{tau}{p(m, \tau|\mathcal{H})d\tau}
             probability_from_zero_to_t = p_m - probability_integral_from_t_to_infinite
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability_from_zero_to_t
 
-        def bisect_target(taus, probability_threshold):
+        def bisect_target(taus):
             p_mt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
             p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events]
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
             
-        def median_prediction(l, r, probability_threshold):
+        def median_prediction(l, r):
             index = 0
             while True:
                 c = (l + r)/2
-                v = bisect_target(c, probability_threshold)
+                v = bisect_target(c)
                 l = torch.where(v < 0, c, l)
                 r = torch.where(v >= 0, c, r)
                 index += 1
@@ -500,7 +477,7 @@ class IFIBCModel(BasicModule):
         batch_size, seq_len = time_history.shape
         dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-    
+        
         for sub_sample_rate in sample_rate_list:
             probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
@@ -510,24 +487,7 @@ class IFIBCModel(BasicModule):
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
             r = 1e6*torch.ones((sub_sample_rate, batch_size, seq_len, self.num_events), dtype = torch.float32, device = self.device)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(l, r, probability_threshold))    # [sub_sample_rate, batch_size, seq_len, num_events]
-
-        '''
-        tau_pred_detached = tau_pred.detach()                                  # [sample_rate, batch_size, seq_len]
-        tau_pred_detached.requires_grad = True
-        probability_integral_from_t_to_inf = self.model(events_history, time_history, tau_pred_detached, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        probability_for_each_event_at_pred_time = - torch.autograd.grad(
-            outputs = probability_integral_from_t_to_inf,
-            inputs = tau_pred_detached,
-            grad_outputs = torch.ones_like(probability_integral_from_t_to_inf)
-        )[0]                                                                   # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred_detached.requires_grad = False
-        probability_for_each_event_at_pred_time = probability_for_each_event_at_pred_time
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = (tau_pred * probability_for_each_event_at_pred_time).sum(dim = 0)
-                                                                               # [batch_size, seq_len, num_events]
-        '''
+            tau_pred.append(median_prediction(l, r))                           # [sub_sample_rate, batch_size, seq_len, num_events]
 
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
@@ -549,10 +509,7 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        MAX_sampled_seq = 2500
-        seq_length = 1
-
-        while seq_length < MAX_sampled_seq:
+        while True:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_time_event(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -566,7 +523,6 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
-            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break
@@ -601,7 +557,7 @@ class IFIBCModel(BasicModule):
             '''
             First, we randomly generate the probability_threshold from a uniform distribution.
             '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
+            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
             sampled_threshold = dist.sample((number_of_sampled_sequences, 1))  # [number_of_sampled_sequences, 1]
             sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1]
 
@@ -658,10 +614,7 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        MAX_sampled_seq = 2500
-        seq_length = 1
-
-        while seq_length < MAX_sampled_seq:
+        while True:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_event_time(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -675,7 +628,6 @@ class IFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
-            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break
@@ -709,7 +661,7 @@ class IFIBCModel(BasicModule):
             '''
             First, we randomly generate the probability_threshold from a uniform distribution.
             '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
+            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
             sampled_threshold = dist.sample((number_of_sampled_sequences, 1, self.num_events))
                                                                                # [number_of_sampled_sequences, 1, num_events]
             sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1, num_events]
@@ -829,10 +781,10 @@ class IFIBCModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.probability(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         data = {
@@ -863,20 +815,21 @@ class IFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, \
+                                                          opt.resolution, mean, var)
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var)
 
         '''
         We show how porobability distribution goes on two sampled sequences, one following the event-time routine, and the other following
         the time-event routine.
         '''
         time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
-            = self.sample_event_time(1, self.end_time - self.start_time, mean, var)
+            = self.sample_event_time(1, 70, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
@@ -888,11 +841,12 @@ class IFIBCModel(BasicModule):
 
         sampled_data_event_time, sampled_timestamp_event_time \
             = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, opt.resolution, mean, var, sampled_mask_next_event_time)
+                                              sampled_time_next_event_time, sampled_mask_history_event_time, \
+                                              sampled_mask_next_event_time, opt.resolution, mean, var)
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(1, self.end_time - self.start_time, mean, var)
+            = self.sample_time_event(1, 70, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)
@@ -904,8 +858,8 @@ class IFIBCModel(BasicModule):
 
         sampled_data_time_event, sampled_timestamp_time_event \
             = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, opt.resolution, mean, var, sampled_mask_next_time_event)
-
+                                              sampled_time_next_time_event, sampled_mask_history_time_event, \
+                                              sampled_mask_next_time_event, opt.resolution, mean, var)
 
         '''
         Append additional info into the data dict.
@@ -952,10 +906,10 @@ class IFIBCModel(BasicModule):
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.probability(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
@@ -993,7 +947,7 @@ class IFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
@@ -1009,7 +963,8 @@ class IFIBCModel(BasicModule):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, \
+                                         time_next, mask_history, mask_next, mean, var)
         
         _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
@@ -1115,9 +1070,6 @@ class IFIBCModel(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']

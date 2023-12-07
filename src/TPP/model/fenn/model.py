@@ -701,7 +701,7 @@ class FENNModel(BasicModule):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events, num_events]
             intensity_all_events = reduce(intensity_all_events * event_mask, '... ne -> ...', 'sum')
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
-            integral_all_events = reduce(integral_all_events, '... ne -> ... ', 'sum')
+            integral_all_events = reduce(integral_all_events, '... ne -> ...', 'sum')
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
             
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
