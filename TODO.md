@@ -20,3 +20,13 @@ Amazon: FENN(MAE-E, DEBUG), FullyNN(MAE-E, DEBUG)
 Stackoverflow: FENN(MAE-E), FullyNN(MAE-E)
 MOOC: FENN(Training failure), FullyNN(Training failure)
 Taobao: FENN(DEBUG, MAE-E), FullyNN(DEBUG, MAE-E)
+
+
+Running:
+
+FENN and FullyNN: result group 1
+
+Finished:
+IFIB_C: result group 3, result group 2, result group 1
+SAHP and THP: result group 3, result group 2, result group 1
+FENN and FullyNN: result group 3, result group 2, 

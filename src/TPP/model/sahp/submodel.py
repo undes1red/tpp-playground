@@ -179,13 +179,7 @@ class SAHP(nn.Module):
                                                                   expanded_time, integration_sample_rate)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
 
-        # Obtain timestamp
-        timestamp, timestamp_ps = pack(
-            (torch.zeros_like(time_next), expanded_time.diff(dim = -1)),
-            'b s *'
-        )                                                                      # [batch_size, seq_len, integration_sample_rate]
-
-        return expanded_integral_all_events, expanded_intensity_all_events, timestamp
+        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, num_dimension_prior_batch = 0):
@@ -205,13 +199,7 @@ class SAHP(nn.Module):
         expanded_integral_all_events = self.integration_estimator(expanded_intensity_all_events, expanded_time, integration_sample_rate)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
-        # Obtain timestamp
-        timestamp = torch.concat(
-            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time.diff(dim = -1)], dim = -1
-        )                                                                      # [..., batch_size, seq_len, num_events, integration_sample_rate]
-
-
-        return expanded_integral_all_events, expanded_intensity_all_events, timestamp
+        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate):

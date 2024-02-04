@@ -180,26 +180,26 @@ class MRMTPPModule(nn.Module):
 
         # aggregated timestamp
         timestamp = torch.cat(
-            (torch.zeros((*time_next.shape[:-1], 1), device = self.device), original_time_expand.diff(dim = -1)),
+            (torch.zeros((*time_next.shape[:-1], self.num_events, 1), device = self.device), original_time_expand.diff(dim = -1)),
             dim = -1)                                                          # [..., batch_size, seq_len, resolution]
         
         return integral_events, intensity_events, timestamp
 
 
-    def integration_estimator(self, expanded_intensity_value, expanded_time, integration_sample_rate):
+    def integration_estimator(self, expanded_intensity_value, expanded_time_diff, integration_sample_rate):
         # tensor check
         assert expanded_intensity_value.shape[-2:] == (integration_sample_rate, self.num_events)
-        assert expanded_time.shape[-1] == integration_sample_rate
-        
+        assert expanded_time_diff.shape[-1] == integration_sample_rate
+
+        timestamp_diff_for_integral = expanded_time_diff[..., 1:]              # [..., integration_sample_rate - 1]
         expanded_intensity_value_1 = expanded_intensity_value[..., :-1, :]     # [..., integration_sample_rate - 1, num_events]
         expanded_intensity_value_2 = expanded_intensity_value[..., 1:, :]      # [..., integration_sample_rate - 1, num_events]
-        timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
 
         # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_1 = (expanded_intensity_value_1 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
+        integral_of_all_events_1 = (expanded_intensity_value_1 * timestamp_diff_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
                                                                                # [..., integration_sample_rate - 1, num_events]
         # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_2 = (expanded_intensity_value_2 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
+        integral_of_all_events_2 = (expanded_intensity_value_2 * timestamp_diff_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
                                                                                # [..., integration_sample_rate - 1, num_events]
         # Effectively increase the precision.
         integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
@@ -215,7 +215,37 @@ class MRMTPPModule(nn.Module):
         return integral_of_all_events
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask_next):
+    def integration_probability_estimator(self, expanded_probability_value, expanded_time_diff, integration_sample_rate):
+        # tensor check
+        assert expanded_probability_value.shape[-2:] == (self.num_events, integration_sample_rate)
+        assert expanded_time_diff.shape[-1] == integration_sample_rate
+        
+        timestamp_diff_for_integral = expanded_time_diff[..., 1:]                   # [..., integration_sample_rate - 1]
+        expanded_probability_value_1 = expanded_probability_value[..., :-1]    # [..., integration_sample_rate - 1]
+        expanded_probability_value_2 = expanded_probability_value[..., 1:]     # [..., integration_sample_rate - 1]
+
+        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+        integral_of_all_events_1 = (expanded_probability_value_1 * timestamp_diff_for_integral).cumsum(dim = -1)
+                                                                               # [..., integration_sample_rate - 1]
+        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+        integral_of_all_events_2 = (expanded_probability_value_2 * timestamp_diff_for_integral).cumsum(dim = -1)
+                                                                               # [..., integration_sample_rate - 1]
+        # Effectively increase the precision.
+        integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
+                                                                               # [..., integration_sample_rate - 1]
+        
+        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+        # We have to check the shape.
+        integral_start_from_zero = torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device)
+                                                                               # [..., 1]
+        integral_of_all_events = torch.concat(
+            [integral_start_from_zero, integral_of_all_events], dim = -1
+        )                                                                      # [..., integration_sample_rate]
+
+        return integral_of_all_events
+
+
+    def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, var):
         time_history = ((time_history - mean) / var).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]

@@ -13,7 +13,7 @@ class ScheduledOptim():
     A simple wrapper for using various optimizers to train models.
     We only support LambdaLR learning rate scheduler.
     '''
-    def __init__(self, opt, model, rank):
+    def __init__(self, opt, model):
         if opt.custom_op:
             '''
             torch_optimizer is a supplementary optimizer collection compatible with pytorch.
@@ -31,8 +31,7 @@ class ScheduledOptim():
         '''
         param = read_yaml(opt.optim_config)
 
-        if rank == 0:
-            logger.info(f'The additional input optimizer hyperparameters are {param}')
+        logger.info(f'The additional input optimizer hyperparameters are {param}')
         if hasattr(optim, opt.op_name):
             self._optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
         else:

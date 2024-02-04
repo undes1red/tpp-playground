@@ -2,7 +2,6 @@ import os, torch, yaml, io, copy
 from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
@@ -40,25 +39,22 @@ class TPPTrainer:
         }
 
 
-    def work(self, rank, opt):
+    def work(self, opt):
         '''
         The entry function for TaskHost to start the task.
         
         Args:
-        * rank: int
-                Which GPU should we use?
         * opt : namespace
                 This namespace stores all parsed arguments.
         '''
 
         # Store required initial information.
         self.opt = opt
-        self.rank = rank
 
         '''
         We try to check if models and logs are saved and give some hints if you don't store any models or logs(most time you should store them).
         '''
-        if not self.opt.log and not self.opt.save_model and rank == 0:
+        if not self.opt.log and not self.opt.save_model:
             logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
 
 
@@ -66,45 +62,40 @@ class TPPTrainer:
         ========= Load Dataset =========
         '''
         if self.opt.data_path:
-            self.training_data, self.evaluation_data, self.test_data = prepare_dataloaders(opt, rank = rank)
+            self.training_data, self.evaluation_data, self.test_data = prepare_dataloaders(opt)
             self.opt.training_size = len(self.training_data)
         else:
             raise logger.exception("Wrong input data path.")
     
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
-        if rank == 0:
-            logger.info(f'The input model hyperparameters are {model_param}')
+        opt.model_params = model_param
+        logger.info(f'The input model hyperparameters are {model_param}')
         
         '''
         Load model
         '''
-        self.model_class = get_model(self.opt.model_name, rank = rank)
+        self.model_class = get_model(self.opt.model_name)
         model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
     
         self.opt.__dict__.update(model_param)
 
-        if rank == 0:
-            trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_parameters = sum(p.numel() for p in model.parameters())
-            self.opt.trainable_parameters = trainable_parameters
-            self.opt.epoch = opt.n_training_steps/opt.training_size
-            logger.info(print_args(self.opt))
-            logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
-            logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}.')
+        trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_parameters = sum(p.numel() for p in model.parameters())
+        self.opt.trainable_parameters = trainable_parameters
+        self.opt.epoch = opt.n_training_steps/opt.training_size
+        logger.info(print_args(self.opt))
+        logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
+        logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}.')
     
         '''
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 
         If you want to use another learning rate scheduler, plz modify it in src.optim.
         '''
-        self.sched_optimizer = ScheduledOptim(opt, model, rank)
-        
-        if self.opt.trainable_parameters == 0 or not self.opt.multiprocessing:
-            self.model = DP(model, device_ids = [rank] if opt.cuda else None)
-        else:
-            self.model = DDP(model, device_ids = [rank] if opt.cuda else None, find_unused_parameters = True)    
+        self.sched_optimizer = ScheduledOptim(opt, model)
+        self.model = DP(model)
         self.task()
     
     
@@ -124,9 +115,9 @@ class TPPTrainer:
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         self.output_checkpoint_folder = 'model_' + self.folder_suffix
         self.log_folder = 'log_' + self.folder_suffix
-        if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)) and self.rank == 0:
+        if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)):
             os.mkdir(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
-        if not os.path.exists(os.path.join(self.opt.log, self.log_folder)) and self.rank == 0:
+        if not os.path.exists(os.path.join(self.opt.log, self.log_folder)):
             os.mkdir(os.path.join(self.opt.log, self.log_folder))
 
         '''
@@ -141,7 +132,7 @@ class TPPTrainer:
         '''
         Setting up file loggers and a wandb online logger.
         '''
-        if self.opt.log and self.rank == 0:
+        if self.opt.log:
             if self.opt.wandb:
                 import wandb
                 wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \
@@ -182,7 +173,7 @@ class TPPTrainer:
             '''
             A short report about training.
             '''
-            if current_step % self.opt.n_report_steps == 0 and self.rank == 0:
+            if current_step % self.opt.n_report_steps == 0:
                 self.train_report(current_step)
             
             '''
@@ -191,7 +182,7 @@ class TPPTrainer:
             if current_step % self.opt.n_evaluation_steps == 0:
                 self.evaluation_report(current_step)
                         
-        if self.rank == 0 and self.opt.log:
+        if self.opt.log:
             for key, value in self.df_records.items():
                 if value is None:
                     logger.warning(f'You require us to track the {key} process, but nothing is recorded!')
@@ -240,11 +231,10 @@ class TPPTrainer:
                        output_length = self.format_dict_length, desc = '  - (Evaluation)   '), procedure = 'Evaluation'
         )
         log_print_format_dict_eva = self.model_class.log_print_format(eva_report, procedure = 'Evaluation')
-        if self.rank == 0:
-            procedure_monitor_dict = self.get_procedure_monitor_dict()
-            print_performances(logger = logger, procedure = 'Evaluation', \
-                               model_performance_dict = log_print_format_dict_eva,
-                               procedure_monitor_dict = procedure_monitor_dict)
+        procedure_monitor_dict = self.get_procedure_monitor_dict()
+        print_performances(logger = logger, procedure = 'Evaluation', \
+                           model_performance_dict = log_print_format_dict_eva,
+                           procedure_monitor_dict = procedure_monitor_dict)
 
         '''
         Evaluation on the test dataset.
@@ -254,24 +244,22 @@ class TPPTrainer:
                        output_length = self.format_dict_length, desc = '  - (Test)   '), procedure = 'Test'
         )
         log_print_format_dict_test = self.model_class.log_print_format(test_report, procedure = 'Test')
-        if self.rank == 0:
-            procedure_monitor_dict = self.get_procedure_monitor_dict()
-            print_performances(logger = logger, procedure = 'Test', \
-                               model_performance_dict = log_print_format_dict_test,
-                               procedure_monitor_dict = procedure_monitor_dict)
+        procedure_monitor_dict = self.get_procedure_monitor_dict()
+        print_performances(logger = logger, procedure = 'Test', \
+                           model_performance_dict = log_print_format_dict_test,
+                           procedure_monitor_dict = procedure_monitor_dict)
 
-        if self.rank == 0:
-            if self.opt.log:
-                self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
-                self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
-            if self.opt.wandb:
-                import wandb
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
-                    procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
-                wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
-                    procedure = 'Test'), temp = 'test_'), step = current_step)
-            
-            self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
+        if self.opt.log:
+            self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
+            self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
+        if self.opt.wandb:
+            import wandb
+            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
+                procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
+            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
+                procedure = 'Test'), temp = 'test_'), step = current_step)
+        
+        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
 
 
     def save(self, current_step, eva_report_format_dict, test_report_format_dict):

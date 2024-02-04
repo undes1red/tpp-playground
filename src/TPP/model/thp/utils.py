@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from src.TPP.model.utils import check_tensor
 
 
 def get_subsequent_mask(seq):
@@ -48,7 +49,8 @@ def softplus_ext(input, beta, threshold = 20):
     '''
     if type(beta) == int:
         return F.softplus(input = input, beta = beta, threshold = threshold)
-
+    
+    check_tensor(beta, positive = False)
     assert input.shape[-1] == beta.shape[-1]
 
     input_with_beta = input * beta

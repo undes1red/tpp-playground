@@ -213,7 +213,7 @@ class MarkedLogNormMixWrapper(BasicModule):
         return gap, tau_pred
 
 
-    def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, var):
+    def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, var, return_mean = True):
         '''
         Well...We will do something totally different by performing event-wise MAE.
         First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
@@ -251,20 +251,51 @@ class MarkedLogNormMixWrapper(BasicModule):
                 top_k_acc_single_event_seq.append(
                     accuracy_score(
                         y_true = events_next_per_seq,
-                        y_pred = torch.argmax(probability_integral_per_seq, dim = -1)
+                        y_pred = np.argmax(probability_integral_per_seq, axis = -1)
                     )
                 )
             top_k_acc.append(top_k_acc_single_event_seq)
 
+        # step 2: get the time prediction for that kind of event
+        tau_pred_all_event = self.prediction_with_all_event_types(input_events, input_time, input_mask, \
+                                                                  probability_distribution_of_mark, mean, var, return_mean)
+                                                                               # [batch_size, seq_len, num_events]
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events + 1)
                                                                                # [batch_size, seq_len + 1, num_events + 1]
         events_next_one_hot = torch.nn.functional.one_hot(input_events.long(), num_classes = self.num_events + 1)
                                                                                # [batch_size, seq_len + 1, num_events + 1]
 
-        # step 2: get the time prediction for that kind of event
-        tau_pred_all_event = self.prediction_with_all_event_types(input_events, input_time, input_mask, \
-                                                                  probability_distribution_of_mark, mean, var)
-                                                                               # [batch_size, seq_len, num_events]
+        if return_mean:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - input_time) * input_mask
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot).sum(dim = -1) - input_time) * input_mask
+                                                                               # [batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / input_mask.sum(dim = -1)
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / input_mask.sum(dim = -1)
+        else:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot.unsqueeze(dim = 0)).sum(dim = -1) - input_time) * input_mask.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot.unsqueeze(dim = 0)).sum(dim = -1) - input_time) * input_mask.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / input_mask.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / input_mask.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            
+            # Calculate mean
+            mae_per_event_with_predict_index = mae_per_event_with_predict_index.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = mae_per_event_with_event_next.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_predict_index_avg = mae_per_event_with_predict_index_avg.mean(dim = 0)
+                                                                               # [batch_size]
+            mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
+                                                                               # [batch_size]
+        
+        '''
+
         mae_per_event_pure_predict = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - input_time) * input_mask
                                                                                # [batch_size, seq_len, num_events]
         mae_per_event = torch.abs((tau_pred_all_event * events_next_one_hot).sum(dim = -1) - input_time) * input_mask
@@ -272,12 +303,13 @@ class MarkedLogNormMixWrapper(BasicModule):
 
         mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / input_mask.sum(dim = -1)
         mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / input_mask.sum(dim = -1)
+        '''
+        
+        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+               (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
-               (mae_per_event_pure_predict, mae_per_event)
 
-
-    def prediction_with_all_event_types(self, input_events, input_time, input_mask, p_m, mean, var):
+    def prediction_with_all_event_types(self, input_events, input_time, input_mask, p_m, mean, var, return_mean):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -341,7 +373,8 @@ class MarkedLogNormMixWrapper(BasicModule):
         tau_pred = (tau_pred * probability_for_each_event_at_pred_time).sum(dim = 0)
                                                                                # [batch_size, seq_len, num_events]
         '''
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len + 1, num_events + 1]
+        if return_mean:
+            tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len + 1, num_events + 1]
 
         return tau_pred
     
@@ -495,12 +528,15 @@ class MarkedLogNormMixWrapper(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len]
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, var)
+              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, var, return_mean = False)
                                                                                # [batch_size, seq_len]
         expand_probability_for_each_event, timestamp = \
             self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_marks] + [batch_size, seq_len, resolution]
-        
+
+        tau_pred_all_event = tau_pred_all_event[..., :self.num_events]
+        expand_probability_for_each_event = expand_probability_for_each_event[..., :self.num_events]
+
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
@@ -525,13 +561,12 @@ class MarkedLogNormMixWrapper(BasicModule):
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * opt.resolution], 
-                                            resolution = opt.resolution, num_events = self.num_events + 1,
+                                            resolution = opt.resolution, num_events = self.num_events,
                                             time_next = time_next_per_seq[:seq_len])
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
-
 
         data = {}
         '''
@@ -613,7 +648,7 @@ class MarkedLogNormMixWrapper(BasicModule):
                                                                                # [batch_size, seq_len]
         _, mae_e, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return mae_e, f1_2
+        return mae_e, f1_2, probability_sum
 
 
     def train_step(model, minibatch, device):

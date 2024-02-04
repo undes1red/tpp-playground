@@ -10,7 +10,7 @@ from src.TPP.model import its_lower_bound, its_upper_bound
 
 class RMTPP(BasicModule):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
-                 output_size, limited_history_norm, time_scalar_min = 1e-20, epsilon = 1e-20,
+                 output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20,
                  survival_loss_during_training = False):
         super(RMTPP, self).__init__()
         self.device = device

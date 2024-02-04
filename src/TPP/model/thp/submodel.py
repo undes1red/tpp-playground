@@ -22,11 +22,13 @@ class THP(nn.Module):
         # parameter for the weight of time difference
         self.alpha = nn.Parameter(torch.ones((self.num_events), dtype = torch.float32, \
                                   device = self.device, requires_grad = True))
+        nn.init.normal_(self.alpha)
 
         # parameter for the softplus function
         self.beta = nn.Parameter(torch.ones((self.num_events), dtype = torch.float32, \
                                   device = self.device, requires_grad = True) * beta)
-        
+        nn.init.normal_(self.beta)
+
         # convert hidden vectors into valid intensity function values.
         self.linear = nn.Linear(d_input, num_events, device = self.device)
 
@@ -168,13 +170,8 @@ class THP(nn.Module):
         expanded_integral_all_events \
             = self.integration_estimator(expanded_intensity_all_events, expanded_time, integration_sample_rate)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-        # aggregated timestamp
-        batch_size, seq_len, _ = expanded_time.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_time.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, integration_sample_rate]
         
-        return expanded_integral_all_events, expanded_intensity_all_events, timestamp
+        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
         
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, mean, var):
@@ -204,13 +201,8 @@ class THP(nn.Module):
         expanded_integral_across_all_events \
             = self.integration_estimator(expanded_intensity_across_all_events, original_expanded_time, integration_sample_rate)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        
-        # aggregated timestamp
-        timestamp = torch.cat(
-            (torch.zeros((*original_expanded_time.shape[:-1], 1), device = self.device), original_expanded_time.diff(dim = -1)),
-            dim = -1)                                                          # [..., batch_size, seq_len, num_events, integration_sample_rate]
-        
-        return expanded_integral_across_all_events, expanded_intensity_across_all_events, timestamp
+             
+        return expanded_integral_across_all_events, expanded_intensity_across_all_events, original_expanded_time
     
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate, mean, var):

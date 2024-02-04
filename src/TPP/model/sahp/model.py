@@ -12,8 +12,8 @@ from src.TPP.model.utils import *
 
 class SAHPWrapper(BasicModule):
     def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32, step = 4,
-                 integration_sample_rate = 100, survival_loss_during_training = False):
+                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32,
+                 mae_step = 4, mae_e_step = 4, integration_sample_rate = 100, survival_loss_during_training = False):
         super(SAHPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -23,7 +23,8 @@ class SAHPWrapper(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate
-        self.step = step
+        self.mae_step = mae_step
+        self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
 
         self.model = SAHP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
@@ -256,8 +257,8 @@ class SAHPWrapper(BasicModule):
         sample_rate_list = []
         remaining_sample_rate = self.sample_rate
         while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
+            sample_rate_list.append(self.mae_step)
+            remaining_sample_rate -= self.mae_step
         sample_rate_list[-1] += remaining_sample_rate
 
         def evaluate(taus):
@@ -326,7 +327,7 @@ class SAHPWrapper(BasicModule):
         return mae, tau_pred
 
 
-    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var, return_mean = True):
         '''
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
         be recorded as part of the output.
@@ -402,27 +403,48 @@ class SAHPWrapper(BasicModule):
 
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
                                                                   mask_history, probability_integral_to_inf, \
-                                                                  resolution_between_events, max_, mean, var)
+                                                                  resolution_between_events, max_, mean, var, return_mean)
                                                                                # [batch_size, seq_len, num_events]
 
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         event_next_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-
-        mae_per_event_pure_predict = torch.abs((tau_pred_all_event * predicted_event_mask).sum(dim = -1) - time_next) * mask_next
+    
+        if return_mean:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predicted_event_mask).sum(dim = -1) - time_next) * mask_next
                                                                                # [batch_size, seq_len]
-        mae_per_event = torch.abs((tau_pred_all_event * event_next_mask).sum(dim = -1) - time_next) * mask_next
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * event_next_mask).sum(dim = -1) - time_next) * mask_next
                                                                                # [batch_size, seq_len]
-
-        mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / mask_next.sum(dim = -1)
-        mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / mask_next.sum(dim = -1)
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+        else:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predicted_event_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * event_next_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            
+            # Calculate mean
+            mae_per_event_with_predict_index = mae_per_event_with_predict_index.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = mae_per_event_with_event_next.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_predict_index_avg = mae_per_event_with_predict_index_avg.mean(dim = 0)
+                                                                               # [batch_size]
+            mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
+                                                                               # [batch_size]
         
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_pure_predict_avg, mae_per_event_avg), \
-               (mae_per_event_pure_predict, mae_per_event)
+        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+               (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_x, resolution, max_val, mean, var):
+    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_x, resolution, max_val, mean, var, return_mean):
         '''
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
@@ -431,8 +453,8 @@ class SAHPWrapper(BasicModule):
         sample_rate_list = []
         remaining_sample_rate = self.sample_rate
         while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
+            sample_rate_list.append(self.mae_e_step)
+            remaining_sample_rate -= self.mae_e_step
         sample_rate_list[-1] += remaining_sample_rate
 
         def evaluate_all_event(taus):
@@ -509,7 +531,8 @@ class SAHPWrapper(BasicModule):
             '''
 
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
+        if return_mean:
+            tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len, num_events]
         
         return tau_pred
 
@@ -576,6 +599,9 @@ class SAHPWrapper(BasicModule):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
+        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, resolution]
+
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -587,7 +613,7 @@ class SAHPWrapper(BasicModule):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp, opt)
+        plots = plot_intensity(data, timestamp_diff, opt)
         
         return plots
 
@@ -618,6 +644,8 @@ class SAHPWrapper(BasicModule):
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
+        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
+                                                                               # [batch_size, seq_len, resolution]
 
         data = {
             'time_next': time_next,
@@ -626,7 +654,7 @@ class SAHPWrapper(BasicModule):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp, opt)
+        plots = plot_integral(data, timestamp_diff, opt)
         return plots
 
 
@@ -652,6 +680,7 @@ class SAHPWrapper(BasicModule):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
+        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
 
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -666,7 +695,7 @@ class SAHPWrapper(BasicModule):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
+        plots = plot_probability(data, timestamp_diff, opt)
         return plots
 
 
@@ -693,7 +722,7 @@ class SAHPWrapper(BasicModule):
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_history, mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var, return_mean = False)
 
         '''
         Append additional info into the data dict.
@@ -728,6 +757,7 @@ class SAHPWrapper(BasicModule):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
+        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
 
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -738,12 +768,12 @@ class SAHPWrapper(BasicModule):
         true_probability = expand_true_probability(time_next, input_intensity, opt)
                                                                                # [batch_size, seq_len, resolution] or batch_size * None
         
-        expand_probability, true_probability, timestamp = move_from_tensor_to_ndarray(expand_probability, true_probability, timestamp)
-        zipped_data = zip(expand_probability, true_probability, timestamp, mask_next)
+        expand_probability, true_probability, timestamp_diff = move_from_tensor_to_ndarray(expand_probability, true_probability, timestamp_diff)
+        zipped_data = zip(expand_probability, true_probability, timestamp_diff, mask_next)
 
         spearman = 0
         l1 = 0
-        for expand_probability_per_seq, true_probability_per_seq, timestamp_per_seq, mask_next_per_seq in zipped_data:
+        for expand_probability_per_seq, true_probability_per_seq, timestamp_diff_per_seq, mask_next_per_seq in zipped_data:
             seq_len = mask_next_per_seq.sum()
 
             spearman_per_seq = \
@@ -751,8 +781,7 @@ class SAHPWrapper(BasicModule):
 
             l1_per_seq = L1_distance_between_two_funcs(
                                         x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution
-                                        )
+                                        timestamp = timestamp_diff_per_seq, resolution = opt.resolution)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
@@ -791,7 +820,7 @@ class SAHPWrapper(BasicModule):
         
         _, maes, probability_sum = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return maes, f1_2, probability_sum
+        return maes, f1_2, probability_sum, events_next
 
 
     '''

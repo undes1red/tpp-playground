@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+from einops import rearrange
 
 from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_probability
@@ -262,21 +263,23 @@ def plot_debug(data, timestamp, opt):
         plot_instruction[f'top_k_accuracy_{idx}'] = sub_plot_instruction
 
     '''
-    Part 4: The Logarithm of time prediction against all events
-
+    Part 4: The Logarithm of time prediction against all events.
     '''
-    tau_pred_all_event = data['tau_pred_all_event']                            # [batch_size, seq_len, num_events]
+    tau_pred_all_event = data['tau_pred_all_event']                            # [sample_rate, batch_size, seq_len, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
-                                                                               # [batch_size, seq_len, num_events] + [batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len, num_events] + [batch_size, seq_len]
+    tau_pred_all_event = rearrange(tau_pred_all_event, 's b ... -> b s ...')   # [batch_size, sample_rate, seq_len, num_events]
+
 
     for idx, (tau_pred_all_event_per_seq, mask_next) in enumerate(zip(tau_pred_all_event, mask_next)):
         seq_len = mask_next_per_seq.sum()
+        sample_rate = tau_pred_all_event_per_seq.shape[0]
 
         data_tau_pred_all_event_per_seq = {
-            'x': [ele for ele in range(seq_len) for _ in range(num_events)],
-            'y': np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
-            'marks': [f'Event {i}' for i in range(num_events)] * seq_len
+            'x': [ele for ele in range(seq_len) for _ in range(num_events)] * sample_rate,
+            'y': np.log(1 + tau_pred_all_event_per_seq[..., :seq_len, :]).flatten(),
+            'marks': [f'Event {i}' for i in range(num_events)] * seq_len * sample_rate
         }
         df_data_tau_pred_all_event_per_seq = pd.DataFrame.from_dict(data_tau_pred_all_event_per_seq)
         sub_plot_instruction = [
@@ -365,7 +368,53 @@ def plot_debug(data, timestamp, opt):
             }
         ]
         plot_instruction[f'probability_sum_{idx}'] = sub_plot_instruction
-    
+
+    '''
+    # scatter plot that shows the distribution of time given the mark information.
+    sampled_times = data['sampled_times']
+    sampled_times = move_from_tensor_to_ndarray(sampled_times)    
+    df_sampled_times = pd.DataFrame(sampled_times.squeeze())
+    mean_sampled_times = df_sampled_times.mean().values
+    std_sampled_times = df_sampled_times.std().values
+    df_sampled_times = pd.melt(df_sampled_times, value_vars = df_sampled_times.columns)
+    df_sampled_times.columns = ['Mark', 'Time']
+    annotation = ''
+    for mark, (mean_per_mark, std_per_mark) in enumerate(zip(mean_sampled_times, std_sampled_times)):
+        annotation += f'Mark {mark}: mean: {mean_per_mark}. std: {std_per_mark}. '
+
+    subplot_instruction = [
+        {
+            'plot_type': 'displot',
+            'length': large_graph_length,
+            'height': large_graph_height,
+            'kwargs':
+            {
+                'x': 'Time',
+                'data': df_sampled_times,
+                'palette': 'pastel',
+                'hue': 'Mark',
+                'kind': 'kde',
+                'fill': 'True',
+                'cut': '0',
+            }
+        },
+        {
+            'plot_type': 'text',
+            'kwargs':
+            {
+                'x': -1, 
+                'y': -1,
+                'verticalalignment': 'top',
+                'horizontalalignment': 'left',
+                's': annotation,
+                'fontsize': 12,
+            }
+        }
+    ]
+    plot_instruction[f'sampled_time_on_all_marks'] = subplot_instruction
+    '''
+
+
     '''
     Part 7: expand intensity and expand integral on sampled event sequences.
     Required plots: lineplot and scatterplot
@@ -576,6 +625,5 @@ def plot_debug(data, timestamp, opt):
                 }
             ]
             plot_instruction[f'sampled_sub{y.lower()}_{idx}_time_event'] = subplot_instruction
-
 
     return plot_instruction

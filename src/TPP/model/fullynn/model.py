@@ -29,7 +29,7 @@ class FullyNNModel(BasicModule):
                  device,
                  epsilon = 1e-20,
                  history_module = 'LSTM', survival_loss_during_training = False,
-                 event_toggle = False, step = 1,
+                 event_toggle = False, mae_step = 16, mae_e_step = 16,
                  zero_shift = False, sample_rate = 32):
         super(FullyNNModel, self).__init__()
         self.device = device
@@ -40,7 +40,8 @@ class FullyNNModel(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate
-        self.step = step
+        self.mae_step = mae_step
+        self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
 
         self.model = FullyNN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
@@ -435,8 +436,8 @@ class FullyNNModel(BasicModule):
         sample_rate_list = []
         remaining_sample_rate = self.sample_rate
         while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
+            sample_rate_list.append(self.mae_step)
+            remaining_sample_rate -= self.mae_step
         sample_rate_list[-1] += remaining_sample_rate
 
         def get_sum_of_integral(taus):
@@ -520,7 +521,7 @@ class FullyNNModel(BasicModule):
         return mae, tau_pred
 
 
-    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var):
+    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, var, return_mean = True):
         '''
         MAE-E evaluation module.
 
@@ -636,21 +637,43 @@ class FullyNNModel(BasicModule):
         Step 4: get the time prediction for all, predicted, and real events.
         '''
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, p_m, resolution_between_events, \
-                                                                  mean, var, max_)
+                                                                  mean, var, max_, return_mean)
                                                                                # [batch_size, seq_len, num_events]
-        mae_per_event_with_predict_index = torch.abs(((tau_pred_all_event * predict_index_one_hot_mask).sum(dim = -1)) - time_next) * mask_next
-                                                                               # [batch_size, seq_len]
-        mae_per_event_with_event_next = torch.abs(((tau_pred_all_event * events_next_one_hot_mask).sum(dim = -1)) - time_next) * mask_next
-                                                                               # [batch_size, seq_len]
 
-        mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
-        mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+        if return_mean:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot_mask).sum(dim = -1) - time_next) * mask_next
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot_mask).sum(dim = -1) - time_next) * mask_next
+                                                                               # [batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+        else:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            
+            # Calculate mean
+            mae_per_event_with_predict_index = mae_per_event_with_predict_index.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = mae_per_event_with_event_next.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_predict_index_avg = mae_per_event_with_predict_index_avg.mean(dim = 0)
+                                                                               # [batch_size]
+            mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
+                                                                               # [batch_size]
 
         return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, \
                (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
-    def prediction_with_all_event_types(self, events_history, time_history, p_m, resolution, mean, var, max_val):
+    def prediction_with_all_event_types(self, events_history, time_history, p_m, resolution, mean, var, max_val, return_mean):
         '''
         The time prediction of every marker whose probability is not 0.
 
@@ -683,8 +706,8 @@ class FullyNNModel(BasicModule):
         sample_rate_list = []
         remaining_sample_rate = self.sample_rate
         while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
+            sample_rate_list.append(self.mae_e_step)
+            remaining_sample_rate -= self.mae_e_step
         sample_rate_list[-1] += remaining_sample_rate
 
         def evaluate_all_event(taus):
@@ -769,7 +792,8 @@ class FullyNNModel(BasicModule):
             '''
         
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
+        if return_mean:
+            tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len, num_events]
                                                                                    
         return tau_pred
 
@@ -949,7 +973,7 @@ class FullyNNModel(BasicModule):
                                                                                # [batch_size, seq_len]
         
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var, return_mean = False)
 
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
 
@@ -1045,7 +1069,7 @@ class FullyNNModel(BasicModule):
         
         _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return maes, f1_2, probability_sum
+        return maes, f1_2, probability_sum, events_next
 
 
     def get_event_embedding(self, input_events):

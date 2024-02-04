@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+from einops import rearrange
 
 from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
 from src.TPP.plotter_utils import expand_true_probability
@@ -234,7 +235,7 @@ def plot_debug(data, timestamp, opt):
     top_k = data['top_k']                                                      # [batch_size, num_events - 1]
     for idx, top_k_per_seq in enumerate(top_k):
         data_top_k_per_seq = {
-            'x': np.arange(1, num_events - 1),
+            'x': np.arange(1, num_events),
             'y': top_k_per_seq,
             'marks': 'Top-K accuracy'
         }
@@ -256,20 +257,22 @@ def plot_debug(data, timestamp, opt):
 
     '''
     Part 4: The Logarithm of time prediction against all events
-
     '''
-    tau_pred_all_event = data['tau_pred_all_event']                            # [batch_size, seq_len, num_events]
-    mask_next = data['mask_next']                                              # [batch_size, seq_len]
+    tau_pred_all_event = data['tau_pred_all_event']                        # [sample_rate, batch_size, seq_len, num_events]
+    mask_next = data['mask_next']                                          # [batch_size, seq_len]
     tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
-                                                                               # [batch_size, seq_len, num_events] + [batch_size, seq_len]
+                                                                           # [batch_size, seq_len, num_events] + [batch_size, seq_len]
+    tau_pred_all_event = rearrange(tau_pred_all_event, 's b ... -> b s ...')
+                                                                           # [batch_size, sample_rate, seq_len, num_events]
 
     for idx, (tau_pred_all_event_per_seq, mask_next) in enumerate(zip(tau_pred_all_event, mask_next)):
         seq_len = mask_next_per_seq.sum()
+        sample_rate = tau_pred_all_event_per_seq.shape[0]
 
         data_tau_pred_all_event_per_seq = {
-            'x': [ele for ele in range(seq_len) for _ in range(num_events)],
-            'y': np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
-            'marks': [f'Event {i}' for i in range(num_events)] * seq_len
+            'x': [ele for ele in range(seq_len) for _ in range(num_events)] * sample_rate,
+            'y': np.log(1 + tau_pred_all_event_per_seq[..., :seq_len, :]).flatten(),
+            'marks': [f'Event {i}' for i in range(num_events)] * seq_len * sample_rate
         }
         df_data_tau_pred_all_event_per_seq = pd.DataFrame.from_dict(data_tau_pred_all_event_per_seq)
         sub_plot_instruction = [
