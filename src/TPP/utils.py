@@ -128,6 +128,7 @@ class Metric():
             assert len(smaller_is_better) == self.metric_number
             self.mask = [self.map[item] for item in smaller_is_better]
     
+
     def compare(self, input_metric):
         assert len(input_metric) == len(self.mask)
         tmp = lst_divide(input_metric, self.mask)
@@ -142,6 +143,7 @@ class Metric():
             self.best_metric = input_metric
         
         return output
+    
     
     def show(self):
         return self.best_metric

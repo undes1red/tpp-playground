@@ -320,7 +320,7 @@ class THPWrapper(BasicModule):
 
 
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var, return_mean = True):
-        self.eval()
+        
 
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -574,7 +574,7 @@ class THPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -615,7 +615,7 @@ class THPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -655,7 +655,7 @@ class THPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -695,7 +695,7 @@ class THPWrapper(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

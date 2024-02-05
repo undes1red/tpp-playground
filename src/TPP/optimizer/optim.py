@@ -59,7 +59,7 @@ class ScheduledOptim():
 
     def zero_grad(self):
         "Zero out the gradients with the inner optimizer"
-        self._optimizer.zero_grad()
+        self._optimizer.zero_grad(set_to_none=True)
 
 
     def get_lr(self):

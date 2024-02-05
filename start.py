@@ -7,7 +7,11 @@ root_path = os.path.dirname(os.path.abspath(__file__))
 main_procedure_translator = {
     # Temporal point process
     'TPP_train': 'TPP',
-    'TPP_plot': 'TPP',
+    'TPP_evaluate': 'TPP',
+
+    # Long-horizon Temporal point process
+    'TPP_lh_train': 'TPP_lh',
+    'TPP_lh_plot': 'TPP_lh',
 
     # Outlier-directed missing data imputation
     'ehd_train': 'ehd',
@@ -20,7 +24,11 @@ main_procedure_translator = {
 sub_procedure_translator = {
     # Temporal point process
     'TPP_train': 'Trainer',
-    'TPP_plot': 'Plotter',
+    'TPP_evaluate': 'Evaluator',
+
+    # Long-horizon Temporal point process
+    'TPP_lh_train': 'Trainer',
+    'TPP_lh_plot': 'Plotter',
 
     # Outlier-directed missing data imputation
     'ehd_train': 'Trainer',
@@ -40,7 +48,7 @@ if __name__ == '__main__':
     procedure_names = [
         # Temporal point process
         'TPP_train',
-        'TPP_plot',
+        'TPP_evaluate',
         ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

@@ -91,7 +91,7 @@ class FENN(nn.Module):
             events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
         else:
             events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
+        history, _ = pack([events_embeddings, time_history], 'b s *')          # [batch_size, seq_len, d_history + 1]
         
         # Reshape hidden output for full connection layers.
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]

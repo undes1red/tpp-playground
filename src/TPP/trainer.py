@@ -75,7 +75,7 @@ class TPPTrainer:
         '''
         Load model
         '''
-        self.model_class = get_model(self.opt.model_name)
+        self.model_class = get_model(self.opt)
         model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
@@ -107,18 +107,13 @@ class TPPTrainer:
         '''
         Create log and model-saving dirs if they are not present.
         '''
-        if not os.path.isdir(self.opt.log):
-            os.makedirs(self.opt.log)
-        if not os.path.isdir(self.opt.save_model):
-            os.makedirs(self.opt.save_model)
-
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         self.output_checkpoint_folder = 'model_' + self.folder_suffix
         self.log_folder = 'log_' + self.folder_suffix
         if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)):
-            os.mkdir(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
+            os.makedirs(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
         if not os.path.exists(os.path.join(self.opt.log, self.log_folder)):
-            os.mkdir(os.path.join(self.opt.log, self.log_folder))
+            os.makedirs(os.path.join(self.opt.log, self.log_folder))
 
         '''
         Write hyperparameters into the model dir.
@@ -146,7 +141,7 @@ class TPPTrainer:
         '''
         Metric checker for choosing the best model during training.
         '''
-        self.metric_checker = Metric(self.model_class.metric_number)
+        self.metric_checker = Metric(self.model_class.metric_number, getattr(self.model_class, 'smaller_is_better', None))
         self.format_dict_length = self.model_class.format_dict_length
         self.report_sum = [0] * self.format_dict_length
     
@@ -188,12 +183,10 @@ class TPPTrainer:
                     logger.warning(f'You require us to track the {key} process, but nothing is recorded!')
                     continue
 
-                if key == 'Best':
-                    log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
-                else:
-                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
-                logger.info(f'{key} records are stored in {log_filepath}.')
-                value.to_csv(log_filepath, index = False)
+                log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                logger.info(f'Logs of {key} process are stored in {log_filepath}.')
+                df_value = pd.DataFrame.from_dict(value)
+                df_value.to_csv(log_filepath, index = False)
 
             logger.warning('Training finished!')
             if self.opt.wandb:
@@ -259,7 +252,8 @@ class TPPTrainer:
             wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
                 procedure = 'Test'), temp = 'test_'), step = current_step)
         
-        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
+        if self.opt.save_model:
+            self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
 
 
     def save(self, current_step, eva_report_format_dict, test_report_format_dict):
@@ -267,32 +261,35 @@ class TPPTrainer:
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
-        if self.opt.save_model:
-            if self.opt.save_mode == 'all':
-                model_name = os.path.join(
-                        self.opt.save_model, 'model_' + self.folder_suffix, (f'checkpoint_training_step_{current_step}' + '.chkpt'))
+        if self.opt.save_mode == 'all':
+            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, \
+                                      (f'checkpoint_at_step_{current_step}' + '.chkpt'))
+            torch.save(checkpoint, model_name)
+            logger.warning(f'----> The checkpoint file at step {current_step} has been stored. <----')
+            metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
+            self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
+                                                        **dict(zip(metric_names, metric_values)))
+        elif self.opt.save_mode == 'best':
+            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, 'checkpoint.chkpt')
+            metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
+            assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
+            if current_step >= self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
                 torch.save(checkpoint, model_name)
-                logger.warning(f'The checkpoint file at step {current_step} has been stored.')
-            elif self.opt.save_mode == 'best':
-                model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, 'checkpoint.chkpt')
-                metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
-                assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
-                if current_step > self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
-                    torch.save(checkpoint, model_name)
-                    logger.warning(f'----> We have updated the model checkpoint at step {current_step}. <----')
-                    self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
-                                                                **dict(zip(metric_names, metric_values)))
+                logger.warning(f'----> We have updated the model checkpoint at step {current_step}. <----')
+                self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
+                                                            **dict(zip(metric_names, metric_values)))
 
 
     def transform_report_sum_into_recording_df(self, num_format, procedure, current_step, **kwargs):
         df_perline = kwargs
-        new_df_perline_dict = {'current_step': [current_step,]}
-        for key, value in df_perline.items():
-            new_df_perline_dict[key] = [value,]
-        
-        new_df_perline_df = pd.DataFrame.from_dict(new_df_perline_dict)
+        new_df_perline_dict = {'current_step': current_step}
+        new_df_perline_dict.update(df_perline)
 
         if self.df_records[procedure] is None:
-            self.df_records[procedure] = new_df_perline_df
-        else:
-            self.df_records[procedure] = pd.concat((self.df_records[procedure], new_df_perline_df), axis = 0)
+            empty_execution_log_dict = {}
+            for key in new_df_perline_dict.keys():
+                empty_execution_log_dict[key] = []
+            self.df_records[procedure] = empty_execution_log_dict
+        
+        for key in self.df_records[procedure].keys():
+            self.df_records[procedure][key].append(new_df_perline_dict[key])

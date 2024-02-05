@@ -133,7 +133,6 @@ class DSTPPWrapper(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        self.train()
 
         '''
         Here are the differences regarding the data: 
@@ -168,7 +167,7 @@ class DSTPPWrapper(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        self.eval()
+        
 
         absolute_time_sequence = input_time.cumsum(dim = -1)                   # [batch_size, seq_len]
 
@@ -244,7 +243,7 @@ class DSTPPWrapper(BasicModule):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        self.eval()
+        
 
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
@@ -417,7 +416,7 @@ class DSTPPWrapper(BasicModule):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
 
-        self.eval()
+        
 
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -688,7 +687,7 @@ class DSTPPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -727,7 +726,7 @@ class DSTPPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -765,7 +764,7 @@ class DSTPPWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -803,7 +802,7 @@ class DSTPPWrapper(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

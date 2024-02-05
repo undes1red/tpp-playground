@@ -3,7 +3,7 @@ from src.arguments import BasicArguments
 from src.TPP.utils import suffix
 
 
-class TPPPlotterArguments(BasicArguments):
+class TPPEvaluatorArguments(BasicArguments):
     def __init__(self, parser, root_path):
         super().__init__(parser)
 
@@ -51,14 +51,17 @@ class TPPPlotterArguments(BasicArguments):
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Plotter',
+        self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
                             help=argparse.SUPPRESS)
-
+        self.parser.add_argument('--task_category', type = str, default = 'Evaluator',
+                            help=argparse.SUPPRESS)
+        self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Evaluation',
+                            help=argparse.SUPPRESS)
 
 '''
 The following functions are preprocessing functions.
 '''
-def Plotter_postprocess(opt, root_path):
+def Evaluator_postprocess(opt, root_path):
     '''
     Convert relative paths into absolute path.
     '''

@@ -9,19 +9,19 @@ from src.TPP.utils import read_yaml
 logger = getLogger(__name__)
 
 
-def dataloader_zoo(name):
-    module = importlib.import_module('.' + name, package = 'src.TPP.dataloader')
+def dataloader_zoo(opt):
+    module = importlib.import_module('.' + opt.dataloader_name, package = f'src.{opt.procedure}.dataloader')
     return module.get_dataloader()
 
 
-def find_dataset(name):
+def find_dataset(opt):
     try:
-        dataloader_combo = dataloader_zoo(name)
+        dataloader_combo = dataloader_zoo(opt)
     except Exception as e:
         logger.exception(f'{e}.')
-        logger.exception(f"Dataloader named {name} is not found! Please try again.")
+        logger.exception(f"Dataloader named {opt.dataloader_name} is not found! Please try again.")
     
-    logger.info(f"Dataloader name: {name}")
+    logger.info(f"Dataloader name: {opt.dataloader_name}")
     return dataloader_combo
 
 
@@ -49,8 +49,7 @@ def prepare_dataloaders(opt):
             used_dataloader_config_dict = read_yaml(opt.abs_used_dataloader_config) if opt.abs_used_dataloader_config else {}
     except AttributeError as e:
         logger.warning('combine_used_and_current_dataloader_config unset! Possibly we are training a model. We will ignore it.')
-
-    # apply used_dataloader_config to current dataloader config
+    # apply used_dataloader_config to current dataloader config if opt.combine_used_and_current_dataloader_config is True
     dataloader_config_dict.update(used_dataloader_config_dict)
 
     if opt.abs_dataloader_config is None:
@@ -59,7 +58,7 @@ def prepare_dataloaders(opt):
         logger.info(f"Custom dataloader settings are loaded from this config file {opt.abs_dataloader_config}.")
         logger.info(f"Custom dataloader settings are: {dataloader_config_dict}.")
 
-    dataset, read_data = find_dataset(opt.dataloader_name)
+    dataset, read_data = find_dataset(opt)
     data_raw = read_data(opt.data_path, file_names)
 
     '''
@@ -74,23 +73,21 @@ def prepare_dataloaders(opt):
     evaluate_dataset = dataset(data_raw['evaluate'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
     test_dataset = dataset(data_raw['test'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
 
-    train_data_collator = getattr(train_dataset, '__call__')
-
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()
     g.manual_seed(opt.seed)
 
-    if not hasattr(opt, 'train') or (hasattr(opt, 'train') and opt.train):
+    if getattr(opt, 'train', True):
         train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.training_batch_size, \
-            collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = train_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
-    if not hasattr(opt, 'evaluation') or (hasattr(opt, 'evaluation') and opt.evaluation):
+    if getattr(opt, 'evaluation', True):
         evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.evaluation_batch_size, \
-            collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = evaluate_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
-    if not hasattr(opt, 'test') or (hasattr(opt, 'test') and opt.test):
+    if getattr(opt, 'test', True):
         test_iterator = DataLoader(test_dataset, batch_size=opt.evaluation_batch_size, \
-            collate_fn = train_data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+            collate_fn = test_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
 
     return train_iterator, evaluation_iterator, test_iterator

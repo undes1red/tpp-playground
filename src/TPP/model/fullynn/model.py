@@ -139,9 +139,6 @@ class FullyNNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit predicted events.
         '''
-
-        self.train()
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -227,7 +224,7 @@ class FullyNNModel(BasicModule):
                                 The number of legit predicted events.
         '''
 
-        self.eval()
+        
 
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -847,7 +844,7 @@ class FullyNNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -885,7 +882,7 @@ class FullyNNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -922,7 +919,7 @@ class FullyNNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -959,7 +956,7 @@ class FullyNNModel(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

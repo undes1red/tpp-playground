@@ -94,8 +94,6 @@ class TIFIBCModel(BasicModule):
 
 
     def train_procedure(self, input_time, input_events, mask, mean, var):
-        self.train()
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -164,7 +162,7 @@ class TIFIBCModel(BasicModule):
 
 
     def evaluate_procedure(self, input_time, input_events, mask, mean, var):
-        self.eval()
+        
 
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -774,7 +772,7 @@ class TIFIBCModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -806,7 +804,7 @@ class TIFIBCModel(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

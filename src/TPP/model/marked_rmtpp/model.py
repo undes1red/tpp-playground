@@ -282,7 +282,7 @@ class MRMTPP(BasicModule):
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
         be recorded as part of the output.
         '''
-        self.eval()
+        
 
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -540,7 +540,7 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -579,7 +579,7 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -617,7 +617,7 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -655,7 +655,7 @@ class MRMTPP(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

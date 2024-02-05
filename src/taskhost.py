@@ -100,7 +100,7 @@ class TaskHost:
         2. The name of the entry function should be work().
         '''
         logger.debug(f'Root path: {self.root_path}.')
-        logger.info(f'Main procedure name: {self.opt.procedure}. Sub-procedure name: {self.opt.task_category}.')
+        logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
 
         self.reproducibility()
         

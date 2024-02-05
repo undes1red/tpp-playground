@@ -128,8 +128,6 @@ class TFENNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        self.train()
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -207,7 +205,7 @@ class TFENNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        self.eval()
+        
 
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -348,7 +346,7 @@ class TFENNModel(BasicModule):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        self.eval()
+        
 
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_history = mask_history, \
@@ -509,7 +507,7 @@ class TFENNModel(BasicModule):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
 
-        self.eval()
+        
 
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -769,7 +767,7 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -809,7 +807,7 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -848,7 +846,7 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
@@ -887,7 +885,7 @@ class TFENNModel(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 

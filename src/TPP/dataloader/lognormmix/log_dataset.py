@@ -95,7 +95,7 @@ class LogNormDataset(utils.data.Dataset):
         return self.data.shape[0]
 
 
-    def __call__(self, data):
+    def data_collator(self, data):
         '''
         The custom collate_fn() for IFL datasets.
         data: [event_tensor, time_tensor, score, self.data.iloc[index].intensity if self.evaluate]

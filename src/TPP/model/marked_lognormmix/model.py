@@ -477,7 +477,7 @@ class MarkedLogNormMixWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
@@ -517,7 +517,7 @@ class MarkedLogNormMixWrapper(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        self.model.eval()
+        
 
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 

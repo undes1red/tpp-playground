@@ -89,7 +89,7 @@ class generic_dataset(utils.data.Dataset):
         return self.data.shape[0]
     
     
-    def __call__(self, data):
+    def data_collator(self, data):
         '''
         The structure of data:
         [

@@ -3,9 +3,9 @@ from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
 from src.TPP.utils import read_yaml, print_args
-from src.TPP.plotter_evaluation_functions import draw, spearman_and_l1, mae_and_f1, \
-                                                 mae_e_and_f1, which_event_occurs_first, mae_e_and_f1_by_time_event, \
-                                                 samples_from_et
+from src.TPP.evaluator_evaluation_functions import draw, spearman_and_l1, mae_and_f1, \
+                                                   mae_e_and_f1, which_event_occurs_first, mae_e_and_f1_by_time_event, \
+                                                   samples_from_et
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
 
@@ -17,7 +17,7 @@ Define the logger.
 logger = getLogger(__name__)
 
 
-class TPPPlotter:
+class TPPEvaluator:
     def __init__(self):
         '''
         Now, we use pd.DataFrame to record training records.
@@ -48,7 +48,7 @@ class TPPPlotter:
         '''
 
         logger.info(f'Choosed model checkpoint file is in directory {self.opt.checkpoint_folder}.')
-        self.model_class = get_model(self.opt.model_name)
+        self.model_class = get_model(self.opt)
         model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
@@ -69,7 +69,7 @@ class TPPPlotter:
         logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
         self.model = DP(model)
-        self.model.eval()
+        
         self.task()
     
 
