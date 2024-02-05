@@ -4,13 +4,13 @@ from einops import rearrange, repeat, reduce
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model import memory_ceiling, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.fullynn.submodel import FullyNN
 from src.TPP.model.utils import *
 from src.TPP.model.fullynn.plot import *
 
 
-class FullyNNModel(BasicModule):
+class FullyNNModel(BasicModel):
     '''
     The original FullyNN model with dedicated marker prediction module.
     As the time distribution p^*(t) and p^*(m) are independent, only function time_event_prediction() works while

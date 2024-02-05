@@ -290,7 +290,7 @@ def mae_e_and_f1_by_time_event(model, dataset, desc, opt):
     data_size = 0
 
 
-    with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc} following time event paradigmS') as progress_bar:
+    with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc} following time event paradigm') as progress_bar:
         for minibatch in progress_bar:
             mae_e_per_seq, f1_per_seq, events_pred_index_per_seq, events_next_per_seq = model('mae_e_and_f1_by_time_event', minibatch, opt)
                                                                                # [batch_size, seq_len]

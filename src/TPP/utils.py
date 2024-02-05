@@ -1,6 +1,5 @@
 # Several extensive operations for python list.
 import math, yaml
-
 from tqdm import tqdm
 from functools import reduce
 

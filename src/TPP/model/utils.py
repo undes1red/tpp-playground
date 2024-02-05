@@ -1,94 +1,15 @@
-from abc import ABCMeta, abstractmethod
 from einops import rearrange, reduce, repeat
 import torch
 import numpy as np
-import torch.nn as nn
+
+from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 
 
-class BasicModule(nn.Module, metaclass = ABCMeta):
-    '''
-    The parent of all model classes.
-    '''
-    @abstractmethod
-    def forward(self, *args):
-        '''
-        The entry function of all model. Pytorch can automatically move the data batch to correct device 
-        because we pack all model by DistributedParallel(DP) or DistributedDataParallel(DDP), .
-        However, this feature only works when you access the model through forward().
-        '''
-        return NotImplementedError('Please Implement forward()!')
-    
-    @staticmethod
-    @abstractmethod
-    def train_step(model, minibatch, device):
-        '''
-        Please tell us how your model propagates and obtains a proper loss value using one minibatch from the training dataset.
-        '''
-        return NotImplementedError('Please Implement train_step()!')
-
-
-    @staticmethod
-    @abstractmethod
-    def evaluation_step(model, minibatch, device):
-        '''
-        Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.
-        '''
-        return NotImplementedError('Please Implement evaluation_step()!')
-
-
-    @staticmethod
-    @abstractmethod
-    def postprocess(input, procedure):
-        '''
-        You can do whatever postprocess here on the raw results from train_step() and evaluation_step().
-        The input is the output of function train_step() or function evaluation_step(). You should return a list.
-        '''
-        return input
-
-    '''
-    The input of log_print_format() and logfile_print_format() is the output object of function postprocess()
-    '''
-    @staticmethod
-    @abstractmethod
-    def log_print_format(input):
-        '''
-        The output format definition. The rule-defining dict should contain objects listed below:
-        1. 'num_format': Please, do not modify the name because the architecture will detect this key and use the corresponding subdict as the output format definition.
-        2. What you want to output. You should register the name of each number in list 'input' as a key and each matching number as a value.
-        Caveats: All used names should have their own format definition. If you really don't need it for some special outputs, please set it to an empty string ''.
-        e.x.:
-        input = [a, b]. Expected output: loss_a: a, loss_b: b. Both a and b should keep 5 decimal places.
-        The format_dict should be like this:
-        {
-            'loss_a': a,
-            'loss_b': b,
-            'num_format': {'loss_a': ':.5f', 'relative_loss': ':.5f'}
-        }
-        '''
-    
-    # The largest length of the format_dict
-    format_dict_length = 0
-
-    
-    metric_number = 0 # metric number is the length of the output of choose_metric
-    '''
-    evaluation_report and test_report have the same variable mapping with postprocess.
-    '''
-    @staticmethod
-    @abstractmethod
-    def choose_metric(evaluation_report, test_report):
-        '''
-        Choose the metric values that you want to employ for model performance comparison.
-    
-        You'd better to mark the name of each object in the output list as a reminder, like:
-        [relative loss on evaluation dataset, relative loss on test dataset]
-        '''
-        return NotImplementedError('please tell us which metric is lower indicates a better checkpoint.')
-
-'''
-commonly used functions
-'''
 def move_from_tensor_to_ndarray(*kwargs):
+    '''
+    This function converts an arbitrary number of torch.tensor to np.array.
+    This function can automaticly move cuda tensor to cpu.
+    '''
     def move_tensor(x):
         if torch.is_tensor(x):
             return x.detach().cpu().numpy()
@@ -127,8 +48,74 @@ def check_tensor(x, positive = True, inf = True, nan = True):
 
 
 '''
+This function returns a list consisting of the step size of each operation.
+For example:
+(total_rate: 40, step_size: 15) -> [15, 15, 10] 
+'''
+def step_split(total_rate, step_size):
+    substep_rate_list = []
+    while total_rate > 0:
+        substep_rate_list.append(step_size)
+        total_rate -= step_size
+    substep_rate_list[-1] += total_rate
+
+    return substep_rate_list
+
+
+'''
+Bisection Method.
+'''
+def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probability_threshold, *args, **kwargs):
+    l = 0.0001*torch.ones_like(probability_threshold)
+    r = 1e6*torch.ones_like(probability_threshold)
+
+    index = 0
+    while True:
+        c = (l + r)/2
+        v = bisect_func(c, probability_threshold, *args, **kwargs)
+        l = torch.where(v < 0, c, l)
+        r = torch.where(v >= 0, c, r)
+        index += 1
+        if (l - r).abs().max() < bisect_early_stop_threshold:
+            break
+        if index > max_step:
+            break
+    
+    return (l + r)/2
+
+
+'''
 custom metrics
 '''
+def get_f1_and_top_k_acc_in_mae_e(events_true, num_events, p_m):
+    f1 = []
+    top_k_acc = []
+    for (events_true_per_seq, probability_integral_per_seq) in zip(events_true, p_m):
+        events_true_per_seq, probability_integral_per_seq = \
+            move_from_tensor_to_ndarray(events_true_per_seq, probability_integral_per_seq)
+        y_pred = np.argmax(probability_integral_per_seq, axis = -1)
+
+        f1.append(f1_score(y_true = events_true_per_seq, y_pred = y_pred, average = 'macro'))
+        top_k_acc_single_event_seq = []
+        if num_events > 2:
+            for k in range(1, num_events):
+                top_k_acc_single_event_seq.append(
+                    top_k_accuracy_score(y_true = events_true_per_seq,
+                                         y_score = probability_integral_per_seq,
+                                         k = k,
+                                         labels = np.arange(num_events))
+                )
+        else:
+            top_k_acc_single_event_seq.append(
+                accuracy_score(
+                    y_true = events_true_per_seq, y_pred = y_pred
+                )
+            )
+        top_k_acc.append(top_k_acc_single_event_seq)
+    
+    return f1, top_k_acc
+
+
 def L1_distance_across_events(input, resolution, num_events, time_next):
     '''
     This function calculates the L^1 distance between two functions in scattered form.

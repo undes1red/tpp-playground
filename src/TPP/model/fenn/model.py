@@ -10,7 +10,7 @@ from src.TPP.model.utils import *
 from src.TPP.model.fenn.plot import *
 
 
-class FENNModel(BasicModule):
+class FENNModel(torch.nn.Module):
     '''
     The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \lambda^*(m, t).
 
