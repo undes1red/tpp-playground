@@ -70,16 +70,12 @@ def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probab
     l = l_val*torch.ones_like(probability_threshold)
     r = r_val*torch.ones_like(probability_threshold)
 
-    index = 0
-    while True:
+    for _ in range(max_step):
         c = (l + r)/2
         v = bisect_func(c, probability_threshold, *args, **kwargs)
         l = torch.where(v < 0, c, l)
         r = torch.where(v >= 0, c, r)
-        index += 1
         if (l - r).abs().max() < bisect_early_stop_threshold:
-            break
-        if index > max_step:
             break
     
     return (l + r)/2
