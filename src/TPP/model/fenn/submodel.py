@@ -10,15 +10,10 @@ from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_n
 
 class FENN(nn.Module):
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, nonlinear, zero_shift, device):
+                 mlp_layers, device):
         super(FENN, self).__init__()
         self.device = device
         self.num_events = num_events
-
-        '''
-        Should we force the model to start from 0.
-        '''
-        self.zero_shift = zero_shift
 
         '''
         Should we compress marker information into the history embedding?
@@ -114,22 +109,6 @@ class FENN(nn.Module):
             output = self.layer_activation(output)                             # [..., batch_size, seq_len, num_events, d_intensity]
 
         integral = self.nonneg_activation(self.aggregate(output))              # [..., batch_size, seq_len, num_events, 1]
-
-        if self.zero_shift:
-            zero = torch.ones_like(time_next, device = self.device) * (-mean / var)
-                                                                               # [..., batch_size, seq_len, num_events]
-            zero_time_embedding = zero.unsqueeze(dim = -1) * self.non_neg(self.weight_for_t)
-                                                                               # [..., batch_size, seq_len, num_events, d_intensity]
-
-            zero_time_embedding = self.time_mapper(zero_time_embedding)        # [..., batch_size, seq_len, num_events, d_intensity]
-            zero_output = self.activate(zero_time_embedding + hidden_history)  # [..., batch_size, seq_len, num_events, d_intensity]
-            for nonneg_layer in self.mlp:
-                zero_output = nonneg_layer(zero_output)                        # [..., batch_size, seq_len, num_events, d_intensity]
-                zero_output = self.activate(zero_output)                       # [..., batch_size, seq_len, num_events, d_intensity]
-            
-            zero_integral = self.nonneg_activation(self.aggregate(zero_output))# [..., batch_size, seq_len, num_events, 1]
-            integral = integral - zero_integral.detach()                       # [..., batch_size, seq_len, num_events, 1]
-
         integral = integral.squeeze(dim = -1)                                  # [..., batch_size, seq_len, num_events]
 
         return integral
@@ -212,11 +191,6 @@ class FENN(nn.Module):
             output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1]
-
-        if self.zero_shift:
-            integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
-            expand_integral = expand_integral - integral_at_zero               # [batch_size, seq_len, 1, num_events, 1]
-
 
         '''
         Get intensity values at every sampled $ t $.
@@ -317,10 +291,6 @@ class FENN(nn.Module):
 
         expand_integral = self.nonneg_activation(self.aggregate(output))       # [..., batch_size, seq_len, resolution, num_events, num_events, 1]
 
-        if self.zero_shift:
-            integral_at_zero = rearrange(expand_integral[..., 0, :, :, :].detach(), '... ne ne1 1 -> ... () ne ne1 1')
-            expand_integral = expand_integral - integral_at_zero               # [..., batch_size, seq_len, 1, num_events, num_events, 1]
-
         '''
         Get intensity values at every sampled $ t $.
         '''
@@ -398,11 +368,6 @@ class FENN(nn.Module):
             output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
         
         expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1]
-
-        if self.zero_shift:
-            integral_at_zero = rearrange(expand_integral[:, :, 0, :, :].detach(), 'b s ne 1 -> b s 1 ne 1')
-            expand_integral = expand_integral - integral_at_zero           # [batch_size, seq_len, 1, num_events, 1]
-
 
         expand_intensity = torch.autograd.grad(
             outputs = expand_integral,

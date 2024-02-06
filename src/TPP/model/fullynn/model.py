@@ -1015,3 +1015,4 @@ class FullyNNModel(BasicModel):
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
     metric_number = 2 # metric number is the length of the output of choose_metric
+    smaller_is_better = [True, True]

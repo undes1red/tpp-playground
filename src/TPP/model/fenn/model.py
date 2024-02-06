@@ -4,13 +4,13 @@ from einops import rearrange, repeat, reduce
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model import memory_ceiling, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.fenn.submodel import FENN
 from src.TPP.model.utils import *
 from src.TPP.model.fenn.plot import *
 
 
-class FENNModel(torch.nn.Module):
+class FENNModel(BasicModel):
     '''
     The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \lambda^*(m, t).
 
@@ -22,12 +22,11 @@ class FENNModel(torch.nn.Module):
                  dropout,
                  history_module_layers,
                  mlp_layers,
-                 nonlinear,
                  info_dict,
                  device,
                  epsilon = 1e-20, mae_step = 16, mae_e_step = 16,
                  history_module = 'LSTM', survival_loss_during_training = False,
-                 zero_shift = False, sample_rate = 32):
+                 sample_rate = 32):
         '''
         This function creates a FENN model.
         '''
@@ -42,10 +41,11 @@ class FENNModel(torch.nn.Module):
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
+        self.max_step = 50
 
         self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
-                          mlp_layers = mlp_layers, nonlinear = nonlinear, zero_shift = zero_shift, device = device)
+                          mlp_layers = mlp_layers, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -115,10 +115,6 @@ class FENNModel(torch.nn.Module):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'graph': self.plot,
-
-            # Functions for the EHD task.
-            'ehd': self.ehd_probability,
-            'ehd_event_emb': self.get_event_embedding,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -353,8 +349,6 @@ class FENNModel(torch.nn.Module):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        
-
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_next = mask_next, mean = mean, var = var)
                                                                                # 2 * [batch_size, seq_len]
@@ -422,14 +416,9 @@ class FENNModel(torch.nn.Module):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.mae_step)
-            remaining_sample_rate -= self.mae_step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
-        def get_sum_of_integral(taus):
+        def bisect_target(taus, probability_threshold):
             '''
             Retrieve the sum of all $ \Lambda^*(m, t) $ over all $ m $ at $ \tau $.
 
@@ -443,64 +432,18 @@ class FENNModel(torch.nn.Module):
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             integral = integral.sum(dim = -1)                                  # [sample_rate, batch_size, seq_len]
             
-            return integral
-
-        def bisect_target(taus, probability_threshold):
-            return get_sum_of_integral(taus) + torch.log(1 - probability_threshold)
-            
-        def median_prediction(l, r, probability_threshold):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c, probability_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
+            return integral + torch.log(1 - probability_threshold)
         
-        tau_pred = []
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        
+        tau_pred = []        
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, *time_next.shape))
+            probability_threshold = torch.zeros((sub_sample_rate, *time_next.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-            probability_threshold = probability_threshold.to(self.device)
-    
-            l = 0.0001*torch.ones((sub_sample_rate, *time_next.shape), dtype = torch.float32, device = self.device)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len]
-            r = 1e6*torch.ones((sub_sample_rate, *time_next.shape), dtype = torch.float32, device = self.device)
+
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
                                                                                # [sample_rate, batch_size, seq_len]
-            tau_pred.append(median_prediction(l, r, probability_threshold))    # [sample_rate, batch_size, seq_len]
-    
-            '''
-            tau_pred_detached = tau_pred.detach()                              # [sample_rate, batch_size, seq_len]
-            tau_pred_detached.requires_grad = True
-            tau_pred_repeated_detached = repeat(tau_pred_detached, '... -> ... ne', ne = self.num_events)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            intensity_integral_from_t_l_to_t = self.model(events_history, time_history, tau_pred_repeated_detached, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            intensity_of_each_event_at_pred_time = torch.autograd.grad(
-                outputs = intensity_integral_from_t_l_to_t,
-                inputs = tau_pred_repeated_detached,
-                grad_outputs = torch.ones_like(intensity_integral_from_t_l_to_t)
-            )[0]                                                               # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred_detached.requires_grad = False
-    
-            intensity_of_all_events_at_pred_time = intensity_of_each_event_at_pred_time.sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len]
-            intensity_integral_of_all_events_from_t_l_to_t = intensity_integral_from_t_l_to_t.sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len]
-            probability_of_all_events_at_pred_time = intensity_of_all_events_at_pred_time * torch.exp(-intensity_integral_of_all_events_from_t_l_to_t)
-                                                                               # [sample_rate, batch_size, seq_len]
-            tau_pred = (tau_pred * probability_of_all_events_at_pred_time).sum(dim = 0)
-                                                                               # [batch_size, seq_len]
-            mae = torch.abs(tau_pred - time_next) * mask_next                  # [batch_size, seq_len]
-            '''
         
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
@@ -538,36 +481,14 @@ class FENNModel(torch.nn.Module):
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
-
-        
-
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
         '''
-        if mean == 0 and var == 1:
-            max_ = time_next.mean() + 10 * time_next.var()
-        else:
-            max_ = mean + 10 * var
+        inf_val, resolution_inf, resolution_between_events = \
+            decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, var)
+        time_next_inf = torch.ones_like(time_history) * inf_val                # [batch_size, seq_len]
 
-        if mean == 0:
-            resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
-        else:
-            resolution_between_events = max(min(int(mean // 0.005), 500), 10)
-        
-        max_ = min(1e6, max_)
-        time_next_inf = torch.ones_like(time_history, device = self.device) * max_
-                                                                               # [batch_size, seq_len]
-        resolution_inf = max(int(max_ // 0.005), 100)
-
-        # only works when batch_size = 1
-        batch_size, seq_len = events_next.shape
-        if batch_size * seq_len * resolution_inf * self.num_events > memory_ceiling:
-            resolution_inf = int(memory_ceiling // (seq_len * self.num_events * batch_size))
-        
-        if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
-            resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
-        
         '''
         Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
         '''
@@ -579,7 +500,6 @@ class FENNModel(torch.nn.Module):
         expand_integral_to_inf, expand_intensity_to_inf, time_interval \
                 = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         '''
         Step 2: provide event predictions
         '''        
@@ -598,31 +518,7 @@ class FENNModel(torch.nn.Module):
         '''
         Step 3: calculate macro-F1 and top-K accuracy
         '''
-        f1 = []
-        top_k_acc = []
-        for (events_next_per_seq, p_m_per_seq) in zip(events_next, p_m):
-            events_next_per_seq, p_m_per_seq = move_from_tensor_to_ndarray(events_next_per_seq, p_m_per_seq)
-            y_pred = np.argmax(p_m_per_seq, axis = -1)
-
-            f1.append(f1_score(y_true = events_next_per_seq, y_pred = y_pred, average = 'macro'))
-            
-            top_k_acc_single_event_seq = []
-            if self.num_events > 2:
-                for k in range(1, self.num_events):
-                    top_k_acc_single_event_seq.append(
-                        top_k_accuracy_score(y_true = events_next_per_seq,
-                                             y_score = p_m_per_seq,
-                                             k = k,
-                                             labels = np.arange(self.num_events))
-                    )
-            else:
-                top_k_acc_single_event_seq.append(
-                    accuracy_score(
-                        y_true = events_next_per_seq,
-                        y_pred = y_pred
-                    )
-                )
-            top_k_acc.append(top_k_acc_single_event_seq)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, p_m)
 
         predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
@@ -632,7 +528,7 @@ class FENNModel(torch.nn.Module):
         Step 4: get the time prediction for all, predicted, and real events.
         '''
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, p_m, resolution_between_events, \
-                                                                  mean, var, max_, return_mean)
+                                                                  mean, var, inf_val, return_mean)
                                                                                # [batch_size, seq_len, num_events]
 
         if return_mean:
@@ -669,7 +565,7 @@ class FENNModel(torch.nn.Module):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, p_m, resolution, mean, var, max_val, return_mean):
+    def prediction_with_all_event_types(self, events_history, time_history, p_m, resolution, mean, var, inf_val, return_mean):
         '''
         The time prediction of every marker whose probability is not 0.
 
@@ -701,12 +597,7 @@ class FENNModel(torch.nn.Module):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.mae_e_step)
-            remaining_sample_rate -= self.mae_e_step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
 
         def evaluate_all_event(taus):
             '''
@@ -739,55 +630,19 @@ class FENNModel(torch.nn.Module):
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-            
-        def median_prediction(l, r, probability_threshold):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c, probability_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
         
         tau_pred = []
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
         
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))
+            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            probability_threshold = probability_threshold.to(self.device)
-
-            l = 0.0001*torch.ones_like(probability_threshold)                  # [sample_rate, batch_size, seq_len, num_events]
-            r = max_val*torch.ones_like(probability_threshold)                 # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(l, r, probability_threshold))    # [sample_rate, batch_size, seq_len, num_events]
-    
-            '''
-            tau_pred_detached = tau_pred.detach()                              # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred_detached.requires_grad = True
-            intensity_integral_from_t_l_to_t = self.model(events_history, time_history, tau_pred_detached, mean, var)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            intensity_of_each_event_at_pred_time = torch.autograd.grad(
-                outputs = intensity_integral_from_t_l_to_t,
-                inputs = tau_pred_detached,
-                grad_outputs = torch.ones_like(intensity_integral_from_t_l_to_t)
-            )[0]                                                               # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred_detached.requires_grad = False
-    
-            intensity_integral_of_all_events_from_t_l_to_t = intensity_integral_from_t_l_to_t.sum(dim = -1, keepdim = True)
-                                                                               # [sample_rate, batch_size, seq_len, 1]
-            probability_of_each_event_at_pred_time = intensity_of_each_event_at_pred_time * torch.exp(-intensity_integral_of_all_events_from_t_l_to_t)
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold,\
+                                              bisect_target, probability_threshold, r_val = inf_val))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred = (tau_pred * probability_of_each_event_at_pred_time).sum(dim = 0)
-                                                                               # [batch_size, seq_len, num_events]
-            '''
         
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         if return_mean:
@@ -972,7 +827,6 @@ class FENNModel(torch.nn.Module):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var, return_mean = False)
 
@@ -1161,6 +1015,7 @@ class FENNModel(torch.nn.Module):
         
         return time_loss_without_dummy, fact, events_loss
     
+
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -1176,6 +1031,7 @@ class FENNModel(torch.nn.Module):
         fact = score.sum().item() / the_number_of_events
         
         return time_loss, loss_survival, fact, events_loss, mae, f1
+
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -1194,6 +1050,7 @@ class FENNModel(torch.nn.Module):
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
+
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
@@ -1219,16 +1076,14 @@ class FENNModel(torch.nn.Module):
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
+
     format_dict_length = 6
     
-
+    
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
