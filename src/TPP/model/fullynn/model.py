@@ -1,7 +1,6 @@
 import torch, copy
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
+from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce
-import numpy as np
 from scipy.stats import spearmanr
 
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
