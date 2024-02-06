@@ -4,13 +4,13 @@ from einops import rearrange, repeat, reduce
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model import memory_ceiling, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.tfenn.submodel import TFENN
 from src.TPP.model.utils import *
 from src.TPP.model.tfenn.plot import *
 
 
-class TFENNModel(BasicModule):
+class TFENNModel(BasicModel):
     '''
     The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \lambda^*(m, t).
 
@@ -24,8 +24,8 @@ class TFENNModel(BasicModule):
                  d_hidden, n_layers,
                  n_head, d_qk, d_v, 
                  info_dict, device,
-                 zero_shift = False, survival_loss_during_training = False, 
-                 sample_rate = 32, step = 32):
+                 survival_loss_during_training = False, 
+                 sample_rate = 32, mae_step = 32, mae_e_step = 32):
         '''
         This function creates a FENN model.
         '''
@@ -35,13 +35,15 @@ class TFENNModel(BasicModule):
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
         self.sample_rate = sample_rate
-        self.step = step
+        self.mae_step = mae_step
+        self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
         self.epsilon = 1e-20
         self.survival_loss_during_training = survival_loss_during_training
+        self.max_step = 50
 
         self.model = TFENN(d_history, d_intensity, self.num_events, dropout, d_hidden, n_layers, \
-                           n_head, d_qk, d_v, mlp_layers, zero_shift, device)
+                           n_head, d_qk, d_v, mlp_layers, device)
 
 
     def divide_history_and_next(self, input):
@@ -205,8 +207,6 @@ class TFENNModel(BasicModule):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -235,7 +235,6 @@ class TFENNModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
         integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, time_next, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
-
         '''
         Obtains intensity values.
         '''
@@ -346,8 +345,6 @@ class TFENNModel(BasicModule):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        
-
         mae, pred_time = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
                                                   time_next = time_next, mask_history = mask_history, \
                                                   mask_next = mask_next, mean = mean, var = var)
@@ -416,60 +413,25 @@ class TFENNModel(BasicModule):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
-        def get_sum_of_integral(taus):
-            '''
-            Retrieve the sum of all $ \Lambda^*(m, t) $ over all $ m $ at $ \tau $.
-
-            Outputs:
-            * integral    type: torch.tensor shape: [batch_size, seq_len]
-                          $ \sum_{n \in M}{\Lambda^*(n, \tau)} $
-            '''
-
+        def bisect_target(taus, probability_threshold):
             taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
             integral = self.model(events_history, time_history, taus, mask_history, mean, var)
                                                                                # [batch_size, seq_len, num_events]
             integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
             
-            return integral
-
-        def bisect_target(taus, probability_threshold):
-            return get_sum_of_integral(taus) + torch.log(1 - probability_threshold)
-            
-        def median_prediction(l, r, probability_threshold):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c, probability_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
+            return integral + torch.log(1 - probability_threshold)
 
         tau_pred = []
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, *time_next.shape))
+            probability_threshold = torch.zeros((sub_sample_rate, *time_next.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-            probability_threshold = probability_threshold.to(self.device)
-            l = 0.0001*torch.ones((sub_sample_rate, *time_history.shape), dtype = torch.float32)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len]
-            r = 1e6*torch.ones((sub_sample_rate, *time_history.shape), dtype = torch.float32)
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
                                                                                # [sample_rate, batch_size, seq_len]
-            tau_pred.append(median_prediction(l, r, probability_threshold))    # [sample_rate, batch_size, seq_len]
-
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
@@ -477,7 +439,7 @@ class TFENNModel(BasicModule):
         return mae, tau_pred
 
 
-    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var, return_mean = True):
         '''
         MAE-E evaluation module.
 
@@ -506,41 +468,13 @@ class TFENNModel(BasicModule):
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
-
-        
-
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
         '''
-        if mean == 0 and var == 1:
-            max_ = time_next.mean() + 10 * time_next.var()
-        else:
-            max_ = mean + 10 * var
-
-        if mean == 0:
-            resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
-        else:
-            resolution_between_events = max(min(int(mean // 0.005), 500), 10)
-        
-        max_ = min(1e6, max_)
-        time_next_inf = torch.ones_like(time_history, device = self.device) * max_
-                                                                               # [batch_size, seq_len]
-        resolution_inf = max(int(max_ // 0.005), 100)
-
-        # only works when batch_size = 1
-        batch_size, seq_len = events_next.shape
-        if batch_size * seq_len * resolution_inf * self.num_events > memory_ceiling:
-            resolution_inf = int(memory_ceiling // (seq_len * self.num_events * batch_size))
-        
-        if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
-            resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
-        
-        '''
-        Debug: manually assign resolution here to investigate how the number of samples affects the sum of P^*(m) and MAE-E
-        '''
-        # resolution_inf = 2500
-
+        inf_val, resolution_inf, resolution_between_events \
+            = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, var)
+        time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
         '''
         Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
         '''
@@ -548,46 +482,20 @@ class TFENNModel(BasicModule):
                 = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, \
                                                              resolution_inf, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         '''
         Step 2: provide event predictions
         '''        
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        expand_probability_per_event_for_monte_carlo = expand_probability_per_event[:, :, :-1, :]
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        time_interval_used_for_monte_carlo = time_interval[:, :, 1:].unsqueeze(dim = -1)
-                                                                               # [batch_size, seq_len, resolution - 1, 1]
-        probability_integral = expand_probability_per_event_for_monte_carlo * time_interval_used_for_monte_carlo
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        p_m = reduce(probability_integral, 'b s r ne -> b s ne', 'sum')        # [batch_size, seq_len, num_events]
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_last_result = True)
+                                                                               # [batch_size, seq_len, num_events]
         probability_integral_sum = reduce(p_m, 'b s ne -> b s', 'sum')         # [batch_size, seq_len]
         predict_index = torch.argmax(p_m, dim = -1)                            # [batch_size, seq_len]
 
         '''
         Step 3: calculate macro-F1 and top-K accuracy
         '''
-        f1 = []
-        top_k_acc = []
-        for (events_next_per_seq, p_m_per_seq) in zip(events_next, p_m):
-            events_next_per_seq, p_m_per_seq = move_from_tensor_to_ndarray(events_next_per_seq, p_m_per_seq)
-            y_pred = np.argmax(p_m_per_seq, axis = -1)
-
-            f1.append(f1_score(y_true = events_next_per_seq, y_pred = y_pred, average = 'macro'))
-            
-            top_k_acc_single_event_seq = []
-            if self.num_events > 2:
-                for k in range(1, self.num_events):
-                    top_k_acc_single_event_seq.append(
-                        top_k_accuracy_score(y_true = events_next_per_seq,
-                                             y_score = p_m_per_seq,
-                                             k = k,
-                                             labels = np.arange(self.num_events))
-                    )
-            else:
-                top_k_acc_single_event_seq.append(
-                    accuracy_score(y_true = events_next_per_seq, y_pred = y_pred))
-            top_k_acc.append(top_k_acc_single_event_seq)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, p_m)
 
         predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
@@ -597,7 +505,7 @@ class TFENNModel(BasicModule):
         Step 4: get the time prediction for all, predicted, and real events.
         '''
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, mask_history, p_m, \
-                                                                  resolution_between_events, mean, var, max_)
+                                                                  resolution_between_events, mean, var, inf_val)
                                                                                # [batch_size, seq_len, num_events]
         mae_per_event_with_predict_index = torch.abs(((tau_pred_all_event * predict_index_one_hot_mask).sum(dim = -1)) - time_next) * mask_next
                                                                                # [batch_size, seq_len]
@@ -644,12 +552,7 @@ class TFENNModel(BasicModule):
                           Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
 
         def evaluate_all_event(taus):
             '''
@@ -669,10 +572,7 @@ class TFENNModel(BasicModule):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
             
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-            
-            p_dist_for_monte_carlo = p_dist[..., :-1, :]                       # [sample_rate, batch_size, seq_len, resolution - 1, num_events]
-            time_interval_for_monte_carlo = time_interval[..., 1:, :]          # [sample_rate, batch_size, seq_len, resolution - 1, num_events]
-            probability = reduce(p_dist_for_monte_carlo * time_interval_for_monte_carlo, '... r ne -> ... ne', 'sum')
+            probability = approximate_integration(p_dist, time_interval, dim = -2, only_last_result = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 
@@ -682,36 +582,18 @@ class TFENNModel(BasicModule):
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-            
-        def median_prediction(l, r, probability_threshold):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c, probability_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
 
         tau_pred = []
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-        
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))
+            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            probability_threshold = probability_threshold.to(self.device)
-
-            l = 0.0001*torch.ones_like(probability_threshold)                  # [sample_rate, batch_size, seq_len, num_events]
-            r = max_val*torch.ones_like(probability_threshold)                 # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(l, r, probability_threshold))    # [sample_rate, batch_size, seq_len, num_events]
-
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
 
@@ -767,8 +649,6 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -780,7 +660,6 @@ class TFENNModel(BasicModule):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, \
                                                        opt.resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -807,8 +686,6 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -820,7 +697,6 @@ class TFENNModel(BasicModule):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, \
                                                        opt.resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -846,8 +722,6 @@ class TFENNModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -859,7 +733,6 @@ class TFENNModel(BasicModule):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, \
                                                        opt.resolution, mean, var)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -885,8 +758,6 @@ class TFENNModel(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -897,13 +768,11 @@ class TFENNModel(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, var)
 
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, \
                                                           mask_next, opt.resolution, mean, var)
-
         '''
         Append additional info into the data dict.
         '''
@@ -1030,6 +899,7 @@ class TFENNModel(BasicModule):
         
         return time_loss_without_dummy, fact, events_loss
     
+
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
     
@@ -1045,6 +915,7 @@ class TFENNModel(BasicModule):
         fact = score.sum().item() / the_number_of_events
         
         return time_loss, loss_survival, fact, events_loss, mae, f1
+
 
     def postprocess(input, procedure):
         def train_postprocess(input):
@@ -1063,6 +934,7 @@ class TFENNModel(BasicModule):
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
+
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
@@ -1088,15 +960,14 @@ class TFENNModel(BasicModule):
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
+
     format_dict_length = 6
     
+
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']

@@ -612,10 +612,7 @@ class FENNModel(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
             
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-            
-            p_dist_for_monte_carlo = p_dist[..., :-1, :]                       # [sample_rate, batch_size, seq_len, resolution - 1, num_events]
-            time_interval_for_monte_carlo = time_interval[..., 1:, :]          # [sample_rate, batch_size, seq_len, resolution - 1, num_events]
-            probability = reduce(p_dist_for_monte_carlo * time_interval_for_monte_carlo, '... r ne -> ... ne', 'sum')
+            probability = approximate_integration(p_dist, time_interval, dim = -2, only_last_result = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 
