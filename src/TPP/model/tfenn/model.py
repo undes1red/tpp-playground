@@ -1,5 +1,5 @@
 import torch, copy
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
+from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce
 import numpy as np
 from scipy.stats import spearmanr
@@ -520,7 +520,7 @@ class TFENNModel(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_m, resolution, mean, var, max_val):
+    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_m, resolution, mean, var, inf_val):
         '''
         The time prediction of every marker whose probability is not 0.
 
@@ -592,7 +592,7 @@ class TFENNModel(BasicModel):
             torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                              bisect_target, probability_threshold))
+                                              bisect_target, probability_threshold, r_val = inf_val))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]

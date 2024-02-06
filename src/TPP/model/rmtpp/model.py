@@ -5,10 +5,10 @@ from scipy.stats import spearmanr
 from src.TPP.model.utils import *
 from src.TPP.model.rmtpp.rmtpp import RMTPPModule
 from src.TPP.model.rmtpp.plot import *
-from src.TPP.model import its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 
 
-class RMTPP(BasicModule):
+class RMTPP(BasicModel):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
                  output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20,
                  survival_loss_during_training = False):
@@ -23,6 +23,7 @@ class RMTPP(BasicModule):
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.bisect_early_stop_threshold = 1e-5
+        self.max_step = 50
 
         self.model = RMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
                                  dropout = dropout, num_events = self.num_events, output_size = output_size, event_toggle = event_toggle, 
@@ -98,7 +99,6 @@ class RMTPP(BasicModule):
 
         integral, intensity, mark, _ = self.model(events_history, time_history, time_next, mean, var)
                                                                                # [batch_size, seq_len, 1] * 2, [batch_size, seq_length, num_events], and [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
-
         check_tensor(intensity)
         check_tensor(integral)
 
@@ -172,7 +172,6 @@ class RMTPP(BasicModule):
         # temporal point process loss
         # intensity shape: [batch, seq_length]
         # so does tensor mask.
-
         loss = 0
         time_loss, events_loss = 0, 0
         if self.event_toggle:
@@ -212,51 +211,21 @@ class RMTPP(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
-                                                                               # [sample_rate, batch_size, seq_len]
-        probability_threshold = probability_threshold.to(self.device)
-
-        def evaluate(taus):
+        def bisect_target(taus, probability_threshold):
             integral, _, _, _ = self.model(events_history, time_history, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len]
-            return integral
-
-        def bisect_target(taus):
-            return evaluate(taus) + torch.log(1 - probability_threshold)
-            
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
+            return integral + torch.log(1 - probability_threshold)
         
-        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
+        probability_threshold = torch.zeros((self.sample_rate, *time_next.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len]
-        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len]
-
-        '''
-        integral, intensity, _, _ = self.model(events_history, time_history, tau_pred, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len] * 2
-        probability_of_each_event = intensity * torch.exp(-integral)           # [sample_rate, batch_size, seq_len]
-        tau_pred = (tau_pred * probability_of_each_event).sum(dim = 0)         # [batch_size, seq_len]
-        gap = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
-        '''
-
+        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
 
-        return mae, tau_pred.detach()
+        return mae, tau_pred
 
 
     def plot(self, minibatch, opt):
@@ -308,8 +277,6 @@ class RMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -347,8 +314,6 @@ class RMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -385,8 +350,6 @@ class RMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -423,8 +386,6 @@ class RMTPP(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -435,7 +396,6 @@ class RMTPP(BasicModule):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-
         data, timestamp = self.model.model_probe_function(events_history, time_history, \
                                                           time_next, opt.resolution, mean, var, mask_next)
 
@@ -521,8 +481,6 @@ class RMTPP(BasicModule):
 
 
     def train_step(model, minibatch, device):
-        model.train()
-        
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', events, time, mask, mean, var)
 
@@ -536,8 +494,6 @@ class RMTPP(BasicModule):
 
 
     def evaluation_step(model, minibatch, device):
-        model.eval()
-
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
         mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, var)
@@ -602,9 +558,6 @@ class RMTPP(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']

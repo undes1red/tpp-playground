@@ -5,10 +5,10 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from src.TPP.model.utils import *
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
 from src.TPP.model.marked_rmtpp.plot import *
-from src.TPP.model import memory_ceiling, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 
 
-class MRMTPP(BasicModule):
+class MRMTPP(BasicModel):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, 
                  output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20, sample_rate = 32, 
                  bisect_early_stop_threshold = 1e-5, survival_loss_during_training = False, mae_step = 32, mae_e_step = 32):
@@ -24,6 +24,7 @@ class MRMTPP(BasicModule):
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = bisect_early_stop_threshold
+        self.max_step = 50
 
         self.model = MRMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
                                   dropout = dropout, num_events = self.num_events, output_size = output_size, 
@@ -54,8 +55,7 @@ class MRMTPP(BasicModule):
                         perform a model evaluate step when evaluate == True
         
         Outputs:
-        Refers to train() and evaluate()'s documentation for detailed information.
-
+        Refers to train() and evaluate()'s documentation for detailed information.\
         '''
         task_mapper = {
             'train': self.train_procedure,
@@ -212,64 +212,24 @@ class MRMTPP(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.mae_step)
-            remaining_sample_rate -= self.mae_step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
-                                                                               # [sample_rate, batch_size, seq_len]
-        probability_threshold = probability_threshold.to(self.device)
-
-        def evaluate(taus):
+        def bisect_target(taus, probability_threshold):
             integral, _, _ = self.model(events_history, time_history, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             integral = integral.sum(dim = -1)                                  # [sample_rate, batch_size, seq_len]
 
-            return integral
+            return integral + torch.log(1 - probability_threshold)
 
-        def bisect_target(taus):
-            return evaluate(taus) + torch.log(1 - probability_threshold)
-            
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
-        
         tau_pred = []
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, *time_next.shape))
+            probability_threshold = torch.zeros((sub_sample_rate, *time_next.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-            probability_threshold = probability_threshold.to(self.device)
-            l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len]
-            r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
                                                                                # [sample_rate, batch_size, seq_len]
-
-            tau_pred.append(median_prediction(l, r))                           # [sample_rate, batch_size, seq_len]
-
-            '''
-            integral, intensity, _, _ = self.model(events_history, time_history, tau_pred, mean, var)
-                                                                                   # [sample_rate, batch_size, seq_len] * 2
-            probability_of_each_event = intensity * torch.exp(-integral)           # [sample_rate, batch_size, seq_len]
-            tau_pred = (tau_pred * probability_of_each_event).sum(dim = 0)         # [batch_size, seq_len]
-            gap = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
-            '''
-
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
@@ -282,80 +242,31 @@ class MRMTPP(BasicModule):
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
         be recorded as part of the output.
         '''
-        
-
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
         '''
-        if mean == 0 and var == 1:
-            max_ = time_next.mean() + 10 * time_next.var()
-        else:
-            max_ = mean + 10 * var
-
-        if mean == 0:
-            resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
-        else:
-            resolution_between_events = max(min(int(mean // 0.005), 500), 10)
-        
-        max_ = min(1e6, max_)
-        time_next_inf = torch.ones_like(time_history, device = self.device) * max_
+        inf_val, resolution_inf, resolution_between_events \
+            = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, var)
+        time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
-        resolution_inf = max(int(max_ // 0.005), 100)
-
-        # only works when batch_size = 1
-        batch_size, seq_len = events_next.shape
-        if batch_size * seq_len * resolution_inf * self.num_events > memory_ceiling:
-            resolution_inf = int(memory_ceiling // (seq_len * self.num_events * batch_size))
-        
-        if batch_size * seq_len * resolution_between_events * self.num_events * self.num_events > memory_ceiling:
-            resolution_between_events = int(memory_ceiling // (seq_len * self.num_events * self.num_events * batch_size))
-        
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp_diff = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, var)
                                                                                # 2 * [batch_size, seq_len, resolution_inf, num_events]
-
         expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, resolution_inf, 1]
         expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
                                                                                # [batch_size, seq_len, resolution_inf, num_events]
-        probability_integral_to_inf = self.model.integration_estimator(expanded_probability_inf, timestamp_diff, resolution_inf)[:, :, -1, :]
+        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp_diff, dim = -2, only_last_result = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
-        f1 = []
-        top_k_acc = []
-        for (ground_truth_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_to_inf):
-            ground_truth_per_seq, probability_integral_per_seq = \
-                move_from_tensor_to_ndarray(ground_truth_per_seq, probability_integral_per_seq)
-
-            f1.append(f1_score(y_true = ground_truth_per_seq,
-                               y_pred = np.argmax(probability_integral_per_seq, axis = -1), average = 'macro'))
-            
-            top_k_acc_per_seq = []
-            if self.num_events > 2:
-                for k in range(1, self.num_events):
-                    top_k_acc_per_seq.append(
-                        top_k_accuracy_score(y_true = ground_truth_per_seq,
-                                             y_score = probability_integral_per_seq,
-                                             k = k,
-                                             labels = np.arange(self.num_events))
-                    )
-            else:
-                top_k_acc_per_seq.append(
-                    accuracy_score(
-                        y_true = ground_truth_per_seq,
-                        y_pred = np.argmax(probability_integral_per_seq, axis = -1)
-                    )
-                )
-            top_k_acc.append(top_k_acc_per_seq)
-        # F1:        [batch_size]
-        # top_k_acc: [batch_size, num_events]
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, probability_integral_to_inf)
 
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
                                                                   mask_history, probability_integral_to_inf, \
-                                                                  resolution_between_events, max_, mean, var, return_mean)
+                                                                  resolution_between_events, inf_val, mean, var, return_mean)
                                                                                # [batch_size, seq_len, num_events]
 
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
@@ -402,13 +313,7 @@ class MRMTPP(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.mae_e_step)
-            remaining_sample_rate -= self.mae_e_step
-        sample_rate_list[-1] += remaining_sample_rate
-
+        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
 
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp_diff = \
@@ -424,66 +329,28 @@ class MRMTPP(BasicModule):
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
-            probability = self.model.integration_probability_estimator(expanded_probability_per_event, timestamp_diff, resolution)[..., -1]
+            probability = approximate_integration(expanded_probability_per_event, timestamp_diff, dim = -1, only_last_result = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
     
-        def bisect_target(taus):
+        def bisect_target(taus, probability_threshold):
             p_xt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
             p_t_x = p_xt / p_x                                                 # [sample_rate, batch_size, seq_len, num_events]
             p_gap = p_t_x - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-            
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
 
         tau_pred = []
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         p_x = p_x.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]        
-
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))
+            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            probability_threshold = probability_threshold.to(self.device)
-            l = 0.0001*torch.ones((sub_sample_rate, batch_size, seq_len, self.num_events), dtype = torch.float32, device = self.device)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            r = max_val*torch.ones((sub_sample_rate, batch_size, seq_len, self.num_events), dtype = torch.float32, device = self.device)
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(l, r))                           # [sample_rate, batch_size, seq_len, num_events]
-
-        '''
-        integral_of_each_event, intensity_of_each_event, _ \
-            = self.model.integral_intensity_time_next_3d(events_history, time_history, tau_pred, \
-                                                         mask_history, resolution, num_dimension_prior_batch = 1)
-                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        integral_sum_of_each_event = integral_of_each_event.sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-        intensity_event_mask = torch.diag(torch.ones(self.num_events, device = self.device))
-                                                                               # [num_events, num_events]
-        intensity_event_mask = rearrange(intensity_event_mask, f'ne ne1 -> {"() " * (len(intensity_of_each_event.shape) - 3)}ne () ne1')
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
-        expanded_intensity_per_event = (intensity_of_each_event * intensity_event_mask).sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-        expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-integral_sum_of_each_event)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-        probability_per_event = expanded_probability_per_event[..., -1]        # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = (tau_pred * probability_per_event).sum(dim = 0)             # [batch_size, seq_len, num_events]
-        '''
-
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         if return_mean:
             tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len, num_events]
@@ -540,8 +407,6 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -579,8 +444,6 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -617,8 +480,6 @@ class MRMTPP(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -655,8 +516,6 @@ class MRMTPP(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -771,9 +630,7 @@ class MRMTPP(BasicModule):
         return maes, f1_2, probability_sum
 
 
-    def train_step(model, minibatch, device):
-        model.train()
-        
+    def train_step(model, minibatch, device):        
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events \
             = model('train', events, time, mask, mean, var)
@@ -788,8 +645,6 @@ class MRMTPP(BasicModule):
 
 
     def evaluation_step(model, minibatch, device):
-        model.eval()
-
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
         mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, var)
