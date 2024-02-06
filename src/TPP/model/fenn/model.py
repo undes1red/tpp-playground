@@ -505,13 +505,8 @@ class FENNModel(BasicModel):
         '''        
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        expand_probability_per_event_for_monte_carlo = expand_probability_per_event[:, :, :-1, :]
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        time_interval_used_for_monte_carlo = time_interval[:, :, 1:].unsqueeze(dim = -1)
-                                                                               # [batch_size, seq_len, resolution - 1, 1]
-        probability_integral = expand_probability_per_event_for_monte_carlo * time_interval_used_for_monte_carlo
-                                                                               # [batch_size, seq_len, resolution - 1, num_events]
-        p_m = reduce(probability_integral, 'b s r ne -> b s ne', 'sum')        # [batch_size, seq_len, num_events]
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_last_result = True)
+                                                                               # [batch_size, seq_len, num_events]
         probability_integral_sum = reduce(p_m, 'b s ne -> b s', 'sum')         # [batch_size, seq_len]
         predict_index = torch.argmax(p_m, dim = -1)                            # [batch_size, seq_len]
 

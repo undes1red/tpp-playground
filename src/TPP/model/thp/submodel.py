@@ -5,7 +5,7 @@ from einops import rearrange, repeat, reduce, pack
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
+from src.TPP.model.utils import approximate_integration, L1_distance_across_events, move_from_tensor_to_ndarray
 from src.TPP.model.thp.utils import softplus_ext
 from src.TPP.model.thp.transformers import TransformerTPP
 
@@ -55,64 +55,6 @@ class THP(nn.Module):
         return history
 
 
-    def integration_estimator(self, expanded_intensity_value, expanded_time, integration_sample_rate):
-        # tensor check
-        assert expanded_intensity_value.shape[-2:] == (integration_sample_rate, self.num_events)
-        assert expanded_time.shape[-1] == integration_sample_rate
-        
-        expanded_intensity_value_1 = expanded_intensity_value[..., :-1, :]     # [..., integration_sample_rate - 1, num_events]
-        expanded_intensity_value_2 = expanded_intensity_value[..., 1:, :]      # [..., integration_sample_rate - 1, num_events]
-        timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
-
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_1 = (expanded_intensity_value_1 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
-                                                                               # [..., integration_sample_rate - 1, num_events]
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_2 = (expanded_intensity_value_2 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
-                                                                               # [..., integration_sample_rate - 1, num_events]
-        # Effectively increase the precision.
-        integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
-                                                                               # [..., integration_sample_rate - 1, num_events]
-        
-        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
-        # We have to check the shape.
-        integral_start_from_zero = torch.zeros(*(integral_of_all_events).shape[:-2], 1, self.num_events, device = self.device)
-                                                                               # [..., 1, num_events]
-        integral_of_all_events = torch.concat([integral_start_from_zero, integral_of_all_events], dim = -2)
-                                                                               # [..., integration_sample_rate, num_events]
-
-        return integral_of_all_events
-
-
-    def integration_probability_estimator(self, expanded_probability_value, expanded_time, integration_sample_rate):
-        # tensor check
-        assert expanded_probability_value.shape[-2:] == (self.num_events, integration_sample_rate)
-        assert expanded_time.shape[-1] == integration_sample_rate
-        
-        expanded_probability_value_1 = expanded_probability_value[..., :-1]    # [..., integration_sample_rate - 1]
-        expanded_probability_value_2 = expanded_probability_value[..., 1:]     # [..., integration_sample_rate - 1]
-        timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
-
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_1 = (expanded_probability_value_1 * timestamp_for_integral).cumsum(dim = -1)
-                                                                               # [..., integration_sample_rate - 1]
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
-        integral_of_all_events_2 = (expanded_probability_value_2 * timestamp_for_integral).cumsum(dim = -1)
-                                                                               # [..., integration_sample_rate - 1]
-        # Effectively increase the precision.
-        integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
-                                                                               # [..., integration_sample_rate - 1]
-        
-        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
-        # We have to check the shape.
-        integral_start_from_0 = torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device)
-                                                                               # [..., 1]
-        integral_of_all_events = torch.concat((integral_start_from_0, integral_of_all_events), dim = -1)
-                                                                               # [..., integration_sample_rate]
-
-        return integral_of_all_events
-
-
     def forward(self, time_history, time_next, events_history, mask_history, mask_next = None):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
@@ -143,7 +85,7 @@ class THP(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         all_lambda = softplus_ext(intensity_all_events_pre_softplus + expanded_scaled_time, F.softplus(self.beta))
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        integral_all_events = self.integration_estimator(all_lambda, expanded_time, self.integration_sample_rate)[..., -1, :]
+        integral_all_events = approximate_integration(all_lambda, expanded_time, dim = -2, only_last_result = True)
                                                                                # [..., batch_size, seq_len, num_events]
         
         return integral_all_events, intensity_all_events
@@ -166,11 +108,10 @@ class THP(nn.Module):
         scaled_time = (expanded_time / aggregate_time).unsqueeze(dim = -1)     # [batch_size, seq_len, integration_sample_rate, 1]
         expanded_intensity_all_events = softplus_ext(self.linear(history) + self.alpha * scaled_time, beta = F.softplus(self.beta))
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-        
         expanded_integral_all_events \
-            = self.integration_estimator(expanded_intensity_all_events, expanded_time, integration_sample_rate)
+            = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-        
+
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
         
 
@@ -198,10 +139,11 @@ class THP(nn.Module):
                                                                                # [..., batch_size, seq_len, 1, 1, num_events]
         expanded_intensity_across_all_events = softplus_ext(self.alpha * scaled_expanded_time + intensity_for_each_event, F.softplus(self.beta))
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        expanded_integral_across_all_events \
-            = self.integration_estimator(expanded_intensity_across_all_events, original_expanded_time, integration_sample_rate)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-             
+        expanded_integral_across_all_events \
+            = approximate_integration(expanded_intensity_across_all_events, original_expanded_time, dim = -2)
+                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
+
         return expanded_integral_across_all_events, expanded_intensity_across_all_events, original_expanded_time
     
 
@@ -220,11 +162,9 @@ class THP(nn.Module):
         scaled_time = (expanded_time / aggregate_time).unsqueeze(dim = -1)     # [batch_size, seq_len, integration_sample_rate, 1]
         expanded_intensity_all_events = softplus_ext(self.linear(history) + self.alpha * scaled_time, beta = F.softplus(self.beta))
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-
         expanded_integral_all_events \
-            = self.integration_estimator(expanded_intensity_all_events, expanded_time, integration_sample_rate)
+            = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-
         # aggregated timestamp
         batch_size, seq_len, _ = expanded_time.shape
         timestamp = torch.cat(

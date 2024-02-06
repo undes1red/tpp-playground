@@ -309,7 +309,6 @@ class SAHPWrapper(BasicModel):
                                                                                # [batch_size, seq_len, resolution_inf, num_events]
         probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_last_result = True)
                                                                                # [batch_size, seq_len, num_events]
-
         probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
