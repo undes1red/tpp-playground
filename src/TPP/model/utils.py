@@ -65,9 +65,10 @@ def step_split(total_rate, step_size):
 '''
 Bisection Method.
 '''
-def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probability_threshold, *args, **kwargs):
-    l = 0.0001*torch.ones_like(probability_threshold)
-    r = 1e6*torch.ones_like(probability_threshold)
+def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probability_threshold, 
+                      *args, l_val = 0.0001, r_val = 1e6, **kwargs):
+    l = l_val*torch.ones_like(probability_threshold)
+    r = r_val*torch.ones_like(probability_threshold)
 
     index = 0
     while True:
@@ -82,6 +83,36 @@ def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probab
             break
     
     return (l + r)/2
+
+'''
+resolution_inf and resolution_between_events.
+'''
+def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, num_events, mean, var):
+    '''
+    Suggested batch_size: 1
+    '''
+
+    if mean == 0 and var == 1:
+        max_ = time_next.mean() + 10 * time_next.var()
+    else:
+        max_ = mean + 10 * var
+
+    if mean == 0:
+        resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
+    else:
+        resolution_between_events = max(min(int(mean // 0.005), 500), 10)
+        
+    max_ = min(1e6, max_)
+    resolution_inf = max(int(max_ // 0.005), 100)
+
+    batch_size, seq_len = time_next.shape
+    if batch_size * seq_len * resolution_inf * num_events > memory_ceiling:
+        resolution_inf = int(memory_ceiling // (seq_len * num_events * batch_size))
+    
+    if batch_size * seq_len * resolution_between_events * num_events * num_events > memory_ceiling:
+        resolution_between_events = int(memory_ceiling // (seq_len * num_events * num_events * batch_size))
+
+    return max_, resolution_inf, resolution_between_events
 
 
 '''

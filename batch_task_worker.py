@@ -12,10 +12,10 @@ logger.info(f'project root is {root_path}.')
 logger.info(f'Please ensure the root_path is correct!')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--script_type', type = str, choices = ['train', 'plot', 'last_failed_tasks'], default = 'train',\
+parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate', 'last_failed_tasks'], default = 'train',\
                                      help = 'Use this argument to select worker mode.\n \
                                              train: training mode. Execute training tasks defined in parameter_set/{procedure_name} one by one.\n \
-                                             plot: evaluation mode. Execute Evaluation tasks defined in parameter_set/{procedure_name} one by one.\n \
+                                             evaluate: evaluation mode. Execute Evaluation tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              last_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_last_failed_tasks.txt and execute these tasks one by one.')
 parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
                                      help = 'You need this argument to select the proper parameter set.')

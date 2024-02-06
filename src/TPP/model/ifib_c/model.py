@@ -170,7 +170,6 @@ class IFIBCModel(BasicModel):
         return loss, time_loss_without_dummy, events_loss, the_number_of_events
     
 
-    @torch.no_grad()
     def evaluate_procedure(self, input_time, input_events, mask, mean, var):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -425,7 +424,6 @@ class IFIBCModel(BasicModel):
         sample_rate = sample_rate if sample_rate is not None else self.sample_rate
         mae_e_step = mae_e_step if mae_e_step is not None else self.mae_e_step
         sample_rate_list = step_split(sample_rate, mae_e_step)
-
 
         def bisect_target(taus, probability_threshold):
             # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
