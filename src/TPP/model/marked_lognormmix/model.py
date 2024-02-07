@@ -3,13 +3,12 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, reduce, repeat
 
 from src.TPP.model.marked_lognormmix.log_norm_mix import MarkedLogNormMix
-from src.TPP.model.utils import BasicModule, move_from_tensor_to_ndarray
 from src.TPP.model.marked_lognormmix.plot import *
 from src.TPP.model.utils import *
-from src.TPP.model import its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 
 
-class MarkedLogNormMixWrapper(BasicModule):
+class MarkedLogNormMixWrapper(BasicModel):
     def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
                  num_mix_components: int = 16, rnn_type: str = "LSTM", \
                  survival_loss_during_training = False):
@@ -19,6 +18,7 @@ class MarkedLogNormMixWrapper(BasicModule):
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.bisect_early_stop_threshold = 1e-5
+        self.max_step = 50
 
         self.model = MarkedLogNormMix(
             self.num_events + 1,
@@ -104,7 +104,6 @@ class MarkedLogNormMixWrapper(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last = self.model.log_prob(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
@@ -135,7 +134,6 @@ class MarkedLogNormMixWrapper(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last = self.model.log_prob(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
@@ -175,42 +173,40 @@ class MarkedLogNormMixWrapper(BasicModule):
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        probability_threshold = dist.sample((self.sample_rate, *input_time.shape))
-                                                                               # [sample_rate, batch_size, seq_len]
-        probability_threshold = probability_threshold.to(self.device)
-
-        def evaluate(taus):
+        def bisect_target(taus, probability_threshold):
             probability_sum, _ = self.model.probe_sum_of_cdf(input_events, input_time, input_mask, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len + 1]
-            return probability_sum
-
-        def bisect_target(taus):
-            return evaluate(taus) - probability_threshold
+            return probability_sum - probability_threshold
         
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
-
-        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
-                                                                               # [sample_rate, batch_size, seq_len + 1]
-        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len + 1]
-        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len + 1]
+        probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold)                          # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len + 1]
         gap = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len + 1]
 
         return gap, tau_pred
+
+
+    def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, var):
+        # Obtain dedicated MAE and predicted time.
+        gap, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
+                                                                               # [batch_size, seq_len + 1]
+        predicted_events  = self.model.event_prober(input_events, input_time, input_mask, mean, var)
+                                                                               # [batch_size, seq_len + 1]
+        
+        gap = gap[input_mask == 1]                                             # [batch_size * seq_len]
+        predicted_events = predicted_events[input_mask == 1]                   # [batch_size * seq_len]
+        input_events = input_events[input_mask == 1]                           # [batch_size * seq_len]
+        predicted_events, input_events = move_from_tensor_to_ndarray(predicted_events, input_events)
+
+        batch_size = pred_time.shape[0]
+        gap = rearrange(gap, '(b s) -> b s', b = batch_size)                   # [batch_size, seq_len]
+
+        f1 = f1_score(y_pred = predicted_events, y_true = input_events, average = 'macro')
+
+        return gap, f1
 
 
     def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, var, return_mean = True):
@@ -225,15 +221,13 @@ class MarkedLogNormMixWrapper(BasicModule):
                                                                                # [batch_size, seq_len + 1]
         predict_index = torch.argmax(probability_distribution_of_mark, dim = -1)
                                                                                # [batch_size, seq_len + 1]
-
+        
         f1 = []
         top_k_acc = []
         for (events_next_per_seq, probability_integral_per_seq, input_mask_per_seq) in \
             zip(input_events, probability_distribution_of_mark, input_mask):
-
             events_next_per_seq, probability_integral_per_seq, input_mask_per_seq \
                 = move_from_tensor_to_ndarray(events_next_per_seq, probability_integral_per_seq, input_mask_per_seq)
-            
             events_next_per_seq = events_next_per_seq[input_mask_per_seq == 1]
             probability_integral_per_seq = probability_integral_per_seq[input_mask_per_seq == 1]
 
@@ -294,17 +288,6 @@ class MarkedLogNormMixWrapper(BasicModule):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
         
-        '''
-
-        mae_per_event_pure_predict = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - input_time) * input_mask
-                                                                               # [batch_size, seq_len, num_events]
-        mae_per_event = torch.abs((tau_pred_all_event * events_next_one_hot).sum(dim = -1) - input_time) * input_mask
-                                                                               # [batch_size, seq_len, num_events]
-
-        mae_per_event_pure_predict_avg = torch.sum(mae_per_event_pure_predict, dim = -1) / input_mask.sum(dim = -1)
-        mae_per_event_avg = torch.sum(mae_per_event, dim = -1) / input_mask.sum(dim = -1)
-        '''
-        
         return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
@@ -314,89 +297,25 @@ class MarkedLogNormMixWrapper(BasicModule):
         The input should be the original minibatch
         MAE evaluation part, dwg and fullynn exclusive
         '''
-
-        # Preprocess
-        batch_size, seq_len = input_events.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        probability_threshold = dist.sample((self.sample_rate, batch_size, seq_len, self.num_events + 1))
-                                                                               # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-        probability_threshold = probability_threshold.to(self.device)
-        p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-
-        def evaluate_all_event(taus):
-            # \int_{0}^{\tau}{p(m, \tau|\mathcal{H})d\tau}
-            probability_integral_from_zero_to_t, _ = self.model.probe_cdf(input_events, input_time, input_mask, taus, mean, var)
+        def bisect_target(taus, probability_threshold, p_m):
+            p_mt, _ = self.model.probe_cdf(input_events, input_time, input_mask, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            return probability_integral_from_zero_to_t
-
-        def bisect_target(taus):
-            p_mt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
             p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events]
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-            
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
 
-            return (l + r)/2
-        
-        l = 0.0001*torch.ones((self.sample_rate, batch_size, seq_len, self.num_events + 1), dtype = torch.float32, device = self.device)
+        batch_size, seq_len = input_events.shape
+        probability_threshold = torch.zeros((self.sample_rate, batch_size, seq_len, self.num_events + 1))
                                                                                # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-        r = 1e6*torch.ones((self.sample_rate, batch_size, seq_len, self.num_events + 1), dtype = torch.float32, device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-
-        '''
-        tau_pred_detached = tau_pred.detach()                                  # [sample_rate, batch_size, seq_len]
-        tau_pred_detached.requires_grad = True
-        probability_integral_from_t_to_inf = self.model(events_history, time_history, tau_pred_detached, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        probability_for_each_event_at_pred_time = - torch.autograd.grad(
-            outputs = probability_integral_from_t_to_inf,
-            inputs = tau_pred_detached,
-            grad_outputs = torch.ones_like(probability_integral_from_t_to_inf)
-        )[0]                                                                   # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred_detached.requires_grad = False
-        probability_for_each_event_at_pred_time = probability_for_each_event_at_pred_time
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = (tau_pred * probability_for_each_event_at_pred_time).sum(dim = 0)
-                                                                               # [batch_size, seq_len, num_events]
-        '''
+        torch.nn.init.uniform_(probability_threshold)
+        p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
+        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                     bisect_target, probability_threshold, p_m)# [sample_rate, batch_size, seq_len + 1, num_events + 1]
         if return_mean:
             tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len + 1, num_events + 1]
 
         return tau_pred
-    
-
-    def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, var):
-        # Obtain dedicated MAE and predicted time.
-        gap, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
-                                                                               # [batch_size, seq_len + 1]
-        predicted_events  = self.model.event_prober(input_events, input_time, input_mask, mean, var)
-                                                                               # [batch_size, seq_len + 1]
-        
-        gap = gap[input_mask == 1]                                             # [batch_size * seq_len]
-        predicted_events = predicted_events[input_mask == 1]                   # [batch_size * seq_len]
-        input_events = input_events[input_mask == 1]                           # [batch_size * seq_len]
-        predicted_events, input_events = move_from_tensor_to_ndarray(predicted_events, input_events)
-
-        batch_size = pred_time.shape[0]
-        gap = rearrange(gap, '(b s) -> b s', b = batch_size)                   # [batch_size, seq_len]
-
-        f1 = f1_score(y_pred = predicted_events, y_true = input_events, average = 'macro')
-
-        return gap, f1
 
 
     def plot(self, minibatch, opt):
@@ -477,8 +396,6 @@ class MarkedLogNormMixWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
         batch_size, _ = input_time.shape
@@ -517,8 +434,6 @@ class MarkedLogNormMixWrapper(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
         time_next, _ = self.divide_history_and_next(input_time)                # [batch_size, seq_len]
@@ -742,9 +657,6 @@ class MarkedLogNormMixWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']

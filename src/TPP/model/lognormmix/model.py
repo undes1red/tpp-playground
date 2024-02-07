@@ -3,12 +3,12 @@ from sklearn.metrics import f1_score
 from einops import rearrange, reduce, repeat
 
 from src.TPP.model.lognormmix.log_norm_mix import LogNormMix
-from src.TPP.model.utils import BasicModule, move_from_tensor_to_ndarray
+from src.TPP.model.utils import *
 from src.TPP.model.lognormmix.plot import *
-from src.TPP.model import its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 
 
-class LogNormMixWrapper(BasicModule):
+class LogNormMixWrapper(BasicModel):
     def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
                  num_mix_components: int = 16, rnn_type: str = "LSTM", \
                  survival_loss_during_training = False):
@@ -17,6 +17,7 @@ class LogNormMixWrapper(BasicModule):
         self.num_events = info_dict['num_events']
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
+        self.max_step = 50
         self.bisect_early_stop_threshold = 1e-5
 
         self.model = LogNormMix(
@@ -73,20 +74,6 @@ class LogNormMixWrapper(BasicModule):
         return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
 
 
-    def remove_dummy_event_from_mask(self, mask):
-        '''
-        Remove the probability of the dummy event by mask.
-        '''
-        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
-        for idx, mask_per_seq in enumerate(mask):
-            dummy_index = mask_per_seq.sum() - 1
-            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
-            mask_without_dummy_per_seq[dummy_index] = 0
-            mask_without_dummy[idx] = mask_without_dummy_per_seq
-        
-        return mask_without_dummy
-
-
     def train_procedure(self, input_events, input_time, input_mask, mean, var):
         '''
         The shape of minibatch
@@ -103,7 +90,6 @@ class LogNormMixWrapper(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last, log_p_event = self.model.log_prob(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
@@ -136,7 +122,6 @@ class LogNormMixWrapper(BasicModule):
             ](if self.input_norm_data is True)
         ]
         '''
-
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last, log_p_event = self.model.log_prob(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
@@ -178,46 +163,16 @@ class LogNormMixWrapper(BasicModule):
         The input should be the original minibatch.
         MAE evaluation part for intensity-free model.
         '''
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-        probability_threshold = dist.sample((self.sample_rate, *input_time.shape))
-                                                                               # [sample_rate, batch_size, seq_len]
-        probability_threshold = probability_threshold.to(self.device)
-
-        def evaluate(taus):
+        def bisect_target(taus, probability_threshold):
             probability, _ = self.model.log_cdf(input_events, input_time, input_mask, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len + 1]
-            return probability
+            return probability - probability_threshold
 
-        def bisect_target(taus):
-            return evaluate(taus) - probability_threshold
-        
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
-
-        l = 0.0001*torch.ones_like(probability_threshold, dtype = torch.float32)
-                                                                               # [sample_rate, batch_size, seq_len + 1]
-        r = 1e6*torch.ones_like(probability_threshold, dtype = torch.float32)  # [sample_rate, batch_size, seq_len + 1]
-        tau_pred = median_prediction(l, r)                                     # [sample_rate, batch_size, seq_len + 1]
-
-        '''
-        log_p, _, _ = self.model.log_prob(input_events, tau_pred, input_mask, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len + 1]
-        p = torch.exp(log_p)                                                   # [sample_rate, batch_size, seq_len + 1]
-        tau_pred = (tau_pred * p).sum(dim = 0)                                 # [batch_size, seq_len + 1]
-        '''
-        
+        probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold)                          # [sample_rate, batch_size, seq_len]
+        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len]
         
@@ -241,7 +196,6 @@ class LogNormMixWrapper(BasicModule):
                                                                                # [batch_size, seq_len + 1]
         predicted_events  = self.model.event_prober(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len + 1]
-        
         gap = gap[input_mask == 1]                                             # [batch_size * seq_len]
         predicted_events = predicted_events[input_mask == 1]                   # [batch_size * seq_len]
         input_events = input_events[input_mask == 1]                           # [batch_size * seq_len]
@@ -322,8 +276,6 @@ class LogNormMixWrapper(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
         batch_size, _ = input_time.shape
@@ -331,17 +283,15 @@ class LogNormMixWrapper(BasicModule):
         input_events_for_generating_reference = torch.cat((torch.ones(batch_size, 1, device = self.device, dtype = torch.int) * self.num_events, input_events[:, :-1]), dim = -1)
         input_mask_for_generating_reference = torch.cat((torch.ones(batch_size, 1, device = self.device, dtype = torch.int), input_mask[:, :-1]), dim = -1)
 
-        time_history, time_next = self.divide_history_and_next(input_time_for_generating_reference)
+        _, time_next = self.divide_history_and_next(input_time_for_generating_reference)
                                                                                # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events_for_generating_reference)
+        _, events_next = self.divide_history_and_next(input_events_for_generating_reference)
                                                                                # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(input_mask_for_generating_reference)
+        _, mask_next = self.divide_history_and_next(input_mask_for_generating_reference)
                                                                                # [batch_size, seq_len]
-
         expand_probability, timestamp = \
             self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution] * 2
-
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -361,18 +311,14 @@ class LogNormMixWrapper(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(input_mask)     # [batch_size, seq_len]
+        _, time_next = self.divide_history_and_next(input_time)                # [batch_size, seq_len]
+        _, events_next = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(input_mask)                # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, var)
                                                                                # [batch_size, seq_len]
-        
         _, timestamp = \
             self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution] * 2
@@ -438,13 +384,11 @@ class LogNormMixWrapper(BasicModule):
 
     
     def get_mae_e_and_f1(self, input_data, opt):
-
         return NotImplementedError('Event-time evaluation is unavailable because LognormMix is a TPP model.')
 
 
     def train_step(model, minibatch, device):
         ''' Epoch operation in training phase'''
-    
         def extract_minibatch(minibatch):
             (input_events, input_time, _, input_mask), mean_and_var = minibatch
             mean, var = 0, 1
@@ -538,11 +482,9 @@ class LogNormMixWrapper(BasicModule):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        # return [evaluation_report_format_dict['absolute_NLL_loss'] + evaluation_report_format_dict['avg_survival_loss'], 
-        #         test_report_format_dict['absolute_NLL_loss'] + test_report_format_dict['avg_survival_loss']], \
-        #        ['evaluation_absolute_loss', 'test_absolute_loss']
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
+
 
     metric_number = 2 # metric number is the length of the output of choose_metric
