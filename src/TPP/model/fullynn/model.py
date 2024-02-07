@@ -590,7 +590,7 @@ class FullyNNModel(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
 
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-            probability = approximate_integration(p_dist, time_interval, dim = -2, only_last_result = True)
+            probability = approximate_integration(p_dist, time_interval, dim = -2, only_last_result = True, same_dim_on_expanded_x = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 

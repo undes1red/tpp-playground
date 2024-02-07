@@ -115,24 +115,31 @@ def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceilin
 Approximate an integral based on its definition.
 dim refers to the dimension index of expanded_func_value where the integration should be performed.
 '''
-def approximate_integration(expanded_func_value, expanded_x, dim, only_last_result = False):
+def approximate_integration(expanded_func_value, expanded_x, dim, only_last_result = False, same_dim_on_expanded_x = False):
     # tensor check
     func_val_number_of_dim = len(expanded_func_value.shape)
     integration_sample_rate = expanded_func_value.shape[dim]
 
+    if same_dim_on_expanded_x:
+        assert expanded_x.shape == expanded_func_value.shape
+        dim_expanded_x = dim
+    else:
+        dim_expanded_x = -1
+
     assert expanded_func_value.device == expanded_x.device
-    assert expanded_x.shape[-1] == integration_sample_rate
+    assert expanded_x.shape[dim_expanded_x] == integration_sample_rate
     device = expanded_func_value.device
     
     expanded_func_value_1 = expanded_func_value.index_select(dim, torch.arange(integration_sample_rate - 1, device = device))
                                                                                # [..., integration_sample_rate - 1, ...]
     expanded_func_value_2 = expanded_func_value.index_select(dim, torch.arange(1, integration_sample_rate, device = device))
                                                                                # [..., integration_sample_rate - 1, ...]
-    width_of_rectangle = expanded_x.diff(dim = -1)                             # [..., integration_sample_rate - 1]
+    width_of_rectangle = expanded_x.diff(dim = dim_expanded_x)                 # [..., integration_sample_rate - 1, ...]
 
-    the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
-    einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
-    width_of_rectangle = rearrange(width_of_rectangle, einop)                  # [..., integration_sample_rate - 1, ...]
+    if not same_dim_on_expanded_x:
+        the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
+        einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
+        width_of_rectangle = rearrange(width_of_rectangle, einop)              # [..., integration_sample_rate - 1, ...]
 
     # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
     integral_of_all_events_1 = (expanded_func_value_1 * width_of_rectangle).cumsum(dim = dim)
