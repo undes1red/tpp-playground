@@ -581,13 +581,11 @@ class IFIBCModel(BasicModel):
         tau_sampled = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                         bisect_target_sample, sampled_threshold, integral_from_zero_to_inf)
                                                                                # [number_of_sampled_sequences, 1]
-
         repeated_tau_sampled = repeat(tau_sampled, 'b s -> b s ne', ne = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         repeated_tau_sampled.requires_grad = True
         integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, var = var)
                                                                                # [number_of_sampled_sequences, 1, num_events]
- 
         probability_for_each_event_at_pred_time = - torch.autograd.grad(
             outputs = integral_from_sampled_time_to_inf,
             inputs = repeated_tau_sampled,

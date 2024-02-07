@@ -1,25 +1,25 @@
 import torch, copy
-import numpy as np
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
+from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
-from src.TPP.model import its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.tifib_c.submodel import TIFIBC
 from src.TPP.model.utils import *
 from src.TPP.model.tifib_c.plot import *
 
 
-class TIFIBCModel(BasicModule):
+class TIFIBCModel(BasicModel):
     def __init__(self, d_history,
                  d_intensity,
                  dropout,
                  mlp_layers,
                  info_dict,
                  device, d_hidden, n_layers,
+                 removes_tail, tanh_parameter,
                  n_head, d_qk, d_v,
-                 epsilon = 0.0, sample_rate = 32, step = 32,
-                 survival_loss_during_training = False):
+                 epsilon = 0.0, sample_rate = 32, mae_step = 32,
+                 mae_e_step = 32, survival_loss_during_training = False):
         super(TIFIBCModel, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -28,11 +28,15 @@ class TIFIBCModel(BasicModule):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate
-        self.step = step
+        self.mae_step = mae_step
+        self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
+        self.max_step = 50
 
-        self.model = TIFIBC(d_history, d_intensity, self.num_events, dropout, d_hidden, n_layers, \
-                            n_head, d_qk, d_v, mlp_layers, epsilon, device)
+        self.model = TIFIBC(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events, \
+                            dropout = dropout, d_hidden = d_hidden, n_layers = n_layers, n_head = n_head, \
+                            d_qk = d_qk, d_v = d_v, mlp_layers = mlp_layers, epsilon = epsilon, \
+                            removes_tail = removes_tail, tanh_parameter = tanh_parameter, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -162,8 +166,6 @@ class TIFIBCModel(BasicModule):
 
 
     def evaluate_procedure(self, input_time, input_events, mask, mean, var):
-        
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -302,14 +304,9 @@ class TIFIBCModel(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
-        def evaluate(integral_from_zero_to_inf, taus):
+        def bisect_target(taus, probability_threshold, integral_from_zero_to_inf):
             taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
             probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mask_history, mean, var)
                                                                                # [batch_size, seq_len, num_events]
@@ -318,45 +315,22 @@ class TIFIBCModel(BasicModule):
                                                                                # [batch_size, seq_len, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
                                                                                # [batch_size, seq_len]
-            return probability_integral
-
-        def bisect_target(integral_from_zero_to_inf, taus):
-            return evaluate(integral_from_zero_to_inf, taus) - probability_threshold
-            
-        def median_prediction(integral_from_zero_to_inf, l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(integral_from_zero_to_inf, c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-            
-            return (l + r)/2
+            return probability_integral - probability_threshold
         
         tau_pred = []
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
-
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, *time_next.shape))
+            probability_threshold = torch.zeros((sub_sample_rate, *time_next.shape), device = self.device)
                                                                                # [sub_sample_rate, batch_size, seq_len]
-            probability_threshold = probability_threshold.to(self.device)
-
-            l = 0.0001*torch.ones((sub_sample_rate, *time_next.shape), dtype = torch.float32, device = self.device)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sub_sample_rate, batch_size, seq_len]
-            r = 1e6*torch.ones((sub_sample_rate, *time_next.shape), dtype = torch.float32, device = self.device)
-                                                                               # [sub_sample_rate, batch_size, seq_len]
-            time_next_zero = torch.zeros_like(r)                               # [sub_sample_rate, batch_size, seq_len]
+            time_next_zero = torch.zeros_like(probability_threshold)           # [sub_sample_rate, batch_size, seq_len]
             time_next_zero = repeat(time_next_zero, '... -> ... ne', ne = self.num_events)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
             integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(integral_from_zero_to_inf, l, r))# [sub_sample_rate, batch_size, seq_len]
-
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold, integral_from_zero_to_inf))
+                                                                               # [sub_sample_rate, batch_size, seq_len]
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
         mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
@@ -377,38 +351,16 @@ class TIFIBCModel(BasicModule):
         probability_integral_from_zero_to_infinite = \
             self.model(events_history, time_history, time_zero, mask_history, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events]
-
         probability_integral_sum = reduce(probability_integral_from_zero_to_infinite, 'b s ne -> b s', 'sum')
                                                                                # [batch_size, seq_len]
         predict_index = torch.argmax(probability_integral_from_zero_to_infinite, dim = -1)
                                                                                # [batch_size, seq_len]
-
-        f1 = []
-        top_k_acc = []
-        for (events_next_per_seq, probability_integral_per_seq) in zip(events_next, probability_integral_from_zero_to_infinite):
-            events_next_per_seq, probability_integral_per_seq = \
-                move_from_tensor_to_ndarray(events_next_per_seq, probability_integral_per_seq)
-            y_pred = np.argmax(probability_integral_per_seq, axis = -1)
-
-            f1.append(f1_score(y_true = events_next_per_seq, y_pred = y_pred, average = 'macro'))
-            top_k_acc_single_event_seq = []
-            if self.num_events > 2:
-                for k in range(1, self.num_events):
-                    top_k_acc_single_event_seq.append(
-                        top_k_accuracy_score(y_true = events_next_per_seq,
-                                             y_score = probability_integral_per_seq,
-                                             k = k,
-                                             labels = np.arange(self.num_events))
-                    )
-            else:
-                top_k_acc_single_event_seq.append(accuracy_score(y_true = events_next_per_seq, y_pred = y_pred))
-            top_k_acc.append(top_k_acc_single_event_seq)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, probability_integral_from_zero_to_infinite)
 
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         events_next_one_hot = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, mask_history, \
                                                                   probability_integral_from_zero_to_infinite, \
@@ -432,61 +384,31 @@ class TIFIBCModel(BasicModule):
         MAE evaluation part, dwg and fullynn exclusive
         '''
         # Preprocess
-        sample_rate_list = []
-        remaining_sample_rate = self.sample_rate
-        while remaining_sample_rate > 0:
-            sample_rate_list.append(self.step)
-            remaining_sample_rate -= self.step
-        sample_rate_list[-1] += remaining_sample_rate
+        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
 
-        def evaluate_all_event(taus):
+        def bisect_target(taus, probability_threshold, p_m):
             # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
             probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mask_history, mean = mean, var = var)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             # \int_{0}^{tau}{p(m, \tau|\mathcal{H})d\tau}
-            probability_from_zero_to_t = p_m - probability_integral_from_t_to_infinite
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            return probability_from_zero_to_t
-
-        def bisect_target(taus):
-            p_mt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
+            p_mt = p_m - probability_integral_from_t_to_infinite               # [sample_rate, batch_size, seq_len, num_events]
             p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events]
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-            
-        def median_prediction(l, r):
-            index = 0
-            while True:
-                c = (l + r)/2
-                v = bisect_target(c)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-                index += 1
-                if (l - r).abs().max() < self.bisect_early_stop_threshold:
-                    break
-                if index > 50:
-                    break
-
-            return (l + r)/2
 
         # Preprocess
         tau_pred = []
         batch_size, seq_len = time_history.shape
-        dist = torch.distributions.uniform.Uniform(torch.tensor(its_lower_bound), torch.tensor(its_upper_bound))
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-        
         for sub_sample_rate in sample_rate_list:
-            probability_threshold = dist.sample((sub_sample_rate, batch_size, seq_len, self.num_events))
+            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            probability_threshold = probability_threshold.to(self.device)
-
-            l = 0.0001*torch.ones((sub_sample_rate, batch_size, seq_len, self.num_events), dtype = torch.float32, device = self.device)
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            r = 1e6*torch.ones((sub_sample_rate, batch_size, seq_len, self.num_events), dtype = torch.float32, device = self.device)
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold, p_m))
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(l, r))                           # [sub_sample_rate, batch_size, seq_len, num_events]
-
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len, num_events]
 
@@ -507,7 +429,10 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        while True:
+        MAX_sampled_seq = 250
+        seq_length = 1
+
+        while seq_length < MAX_sampled_seq:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_time_event(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -521,6 +446,7 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
+            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break
@@ -535,7 +461,7 @@ class TIFIBCModel(BasicModule):
 
 
     def sample_one_events_from_model_time_event(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var):
-        def evaluate_sample(integral_from_zero_to_inf, taus):
+        def bisect_target_sample(taus, sample_input, integral_from_zero_to_inf):
             taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [number_of_sampled_sequences, 1, num_events]
             probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, var)
                                                                                # [number_of_sampled_sequences, 1, num_events]
@@ -546,30 +472,11 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
                                                                                # [number_of_sampled_sequences, 1]
-            return probability_integral
-
-        def bisect_target_sample(integral_from_zero_to_inf, taus, sample_input):
-            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
-            
-        def median_prediction_sample(integral_from_zero_to_inf, l, r):
-            '''
-            First, we randomly generate the probability_threshold from a uniform distribution.
-            '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
-            sampled_threshold = dist.sample((number_of_sampled_sequences, 1))  # [number_of_sampled_sequences, 1]
-            sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1]
-
-            for _ in range(50):
-                c = (l + r)/2
-                v = bisect_target_sample(integral_from_zero_to_inf, c, sampled_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-
-            return (l + r)/2
+            return probability_integral - sample_input
         
-        l = 0.0001*torch.ones((number_of_sampled_sequences, 1), dtype = torch.float32, device = self.device)
+        sampled_threshold = torch.zeros((number_of_sampled_sequences, 1), device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
-        r = 1e6*torch.ones((number_of_sampled_sequences, 1), dtype = torch.float32, device = self.device)
+        torch.nn.init.uniform_(sampled_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                                # [number_of_sampled_sequences, 1]
         time_next_zero = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
@@ -578,13 +485,14 @@ class TIFIBCModel(BasicModule):
         integral_from_zero_to_inf = self.model.sample(events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, var = var)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         integral_from_zero_to_inf = integral_from_zero_to_inf.detach()         # [number_of_sampled_sequences, 1, num_events]
-        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [number_of_sampled_sequences, 1]
+        tau_sampled = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                        bisect_target_sample, sampled_threshold, integral_from_zero_to_inf)       
+                                                                               # [number_of_sampled_sequences, 1]
         repeated_tau_sampled = repeat(tau_sampled, 'b s -> b s ne', ne = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         repeated_tau_sampled.requires_grad = True
         integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, var = var)
                                                                                # [number_of_sampled_sequences, 1, num_events]
- 
         probability_for_each_event_at_pred_time = - torch.autograd.grad(
             outputs = integral_from_sampled_time_to_inf,
             inputs = repeated_tau_sampled,
@@ -612,7 +520,10 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1]
         tmp_sum_of_sampled_time = time_history_for_sampling.sum(dim = -1)      # [number_of_sampled_sequences]
 
-        while True:
+        MAX_sampled_seq = 250
+        seq_length = 1
+
+        while seq_length < MAX_sampled_seq:
             sampled_time, sampled_events = \
                 self.sample_one_events_from_model_event_time(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
                                                                                # [number_of_sampled_sequences, 1]
@@ -626,6 +537,7 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, history_length + 1]
             tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)
                                                                                # [number_of_sampled_sequences]
+            seq_length += 1
 
             if tmp_sum_of_sampled_time.min() >= end_time:
                 break
@@ -640,7 +552,7 @@ class TIFIBCModel(BasicModule):
 
 
     def sample_one_events_from_model_event_time(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var):
-        def evaluate_sample(integral_from_zero_to_inf, taus):
+        def bisect_target_sample(taus, sample_input, integral_from_zero_to_inf):
             probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, var)
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
@@ -650,32 +562,12 @@ class TIFIBCModel(BasicModule):
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral = probability_integral / integral_from_zero_to_inf
                                                                                # [number_of_sampled_sequences, 1, num_events]
-            return probability_integral
-
-        def bisect_target_sample(integral_from_zero_to_inf, taus, sample_input):
-            return evaluate_sample(integral_from_zero_to_inf, taus) - sample_input
-            
-        def median_prediction_sample(integral_from_zero_to_inf, l, r):
-            '''
-            First, we randomly generate the probability_threshold from a uniform distribution.
-            '''
-            dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
-            sampled_threshold = dist.sample((number_of_sampled_sequences, 1, self.num_events))
-                                                                               # [number_of_sampled_sequences, 1, num_events]
-            sampled_threshold = sampled_threshold.to(self.device)              # [number_of_sampled_sequences, 1, num_events]
-
-            for _ in range(50):
-                c = (l + r)/2
-                v = bisect_target_sample(integral_from_zero_to_inf, c, sampled_threshold)
-                l = torch.where(v < 0, c, l)
-                r = torch.where(v >= 0, c, r)
-
-            return (l + r)/2
+            return probability_integral - sample_input
         
-        l = 0.0001*torch.ones((number_of_sampled_sequences, 1, self.num_events), dtype = torch.float32, device = self.device)
-                                                                               # [number_of_sampled_sequences, 1, num_events]
-        r = 1e6*torch.ones((number_of_sampled_sequences, 1, self.num_events), dtype = torch.float32, device = self.device)
-                                                                               # [number_of_sampled_sequences, 1, num_events]
+        sampled_threshold = torch.zeros((number_of_sampled_sequences, 1), device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        torch.nn.init.uniform_(sampled_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [number_of_sampled_sequences, 1]
         time_next_zero = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
         time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
@@ -686,8 +578,9 @@ class TIFIBCModel(BasicModule):
         distribution_of_marks = torch.distributions.categorical.Categorical(integral_from_zero_to_inf)
         sampled_marks = distribution_of_marks.sample()                         # [number_of_sampled_sequences, 1]
         sampled_marks = sampled_marks.to(self.device)                          # [number_of_sampled_sequences, 1]
-
-        tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [number_of_sampled_sequences, 1, num_events]
+        tau_sampled = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                        bisect_target_sample, sampled_threshold, integral_from_zero_to_inf)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
         tau_mask = torch.nn.functional.one_hot(sampled_marks, num_classes = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         tau_sampled = (tau_sampled * tau_mask).sum(dim = -1)                   # [number_of_sampled_sequences, 1]
@@ -772,8 +665,6 @@ class TIFIBCModel(BasicModule):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -784,7 +675,6 @@ class TIFIBCModel(BasicModule):
         expand_probability, timestamp = \
             self.model.probability(events_history, time_history, time_next, mask_history, opt.resolution, mean, var)
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -804,8 +694,6 @@ class TIFIBCModel(BasicModule):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -827,7 +715,7 @@ class TIFIBCModel(BasicModule):
         the time-event routine.
         '''
         time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
-            = self.sample_event_time(1, 70, mean, var)
+            = self.sample_event_time(1, self.end_time - self.start_time, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
@@ -844,7 +732,7 @@ class TIFIBCModel(BasicModule):
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(1, 70, mean, var)
+            = self.sample_time_event(1, self.end_time - self.start_time, mean, var)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)

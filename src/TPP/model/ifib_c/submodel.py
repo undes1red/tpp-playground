@@ -277,7 +277,6 @@ class IFIBC(nn.Module):
                                                                                # [1, 1, 1, num_events, d_intensity]
         emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t) + time_bias
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
-
         emb_time_expand = self.time_mapper(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity]
         output = emb_time_expand + hidden_history                              # [batch_size, seq_len, resolution, num_events, d_intensity]
 
@@ -354,7 +353,7 @@ class IFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
 
         '''
-        Expanded time embedding 
+        Expanded time embedding
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
@@ -371,7 +370,6 @@ class IFIBC(nn.Module):
                                                                                # [1, 1, 1, num_events, d_intensity]
         emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t) + time_bias
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
-
         emb_time_expand = self.time_mapper(emb_time_expand)                    # [batch_size, seq_len, resolution, num_events, d_intensity]
         output = emb_time_expand + hidden_history                              # [batch_size, seq_len, resolution, num_events, d_intensity]
 
@@ -401,7 +399,6 @@ class IFIBC(nn.Module):
                                                                                # [batch_size, seq_len, 1]
         integral_sum = rearrange(integral_sum, 'b s 1 -> b s 1 1')             # [batch_size, seq_len, 1, 1]
         expand_integral = expand_integral / integral_sum                       # [batch_size, seq_len, resolution, num_events]
-
 
         # Gradient 1: Integral -> time
         events_probability_at_each_interpolated_timestamp = - torch.autograd.grad(
