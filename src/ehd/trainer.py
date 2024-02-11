@@ -5,18 +5,18 @@ from itertools import cycle
 from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
-from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, \
+from src.ehd.utils import print_performances, suffix, lst_add_lst, read_yaml, \
                           lst_divide, evaluation, Metric, add_prefix_to_keys, \
                           print_args
-from src.TPP.model import get_model
-from src.TPP.optimizer.optim import ScheduledOptim
-from src.TPP.dataloader import prepare_dataloaders
+from src.ehd.model import get_model
+from src.ehd.optimizer.optim import ScheduledOptim
+from src.ehd.dataloader import prepare_dataloaders
 
 
 logger = getLogger(__name__)
 
 
-class TPPTrainer:
+class ehdTrainer:
     def __init__(self):
         '''
         Now, we use pd.DataFrame to record training records.
@@ -76,12 +76,9 @@ class TPPTrainer:
         Load model
         '''
         self.model_class = get_model(self.opt)
-        model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
-            **model_param
-        )
+        model = self.model_class(device = self.opt.device, opt = self.opt, **model_param)
     
         self.opt.__dict__.update(model_param)
-
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_parameters = sum(p.numel() for p in model.parameters())
         self.opt.trainable_parameters = trainable_parameters
@@ -96,13 +93,14 @@ class TPPTrainer:
         '''
         self.sched_optimizer = ScheduledOptim(opt, model)
         self.model = DP(model)
+    
         self.task()
     
     
     def task(self):
         '''
         Directory preparation
-        
+
         Create log and model-saving dirs if they are not present.
         '''
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
@@ -128,7 +126,7 @@ class TPPTrainer:
         if self.opt.log:
             if self.opt.wandb:
                 import wandb
-                wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \
+                wandb.init(project = 'Explainable History Distillation', config = vars(self.opt), group = self.opt.dataset_name, \
                            name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
                                             self.opt.dataset_name, str(self.opt.dataloader_config)]), \
                            dir = os.path.join(self.opt.log, self.log_folder), \
@@ -139,7 +137,7 @@ class TPPTrainer:
         '''
         Metric checker for choosing the best model during training.
         '''
-        self.metric_checker = Metric(self.model_class.metric_number, getattr(self.model_class, 'smaller_is_better', None))
+        self.metric_checker = Metric(self.model_class.metric_number)
         self.format_dict_length = self.model_class.format_dict_length
         self.report_sum = [0] * self.format_dict_length
     
@@ -201,7 +199,7 @@ class TPPTrainer:
         print_performances(logger = logger, procedure = 'Training', \
                            model_performance_dict = log_print_format_dict,
                            procedure_monitor_dict = procedure_monitor_dict)
-
+        
         if self.opt.wandb:
             import wandb
             wandb.log(
@@ -226,7 +224,6 @@ class TPPTrainer:
         print_performances(logger = logger, procedure = 'Evaluation', \
                            model_performance_dict = log_print_format_dict_eva,
                            procedure_monitor_dict = procedure_monitor_dict)
-
         '''
         Evaluation on the test dataset.
         '''

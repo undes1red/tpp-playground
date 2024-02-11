@@ -114,6 +114,10 @@ class FENNModel(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'graph': self.plot,
+
+            # Functions for the EHD task.
+            'ehd_perplexity': self.ehd_perplexity,
+            'ehd_event_emb': self.get_event_embedding,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -926,7 +930,7 @@ class FENNModel(BasicModel):
         return self.model.get_event_embedding(input_events)                     # [batch_size, seq_len, d_history]
 
 
-    def ehd_probability(self, padded_filtered_time, padded_filtered_events, padded_filtered_event_embeddings, padded_filtered_masks, mean, var):
+    def ehd_perplexity(self, padded_filtered_time, padded_filtered_events, padded_filtered_event_embeddings, padded_filtered_masks, seq_len_x, mean, var):
         padded_filtered_time_history, padded_filtered_time_next = self.divide_history_and_next(padded_filtered_time)
                                                                                # 2 * [batch_size, filtered_seq_len - 1]
         padded_filtered_events_history, padded_filtered_events_next = self.divide_history_and_next(padded_filtered_events)
@@ -935,14 +939,13 @@ class FENNModel(BasicModel):
             = self.divide_history_and_next(padded_filtered_event_embeddings)   # 2 * [batch_size, filtered_seq_len- 1, d_history]
         _, padded_filtered_mask_next = self.divide_history_and_next(padded_filtered_masks)
                                                                                # [batch_size, filtered_seq_len - 1]
-        
+        the_number_of_events_per_sequence = padded_filtered_mask_next.sum(dim = -1)
+                                                                               # [batch_size]
+
         padded_filtered_mask_next_without_dummy = self.remove_dummy_event_from_mask(padded_filtered_mask_next)
                                                                                # [batch_size, filtered_seq_len - 1]
         padded_filtered_events_next_without_dummy = padded_filtered_events_next * padded_filtered_mask_next_without_dummy
                                                                                # [batch_size, filtered_seq_len - 1]
-        the_number_of_events = padded_filtered_mask_next_without_dummy.sum(dim = -1)
-                                                                               # [batch_size]
-
         padded_filtered_time_next = repeat(padded_filtered_time_next, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, filtered_seq_len - 1, num_events]
         
@@ -971,12 +974,15 @@ class FENNModel(BasicModel):
         intensity = (intensity_for_each_event * event_mask).sum(dim = -1)      # [batch_size, filtered_seq_len - 1]
         log_probability = torch.log(intensity + self.epsilon) - padded_filtered_intensity_integral_from_t_o_to_t.sum(dim = -1)
                                                                                # [batch_size, filtered_seq_len - 1]
-        # \log p(\mathcal{H}, \mathbf{x}_o)
-        log_probability_sum = (log_probability * padded_filtered_mask_next_without_dummy).sum(dim = -1)
-                                                                               # [batch_size]
-        log_probability_mean = log_probability_sum / the_number_of_events      # [batch_size]
+        log_probability_x = []
+        for batch_idx, max_seq_len in enumerate(the_number_of_events_per_sequence):
+            log_probability_x.append(log_probability[batch_idx, max_seq_len - seq_len_x - 1:max_seq_len - 1])
+        
+        log_probability_x = torch.stack(log_probability_x, dim = 0)            # [batch_size, seq_len_x]
+        # -\frac{1}{N} \log p(\mathbf{x}_o|\mathcal{H})
+        log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
 
-        return log_probability_mean
+        return log_perplexity
 
 
     '''

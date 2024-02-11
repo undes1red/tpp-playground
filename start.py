@@ -11,11 +11,11 @@ main_procedure_translator = {
 
     # Long-horizon Temporal point process
     'TPP_lh_train': 'TPP_lh',
-    'TPP_lh_plot': 'TPP_lh',
+    'TPP_lh_evaluate': 'TPP_lh',
 
-    # Outlier-directed missing data imputation
+    # Explainable History Distillation.
     'ehd_train': 'ehd',
-    'ehd_plot': 'ehd',
+    'ehd_evaluate': 'ehd',
 
     'Transformers': 'Transformers',
     'fakenews': 'fakenews'
@@ -28,11 +28,11 @@ sub_procedure_translator = {
 
     # Long-horizon Temporal point process
     'TPP_lh_train': 'Trainer',
-    'TPP_lh_plot': 'Plotter',
+    'TPP_lh_evaluate': 'Evaluator',
 
-    # Outlier-directed missing data imputation
+    # Explainable History Distillation.
     'ehd_train': 'Trainer',
-    'ehd_plot': 'Plotter',
+    'ehd_evaluate': 'Evaluator',
 
     'Transformers': 'Trainer',
     'fakenews': 'Trainer'
@@ -49,6 +49,10 @@ if __name__ == '__main__':
         # Temporal point process
         'TPP_train',
         'TPP_evaluate',
+
+        # Explainable History Distillation.
+        'ehd_train',
+        'ehd_evaluate'
         ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

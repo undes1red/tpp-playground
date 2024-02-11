@@ -141,10 +141,10 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_last_resu
         einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
         width_of_rectangle = rearrange(width_of_rectangle, einop)              # [..., integration_sample_rate - 1, ...]
 
-    # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+    # \int_{a}{b}{f(x)dx} \approx \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
     integral_of_all_events_1 = (expanded_func_value_1 * width_of_rectangle).cumsum(dim = dim)
                                                                                # [..., integration_sample_rate - 1, ...]
-    # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+    # \int_{a}{b}{f(x)dx} \approx \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
     integral_of_all_events_2 = (expanded_func_value_2 * width_of_rectangle).cumsum(dim = dim)
                                                                                # [..., integration_sample_rate - 1, ...]
     # Effectively increase the precision.
@@ -155,13 +155,12 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_last_resu
     # We have to check the shape.
     integral_start_from_zero = torch.zeros(
         ( *(integral_of_all_events.shape[:dim]), 1, *(integral_of_all_events.shape[dim + 1:] if dim != -1 else []) ), 
-        device = device)                                   # [..., 1, ...]
+        device = device)                                                       # [..., 1, ...]
     integral_of_all_events = torch.concat((integral_start_from_zero, integral_of_all_events), dim = dim)
                                                                                # [..., integration_sample_rate, ...]
     
     if only_last_result:
-        integral_of_all_events = torch.select(integral_of_all_events, dim, -1)
-                                                                               # [...]
+        integral_of_all_events = torch.select(integral_of_all_events, dim, -1) # [...]
 
     return integral_of_all_events
 
