@@ -415,10 +415,10 @@ class TFENNModel(BasicModel):
         sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
         def bisect_target(taus, probability_threshold):
-            taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
+            taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
             integral = self.model(events_history, time_history, taus, mask_history, mean, var)
-                                                                               # [batch_size, seq_len, num_events]
-            integral = integral.sum(dim = -1)                                  # [batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            integral = integral.sum(dim = -1)                                  # [sample_rate, batch_size, seq_len]
             
             return integral + torch.log(1 - probability_threshold)
 

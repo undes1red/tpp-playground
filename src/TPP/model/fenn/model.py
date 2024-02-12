@@ -212,8 +212,6 @@ class FENNModel(BasicModel):
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
-        
-
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]

@@ -307,14 +307,14 @@ class TIFIBCModel(BasicModel):
         sample_rate_list = step_split(self.sample_rate, self.mae_step)
 
         def bisect_target(taus, probability_threshold, integral_from_zero_to_inf):
-            taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)         # [batch_size, seq_len, num_events]
+            taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
             probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mask_history, mean, var)
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [sub_sample_rate, batch_size, seq_len, num_events]
             # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [sub_sample_rate, batch_size, seq_len, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')
-                                                                               # [batch_size, seq_len]
+                                                                               # [sub_sample_rate, batch_size, seq_len]
             return probability_integral - probability_threshold
         
         tau_pred = []
