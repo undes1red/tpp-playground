@@ -249,3 +249,20 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
         L1 = 0
 
     return L1
+
+
+'''
+For EHD.
+'''
+def pick_log_probability(log_probability, last_index, seq_len_x):
+    device = last_index.device
+    batch_size = last_index.shape[0]
+
+    start_idx = torch.clamp(last_index - 1 - seq_len_x, min = 0)
+                                                                           # [batch_size]
+    index_indices = torch.arange(seq_len_x, device = device)               # [seq_len_x]
+    index_indices = repeat(index_indices, '... -> b ...', b = batch_size) + start_idx.unsqueeze(dim = -1)
+                                                                           # [batch_size, seq_len_x]
+    log_probability_x = log_probability.gather(-1, index_indices)          # [batch_size, seq_len_x]
+
+    return log_probability_x

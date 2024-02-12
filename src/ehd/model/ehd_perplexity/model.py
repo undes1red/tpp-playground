@@ -23,13 +23,13 @@ class EHD(BasicModule):
     def __init__(self,
                  d_input, d_rnn, d_hidden,
                  n_layers_encoder, n_layers_decoder,
-                 n_head, d_qk, d_v, dropout, log_probability_gap, loss_balancer, epsilon, probability_threshold, 
-                 opt, device, expected_probability_gap = 0.0, samples_for_l_p = 32, training = True):
+                 n_head, d_qk, d_v, dropout, perplexity_gap, loss_balancer, epsilon, 
+                 opt, device, samples_for_l_p = 32, training = True):
         super(EHD, self).__init__()
         self.device = device
         self.opt = opt
         # The probability gap is the ratio between p(x, H_{o, t_l} - H) and p(x, H_{o, t_l}).
-        self.log_probability_gap = log_probability_gap
+        self.perplexity_gap = math.log(perplexity_gap)
         self.loss_balancer = loss_balancer
         self.samples_for_l_p = samples_for_l_p
 
@@ -42,13 +42,11 @@ class EHD(BasicModule):
         Preparing the EHD model-agnostic part.
         '''
         self.epsilon = epsilon
-        self.probability_threshold = probability_threshold
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
         self.seq_len_x = opt.info_dict['length_of_x']
         self.seq_len_h = opt.info_dict['length_of_h']
-        self.expected_probability_gap = expected_probability_gap
 
         self.model = EHD_backend(num_events = self.num_events, seq_len_x = self.seq_len_x, seq_len_h = self.seq_len_h,
                                  d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, n_layers_encoder = n_layers_encoder, 
@@ -194,9 +192,10 @@ class EHD(BasicModule):
                                                     self.seq_len_x, mean, var) # [samples_for_l_p * batch_size]
 
         L_p = F.relu(
-            repeat(log_p_h_o_t_l_x_o_mean, 'b -> s b', s = self.samples_for_l_p).flatten() - log_p_h_r_o_t_l_x_o_mean - self.log_probability_gap
+            repeat(log_p_h_o_t_l_x_o_mean, 'b -> s b', s = self.samples_for_l_p).flatten() - log_p_h_r_o_t_l_x_o_mean - self.perplexity_gap
             ).mean()
-        Loss = self.loss_balancer * L_c + L_p
+        # Loss = self.loss_balancer * L_c + L_p
+        Loss = self.loss_balancer * L_c
 
         return Loss, L_c, L_p, L_g
 
@@ -246,7 +245,7 @@ class EHD(BasicModule):
                                                    padded_selected_filtered_event_embeddings, padded_selected_filtered_masks, 
                                                    self.seq_len_x, mean, var)  # [batch_size]
 
-        L_p = F.relu(log_p_h_o_t_l_x_o_mean.unsqueeze(dim = 0) - log_p_h_r_o_t_l_x_o_mean - self.log_probability_gap).mean()
+        L_p = F.relu(log_p_h_o_t_l_x_o_mean.unsqueeze(dim = 0) - log_p_h_r_o_t_l_x_o_mean - self.perplexity_gap).mean()
 
         Loss = self.loss_balancer * L_c + L_p
 

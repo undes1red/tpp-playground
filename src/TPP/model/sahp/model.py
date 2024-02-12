@@ -96,6 +96,10 @@ class SAHPWrapper(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'graph': self.plot,
+
+            # Functions for the EHD task.
+            'ehd_perplexity': self.ehd_perplexity,
+            'ehd_event_emb': self.get_event_embedding,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -705,37 +709,28 @@ class SAHPWrapper(BasicModel):
                                                                                # 2 * [batch_size, filtered_seq_len- 1]
         padded_filtered_events_embeddings_history, padded_filtered_events_embeddings_next \
             = self.divide_history_and_next(padded_filtered_event_embeddings)   # 2 * [batch_size, filtered_seq_len- 1, d_history]
-        _, padded_filtered_mask_next = self.divide_history_and_next(padded_filtered_masks)
+        padded_filtered_mask_history, padded_filtered_mask_next = self.divide_history_and_next(padded_filtered_masks)
                                                                                # [batch_size, filtered_seq_len - 1]
         the_number_of_events_per_sequence = padded_filtered_mask_next.sum(dim = -1)
                                                                                # [batch_size]
-
+        # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+        padded_filtered_intensity_integral_from_t_o_to_t, \
+            padded_filtered_intensity_at_t = self.model(padded_filtered_time_history, padded_filtered_time_next, \
+                                                        padded_filtered_events_embeddings_history, padded_filtered_mask_history, \
+                                                        custom_events_history = True)
+                                                                               # [batch_size, filtered_seq_len - 1, num_events]
         padded_filtered_mask_next_without_dummy = self.remove_dummy_event_from_mask(padded_filtered_mask_next)
                                                                                # [batch_size, filtered_seq_len - 1]
         padded_filtered_events_next_without_dummy = padded_filtered_events_next * padded_filtered_mask_next_without_dummy
                                                                                # [batch_size, filtered_seq_len - 1]
-        padded_filtered_time_next = repeat(padded_filtered_time_next, 'b s -> b s ne', ne = self.num_events)
-                                                                               # [batch_size, filtered_seq_len - 1, num_events]
-        
-        # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
-        padded_filtered_intensity_integral_from_t_o_to_t, \
-            padded_filtered_intensity_at_t = self.model(padded_filtered_events_embeddings_history, \
-                                                        padded_filtered_time_history, \
-                                                        padded_filtered_time_next, mean = mean, var = var, \
-                                                        custom_events_history = True)
-                                                                               # [batch_size, filtered_seq_len - 1, num_events]
-
         event_mask = torch.nn.functional.one_hot(padded_filtered_events_next_without_dummy, num_classes = self.num_events)
                                                                                # [batch_size, filtered_seq_len - 1, num_events]
         padded_filtered_intensity_at_t = (padded_filtered_intensity_at_t * event_mask).sum(dim = -1)
                                                                                # [batch_size, filtered_seq_len - 1]
         log_probability = torch.log(padded_filtered_intensity_at_t + self.epsilon) - padded_filtered_intensity_integral_from_t_o_to_t.sum(dim = -1)
                                                                                # [batch_size, filtered_seq_len - 1]
-        log_probability_x = []
-        for batch_idx, max_seq_len in enumerate(the_number_of_events_per_sequence):
-            log_probability_x.append(log_probability[batch_idx, max_seq_len - seq_len_x - 1:max_seq_len - 1])
-        
-        log_probability_x = torch.stack(log_probability_x, dim = 0)            # [batch_size, seq_len_x]
+        log_probability_x = pick_log_probability(log_probability, the_number_of_events_per_sequence, seq_len_x)
+                                                                               # [batch_size, seq_len_x]
         # -\frac{1}{N} \log p(\mathbf{x}_o|\mathcal{H})
         log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
 

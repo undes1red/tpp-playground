@@ -974,11 +974,9 @@ class FENNModel(BasicModel):
         intensity = (intensity_for_each_event * event_mask).sum(dim = -1)      # [batch_size, filtered_seq_len - 1]
         log_probability = torch.log(intensity + self.epsilon) - padded_filtered_intensity_integral_from_t_o_to_t.sum(dim = -1)
                                                                                # [batch_size, filtered_seq_len - 1]
-        log_probability_x = []
-        for batch_idx, max_seq_len in enumerate(the_number_of_events_per_sequence):
-            log_probability_x.append(log_probability[batch_idx, max_seq_len - seq_len_x - 1:max_seq_len - 1])
         
-        log_probability_x = torch.stack(log_probability_x, dim = 0)            # [batch_size, seq_len_x]
+        log_probability_x = pick_log_probability(log_probability, the_number_of_events_per_sequence, seq_len_x)
+                                                                               # [batch_size, seq_len_x]
         # -\frac{1}{N} \log p(\mathbf{x}_o|\mathcal{H})
         log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
 
