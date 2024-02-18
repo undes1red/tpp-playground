@@ -181,7 +181,10 @@ class TPPTrainer:
                     logger.warning(f'You require us to track the {key} process, but nothing is recorded!')
                     continue
 
-                log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                if key == 'Best':
+                    log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                else:
+                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
                 logger.info(f'Logs of {key} process are stored in {log_filepath}.')
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)
