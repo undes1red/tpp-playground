@@ -151,4 +151,5 @@ parameter_set/*
 src/fakenews/*
 src/missing/*
 src/Transformers/*
-src/TPP_lh/*
+src/TPP_patch/*
+src/ehd/*

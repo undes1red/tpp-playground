@@ -3,7 +3,7 @@ from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
 from src.ehd.utils import read_yaml, print_args
-from src.ehd.evaluator_evaluation_functions import draw, spearman_and_l1, mae_and_f1, mae_e_and_f1, lsp_and_lrp, lsp_and_lrp_fast, lsp_and_lrp_trend
+from src.ehd.evaluator_evaluation_functions import draw, spearman_and_l1, mae_and_f1, mae_e_and_f1, label_of_all_events
 from src.ehd.model import get_model
 from src.ehd.dataloader import prepare_dataloaders
 
@@ -55,7 +55,7 @@ class ehdEvaluator:
         '''
         model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
         model_state_dict = model_raw['model']
-        model.load_state_dict(model_state_dict)
+        missing_keys, unexpected_keys = model.load_state_dict(model_state_dict)
         model.requires_grad_(requires_grad = False)
         logger.info(print_args(self.opt))
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -72,12 +72,10 @@ class ehdEvaluator:
         task_dict = {
             'best':{
             'graph': self.task_graph,
-            'lsp_and_lrp': self.lsp_and_lrp,
-            'lsp_and_lrp_fast': self.lsp_and_lrp_fast,
-            'lsp_and_lrp_trend': self.lsp_and_lrp_trend,
             'spearman_and_l1': self.task_spearman_and_l1,
             'mae_and_f1': self.task_mae_and_f1,
-            'mae_e_and_f1': self.task_mae_e_and_f1
+            'mae_e_and_f1': self.task_mae_e_and_f1,
+            'label_of_all_events': self.task_label_of_all_events
         },
         'all':{
             'sample': self.task_sample,
@@ -106,42 +104,6 @@ class ehdEvaluator:
                 draw(self.model, test_data, 'test', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
-    
-
-    def lsp_and_lrp(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            lsp_and_lrp(self.model, self.training_data, 'train', opt = self.opt)
-
-        if self.opt.evaluation:
-            lsp_and_lrp(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
-
-        if self.opt.test:
-            lsp_and_lrp(self.model, self.test_data, 'test', opt = self.opt)
-
-
-    def lsp_and_lrp_fast(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            lsp_and_lrp_fast(self.model, self.training_data, 'train', opt = self.opt)
-
-        if self.opt.evaluation:
-            lsp_and_lrp_fast(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
-
-        if self.opt.test:
-            lsp_and_lrp_fast(self.model, self.test_data, 'test', opt = self.opt)
-
-
-    def lsp_and_lrp_trend(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            lsp_and_lrp_trend(self.model, self.training_data, 'train', opt = self.opt)
-
-        if self.opt.evaluation:
-            lsp_and_lrp_trend(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
-
-        if self.opt.test:
-            lsp_and_lrp_trend(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_spearman_and_l1(self):
@@ -178,6 +140,18 @@ class ehdEvaluator:
 
         if self.opt.test:
             mae_e_and_f1(self.model, self.test_data, 'test', opt = self.opt)
+
+
+    def task_label_of_all_events(self):
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.train:
+            label_of_all_events(self.model, self.training_data, 'train', opt = self.opt)
+
+        if self.opt.evaluation:
+            label_of_all_events(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+
+        if self.opt.test:
+            label_of_all_events(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_sample(self):

@@ -21,16 +21,15 @@ class ehdEvaluatorArguments(BasicArguments):
                                                                                  The number of practical training steps is agg_update_step * n_training_steps.')
         # New
         # Used to generate path to the MTPP model checkpoints.
-        self.parser.add_argument('--used_procedure', type = str, default = 'TPP', help='Which main procedure does this checkpoint belong to?')
-        self.parser.add_argument('--used_model_name', default=None, help="The MTPP model name.")
-        self.parser.add_argument('--used_model_config', type=str, default = None, help='The name of model config file used during training.')
-        self.parser.add_argument('--log_time', action='store_true')
-
+        # self.parser.add_argument('--used_procedure', type = str, default = 'TPP', help='Which main procedure does this checkpoint belong to?')
+        # self.parser.add_argument('--used_model_name', default=None, help="The MTPP model name.")
+        # self.parser.add_argument('--used_model_config', type=str, default = None, help='The name of model config file used during training.')
+        # self.parser.add_argument('--log_time', action='store_true')
 
         # Model save and log management
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
         
-        # Training procedure related hyperparameters
+        # Training procedure related hyp    erparameters
         self.parser.add_argument('-ub', '--used_batch_size', type=int, default=2048, help='Batch size used for training the model.')
         
         # Model-related hyperparameters
@@ -82,7 +81,7 @@ def Evaluator_postprocess(opt, root_path):
 
     opt.training_batch_size = 1
     opt.evaluation_batch_size = 1
-    opt.abs_mtpp_model_config = os.path.join(root_path, 'config', opt.used_procedure, opt.used_model_name, opt.used_model_config)
+    # opt.abs_mtpp_model_config = os.path.join(root_path, 'config', opt.used_procedure, opt.used_model_name, opt.used_model_config)
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None

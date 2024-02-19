@@ -76,7 +76,7 @@ class ehdTrainer:
         Load model
         '''
         self.model_class = get_model(self.opt)
-        model = self.model_class(device = self.opt.device, opt = self.opt, **model_param)
+        model = self.model_class(device = self.opt.device, training = True, opt = self.opt, **model_param)
     
         self.opt.__dict__.update(model_param)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -149,7 +149,7 @@ class ehdTrainer:
         '''
         Start training.
         '''
-        # self.evaluation_report(0)
+        self.evaluation_report(0)
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
@@ -179,7 +179,10 @@ class ehdTrainer:
                     logger.warning(f'You require us to track the {key} process, but nothing is recorded!')
                     continue
 
-                log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                if key == 'Best':
+                    log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                else:
+                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
                 logger.info(f'Logs of {key} process are stored in {log_filepath}.')
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)

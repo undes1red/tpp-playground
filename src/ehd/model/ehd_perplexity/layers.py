@@ -5,18 +5,15 @@ from einops import rearrange
 from src.ehd.model.ehd_perplexity.selfattn import SelfAttn
 
 
-class TransformerEncoder(nn.Module):
-    def __init__(self, d_input, d_hidden, n_head, d_qk, d_v, n_layers_history_encoder, device, dropout):
-        super(TransformerEncoder, self).__init__()
+class TransformerDecoder(nn.Module):
+    def __init__(self, d_input, d_hidden, n_head, d_qk, d_v, n_layers_history_decoder, device, dropout):
+        super(TransformerDecoder, self).__init__()
         self.device = device
 
-        self.encoder = nn.ModuleList(
-            [
+        self.decoder = nn.ModuleList([
                 TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, \
-                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
-                for _ in range(n_layers_history_encoder)
-            ]
-        )
+                                 d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device) for _ in range(n_layers_history_decoder)
+            ])
 
 
     def forward(self, x, non_pad_mask, self_attn_mask):
@@ -27,47 +24,10 @@ class TransformerEncoder(nn.Module):
         3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
         Outputs:
         '''
-        for enc_layer in self.encoder:
-            x, _ = enc_layer(
+        for dec_layer in self.decoder:
+            x, _ = dec_layer(
                 x, x, x, non_pad_mask = non_pad_mask,
-                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len_h, d_input]
-        
-        return x
-
-
-class TransformerDecoder(nn.Module):
-    def __init__(self, d_input, d_hidden, n_head, d_qk, d_v, n_layers_history_decoder, device, dropout):
-        super(TransformerDecoder, self).__init__()
-        self.device = device
-
-        self.decoder = nn.ModuleList()
-
-        for _ in range(n_layers_history_decoder):
-            self.decoder.append(
-                nn.ModuleList([
-                    TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, \
-                                     d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device, ffn = False),
-                    TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, \
-                                     d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
-                ])
-            )
-
-
-    def forward(self, x, reference, non_pad_mask, self_attn_mask):
-        '''
-        Args:
-        1. x: input tensor. shape: [batch_size, seq_len, d_input]
-        2. self_attn_mask: mask tensor for used by self attention. shape: [seq_len, seq_len]
-        3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
-        Outputs:
-        '''
-        for dec_layer_1, dec_layer_2 in self.decoder:
-            x, _ = dec_layer_1(
-                x, x, x, non_pad_mask = non_pad_mask,
-                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len_h, d_input]
-            x, _ = dec_layer_2(
-                x, reference, reference, non_pad_mask = non_pad_mask,
-                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len_h, d_input]
+                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
         
         return x
 
@@ -95,11 +55,13 @@ class TransformerLayer(nn.Module):
         Outputs:
         '''
         output, attn = self.attn(q, k, v, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        if non_pad_mask is not None:
+            output *= rearrange(non_pad_mask, '... -> ... 1')                  # [batch_size, seq_len, d_input]
 
         if self.ffn:
             output = self.ffn(output)                                          # [batch_size, seq_len, d_input]
-            output *= rearrange(non_pad_mask, '... -> ... 1')                  # [batch_size, seq_len, d_input]
+            if non_pad_mask is not None:
+                output *= rearrange(non_pad_mask, '... -> ... 1')              # [batch_size, seq_len, d_input]
 
         return output, attn
 

@@ -3,7 +3,6 @@ import seaborn as sns
 import os
 import numpy as np
 import pickle as pkl
-import gc
 
 from einops import pack
 from tqdm import tqdm
@@ -60,10 +59,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
         
         logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
         plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.png'), dpi = 1000)
-        fig.clf()
         plt.close(fig = fig)
-        del ax
-        gc.collect()
 
 
 def spearman_and_l1(model, dataset, desc, opt):
@@ -198,170 +194,63 @@ def mae_e_and_f1(model, dataset, desc, opt):
     f.close()
 
 
-def lsp_and_lrp(model, dataset, desc, opt):
+def label_of_all_events(model, dataset, desc, opt):
     '''
-    This function is called when task_name = lsp_and_lrp.
+    This function is called when task_name = mae_e_and_f1.
+
+    This function calculates the average of mae_e and macro-f1 between the model prediction based on history
+    and the ground truth on all available event sequences.
+    We dump all mae_e values for calculating Q1, Q2, and Q3 later.
     '''
-    metric_list = None
+
+    all_padded_filtered_labels = []
+    all_padded_filtered_input_x = []
+    all_padded_filtered_input_y = []
+    all_padded_selected_filtered_labels = []
+    all_padded_selected_filtered_input_x = []
+    all_padded_selected_filtered_input_y = []
 
     elapsed_time = 0
     data_size = 0
-
-    with tqdm(dataset, desc = f'lsp and lrp for {desc}') as progress_bar:
+    with tqdm(dataset, desc = f'Recording which events are preferred in {desc}') as progress_bar:
         for minibatch in progress_bar:
-            '''
-            percentage_remained_events_per_seq, random_percentage_remained_events_per_seq, greedy_percentage_remained_events_per_seq, \
-            l_sp_per_seq, l_sp_random_per_seq, l_sp_g1_per_seq, \
-            l_rp_per_seq, l_rp_random_per_seq, l_rp_g1_per_seq, \
-            time_baseline_1_given_percentage_to_ehd_per_seq, time_baseline_1_to_ehd_per_seq, time_baseline_2_to_ehd_per_seq
-                = model('lsp_and_lrp', minibatch, opt)
-            '''
-            metrics_per_seq = model('lsp_and_lrp', minibatch, opt)
-            if metric_list is None:
-                metric_list = [[] for _ in range(len(metrics_per_seq))]
-            
-            for metric_value_per_seq, metric_values in zip(metrics_per_seq, metric_list):
-                metric_values.append(metric_value_per_seq)
+            padded_filtered_labels_per_seq, padded_filtered_input_x_per_seq, padded_filtered_input_y_per_seq, \
+            padded_selected_filtered_labels_per_seq, padded_selected_filtered_input_x_per_seq, padded_selected_filtered_input_y_per_seq \
+                = model('mae_e_and_f1', minibatch, opt)
+                                                                               # [batch_size, seq_len]
+            if mae_e is None:
+                mae_e = mae_e_per_seq.flatten()
+            else:
+                mae_e, mae_e_ps = pack((mae_e, mae_e_per_seq.flatten()), '*')
 
+            if probability_sum is None:
+                probability_sum = probability_sum_per_seq.flatten()
+            else:
+                probability_sum, probability_sum_ps = pack((probability_sum, probability_sum_per_seq.flatten()), '*')
+
+            f1 += f1_per_seq
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
-    metric_list = np.array(metric_list)
-
-    the_mean_of_metric = metric_list.mean(axis = -1).tolist()
+    f1 = np.array(f1).mean()
+    mean_mae_e = mae_e.mean().item()
+    mean_probability_sum = probability_sum.mean().item()
 
     if not os.path.exists(opt.store_dir):
         os.makedirs(opt.store_dir)
-
-    # Metric Translator
-    metric_name = [
-        'percentage_remained_events', 'random_percentage_remained_events', 'greedy_percentage_remained_events',
-        'l_sp', 'l_sp_random', 'l_sp_g1', 'selected_L_sp_given_events', 'l_rp', 'l_rp_random', 'l_rp_g1', 'selected_L_rp_given_events', 
-        'time_baseline_1_given_percentage_to_ehd_per_seq', 'time_baseline_1_to_ehd_per_seq', 'time_baseline_2_to_ehd_per_seq',
-        'time_greedy_given_percentage_to_ehd'
-        ]
-    assert len(metric_name) == len(the_mean_of_metric)
-    dict_metric_name = {name: value for name, value in zip(metric_name, the_mean_of_metric)}
     
-    # Report the average of mae-e and f1.
-    result_file = os.path.join(opt.store_dir, f'{desc}_lsp_and_lrp.txt')
+    '''
+    Report the average of mae-e and f1.
+    '''
+    result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
     f = open(result_file, 'w')
-    f.write(f"For the {desc} of {opt.dataset_name}, we announce that the average percentage of remained events is {dict_metric_name['percentage_remained_events']}.\n")
-    f.write(f"For random selection, the average percentage of remained events is {dict_metric_name['random_percentage_remained_events']}.\n")
-    f.write(f"For greedy, the average percentage of remained events is {dict_metric_name['greedy_percentage_remained_events']}.\n")
-    f.write(f"The average ratio between probability of selected events and originals is {dict_metric_name['l_sp']}, while random removal achieved {dict_metric_name['l_sp_random']}, greedy achieved {dict_metric_name['selected_L_sp_given_events']}.\n")
-    f.write(f"The average ratio between probability of remained events and originals is {dict_metric_name['l_rp']}, while random removal achieved {dict_metric_name['l_rp_random']}, greedy achieved {dict_metric_name['selected_L_rp_given_events']}.\n")
-    f.write(f"The average ratio between the running time of EHD and random selection with given K is {dict_metric_name['time_baseline_1_given_percentage_to_ehd_per_seq']}.\n")
-    f.write(f"The average ratio between the running time of EHD and greedy selection with given K is {dict_metric_name['time_greedy_given_percentage_to_ehd']}.\n")
-    f.write(f"The average ratio between the running time of EHD and random selection with given L_sp and L_rp is {dict_metric_name['time_baseline_1_to_ehd_per_seq']}.\n")
-    f.write(f"The average ratio between the running time of EHD and greedy selection with given L_sp and L_rp is {dict_metric_name['time_baseline_2_to_ehd_per_seq']}.\n") 
-    f.write(f"Evaluation speed: {elapsed_time/data_size}s per sequence.") 
+    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(t) is {mean_probability_sum}. \n Evaluation speed: {elapsed_time/data_size}s per sequence.')
     f.close()
 
-    # Dump the detailed distribution of mae-e for further usage.
-    data = {metric_name: metric_values for (metric_name, metric_values) in zip(metric_name, metric_list.tolist())}
-
-    target_file = os.path.join(opt.store_dir, f'{desc}_data.pkl')
-    f = open(target_file, 'wb')
-    pkl.dump(data, f)
-    f.close()
-
-
-def lsp_and_lrp_fast(model, dataset, desc, opt):
     '''
-    This function is called when task_name = lsp_and_lrp.
+    Dump the detailed distribution of mae-e for further usage.
     '''
-    output_list = None
-
-    elapsed_time = 0
-    data_size = 0
-
-    with tqdm(dataset, desc = f'lsp and lrp fast for {desc}') as progress_bar:
-        for minibatch in progress_bar:
-            '''
-            percentage_remained_events, L_sp, L_sp_r, L_rp, L_rp_r, time_baseline_1_given_percentage_to_ehd, \
-            history_mask, time_history, time_future, events_history, events_future \
-                = model('lsp_and_lrp', minibatch, opt, fast = True)
-            '''
-            metrics_per_seq = model('lsp_and_lrp', minibatch, opt, fast = True)
-            if output_list is None:
-                output_list = [[] for _ in range(len(metrics_per_seq))]
-            
-            for metric_value_per_seq, metric_values in zip(metrics_per_seq, output_list):
-                metric_values.append(metric_value_per_seq)
-
-        elapsed_time = progress_bar.format_dict['elapsed']
-        data_size = progress_bar.format_dict['total']
-
-    metric_list = np.array(output_list[:-5])
-
-    the_mean_of_metric = metric_list.mean(axis = -1).tolist()
-
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-
-    # Metric Translator
-    output_name = [
-        'percentage_remained_events', 'L_sp', 'l_sp_random', 'L_rp',
-        'l_rp_random', 'time_baseline_1_given_percentage_to_ehd', 
-        'history_mask', 'time_history', 'time_future', 'events_history', 'events_future'
-        ]
-    metric_name = [
-        'percentage_remained_events', 'L_sp', 'l_sp_random', 'L_rp',
-        'l_rp_random', 'time_baseline_1_given_percentage_to_ehd', 
-        # 'history_mask', 'time_history', 'time_future', 'events_history', 'events_future'
-        ]
-    assert len(metric_name) == len(the_mean_of_metric)
-    dict_metric_name = {name: value for name, value in zip(metric_name, the_mean_of_metric)}
-    
-    # Report the average of mae-e and f1.
-    result_file = os.path.join(opt.store_dir, f'{desc}_lsp_and_lrp_fast.txt')
-    f = open(result_file, 'w')
-    f.write(f"For the {desc} of {opt.dataset_name}, we announce that the average percentage of remained events is {dict_metric_name['percentage_remained_events']}.\n")
-    f.write(f"The average ratio between probability of selected events and originals is {dict_metric_name['L_sp']}, while random removal achieved {dict_metric_name['l_sp_random']}.\n")
-    f.write(f"The average ratio between probability of remained events and originals is {dict_metric_name['L_rp']}, while random removal achieved {dict_metric_name['l_rp_random']}.\n")
-    f.write(f"The average ratio between the running time of EHD and random selection with given K is {dict_metric_name['time_baseline_1_given_percentage_to_ehd']}.\n")
-    f.write(f"Evaluation speed: {elapsed_time/data_size}s per sequence.") 
-    f.close()
-
-    # Dump the detailed distribution of mae-e for further usage.
-    data = {metric_name: metric_values for (metric_name, metric_values) in zip(output_name, output_list)}
-
-    target_file = os.path.join(opt.store_dir, f'{desc}_data_fast.pkl')
-    f = open(target_file, 'wb')
-    pkl.dump(data, f)
-    f.close()
-
-
-def lsp_and_lrp_trend(model, dataset, desc, opt):
-    '''
-    This function is called when task_name = lsp_and_lrp.
-    '''
-    L_rp_rs_ratios, L_sp_rs_ratios = [], []
-
-    with tqdm(dataset, desc = f'lsp and lrp trend for {desc}') as progress_bar:
-        for minibatch in progress_bar:
-            '''
-            percentage_remained_events, L_sp, L_sp_r, L_rp, L_rp_r, time_baseline_1_given_percentage_to_ehd, \
-            history_mask, time_history, time_future, events_history, events_future \
-                = model('lsp_and_lrp', minibatch, opt, fast = True)
-            '''
-            L_rp_rs_ratio_per_seq, L_sp_rs_ratio_per_seq = model('lsp_and_lrp_trend', minibatch, opt)
-            L_rp_rs_ratios.append(L_rp_rs_ratio_per_seq)
-            L_sp_rs_ratios.append(L_sp_rs_ratio_per_seq)
-
-    L_rp_rs_ratios = np.stack(L_rp_rs_ratios, axis = 0)
-    L_sp_rs_ratios = np.stack(L_sp_rs_ratios, axis = 0)
-
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-
-    target_file = os.path.join(opt.store_dir, f'{desc}_dppl_l_distribution.pkl')
-    f = open(target_file, 'wb')
-    pkl.dump(L_rp_rs_ratios, f)
-    f.close()
-
-    target_file = os.path.join(opt.store_dir, f'{desc}_dppl_d_distribution.pkl')
-    f = open(target_file, 'wb')
-    pkl.dump(L_sp_rs_ratios, f)
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e.pkl')
+    f = open(mae_e_dist_file, 'wb')
+    pkl.dump(mae_e, f)
     f.close()

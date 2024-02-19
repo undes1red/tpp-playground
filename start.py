@@ -10,8 +10,8 @@ main_procedure_translator = {
     'TPP_evaluate': 'TPP',
 
     # Long-horizon Temporal point process
-    'TPP_lh_train': 'TPP_lh',
-    'TPP_lh_evaluate': 'TPP_lh',
+    'TPP_patch_train': 'TPP_patch',
+    'TPP_patch_evaluate': 'TPP_patch',
 
     # Explainable History Distillation.
     'ehd_train': 'ehd',
@@ -27,8 +27,8 @@ sub_procedure_translator = {
     'TPP_evaluate': 'Evaluator',
 
     # Long-horizon Temporal point process
-    'TPP_lh_train': 'Trainer',
-    'TPP_lh_evaluate': 'Evaluator',
+    'TPP_patch_train': 'Trainer',
+    'TPP_patch_evaluate': 'Evaluator',
 
     # Explainable History Distillation.
     'ehd_train': 'Trainer',
@@ -52,7 +52,11 @@ if __name__ == '__main__':
 
         # Explainable History Distillation.
         'ehd_train',
-        'ehd_evaluate'
+        'ehd_evaluate',
+
+        # Long-horizon Temporal point process
+        'TPP_patch_train',
+        'TPP_patch_evaluate',
         ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

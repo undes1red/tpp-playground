@@ -1,6 +1,5 @@
 import os, argparse
 from src.arguments import BasicArguments
-from src.ehd.utils import suffix
 
 
 class ehdTrainerArguments(BasicArguments):
@@ -11,8 +10,8 @@ class ehdTrainerArguments(BasicArguments):
         # Input data
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/${main_procedure_name}.')
         self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
-        # self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
-        # self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
+        self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
+        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='Training steps used for training the model.')
@@ -22,20 +21,8 @@ class ehdTrainerArguments(BasicArguments):
                                                                             agg_update_step * n_training_steps')
         self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
                             help='The number of warmup steps. We won\'t store any checkpoints during warmup.')
-
         # wandb support
         self.parser.add_argument('--wandb', action='store_true', help='Use wandb to record and visualize the training procedure.')
-
-        # New
-        # Used to generate path to the MTPP model checkpoints.
-        self.parser.add_argument('--used_procedure', type = str, default = 'TPP', help='Which main procedure does this checkpoint belong to?')
-        self.parser.add_argument('--used_model_name', default=None, help="The MTPP model name.")
-        self.parser.add_argument('--used_lr', type=float, default=0.1, help='Used learning rate for training the model.')
-        self.parser.add_argument('-utb', '--used_training_batch_size', type=int, default=2048, help='Used batch size of training data.')
-        self.parser.add_argument('--used_n_training_steps', type=int, default=10000, help='Used training steps for training the model.')
-        self.parser.add_argument('--used_dataloader_name', type=str, default = None, help='The name of dataloader used during training. Caution: we force the EHD model to use the same dataloader used to train the MTPP model.')
-        self.parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of dataloader config file used during training. Caution: we force the EHD model to use the same dataloader config used to train the MTPP model.')
-        self.parser.add_argument('--used_model_config', type=str, default = None, help='The name of model config file used during training.')
 
         # Model save and log management
         self.parser.add_argument('--save_mode', type=str, choices=['all', 'best'], default='best', help='Store all model checkpoints or only store the best one.')
@@ -94,22 +81,15 @@ def Trainer_postprocess(opt, root_path):
         opt.n_warmup_steps *= opt.agg_update_step
     opt.base_dataset_name = cut_the_dataset_name(opt.dataset_name)
 
-    # Used MTPP model related
-    opt.abs_mtpp_model_config = os.path.join(root_path, 'config', opt.used_procedure, opt.used_model_name, opt.used_model_config)
-    opt.used_model_config = os.path.basename(opt.abs_mtpp_model_config)
+    opt.root_path = root_path
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.log = os.path.join(root_path, 'log', opt.procedure, opt.dataset_name)
     opt.save_model = os.path.join(root_path, 'model', opt.procedure, opt.dataset_name)
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
     opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
-    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
-    opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.used_dataloader_config else None
-    opt.dataloader_name = opt.used_dataloader_name
-
-    model_hyperparameters = suffix(opt, 'used_model_name', 'used_lr', 'used_training_batch_size', 'used_n_training_steps', 'dataloader_config', 'used_model_config')
-    folder_suffix = 'model_' + model_hyperparameters
-    opt.mtpp_checkpoint_dir = os.path.join(root_path, 'model', opt.used_procedure, opt.base_dataset_name, folder_suffix)
+    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
+    opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
 
     return opt
 

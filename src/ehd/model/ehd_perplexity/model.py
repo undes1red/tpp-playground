@@ -1,17 +1,16 @@
 import torch, copy, os, importlib, math
 import torch.nn.functional as F
 import numpy as np
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce, pack
-from scipy.stats import spearmanr
 
 from src.ehd.utils import read_yaml, print_args
 from src.ehd.model.ehd_perplexity.submodel import EHD_backend
 from src.ehd.model.utils import BasicModule, check_tensor, move_from_tensor_to_ndarray
 from src.ehd.model.ehd_perplexity.plot import * 
 from src.ehd.model.ehd_perplexity.nes.nes import NES
-
+from src.ehd.utils import suffix
 from src.taskhost_utils import getLogger
+
 logger = getLogger(__name__)
 
 
@@ -24,7 +23,7 @@ class EHD(BasicModule):
                  d_input, d_rnn, d_hidden,
                  n_layers_encoder, n_layers_decoder,
                  n_head, d_qk, d_v, dropout, perplexity_gap, loss_balancer, epsilon, 
-                 opt, device, samples_for_l_p = 32, training = True):
+                 opt, device, additional_model, samples_for_l_p = 32, training = True):
         super(EHD, self).__init__()
         self.device = device
         self.opt = opt
@@ -36,6 +35,14 @@ class EHD(BasicModule):
         '''
         Load the trained TPP model checkpoint.
         '''
+        self.opt.__dict__.update(additional_model)
+        opt.abs_mtpp_model_config = os.path.join(opt.root_path, 'config', opt.used_procedure, opt.used_model_name, opt.used_model_config)
+        opt.used_model_config = os.path.basename(opt.abs_mtpp_model_config)
+        opt.abs_used_dataloader_config = os.path.join(opt.root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
+        opt.used_dataloader_config = os.path.basename(opt.abs_used_dataloader_config) if opt.abs_used_dataloader_config else None
+        model_hyperparameters = suffix(opt, 'used_model_name', 'used_lr', 'used_training_batch_size', 'used_n_training_steps', 'used_dataloader_config', 'used_model_config')
+        folder_suffix = 'model_' + model_hyperparameters
+        opt.mtpp_checkpoint_dir = os.path.join(opt.root_path, 'model', opt.used_procedure, opt.base_dataset_name, folder_suffix)
         self.load_model(training = training)
 
         '''
