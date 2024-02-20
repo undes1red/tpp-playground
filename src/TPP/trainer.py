@@ -34,8 +34,8 @@ class TPPTrainer:
             'num_format': {'lr': ':8.5f', 'tensor_memory_consumption': ':5f', 'reserved_memory': ':5f'},
             'suffix': {'lr': '', 'tensor_memory_consumption': 'MiB', 'reserved_memory': 'MiB'},
             'lr': self.sched_optimizer.get_lr(),
-            'tensor_memory_consumption': torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024,
-            'reserved_memory': torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024,
+            'tensor_memory_consumption': torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
+            'reserved_memory': torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
         }
 
 
@@ -76,14 +76,14 @@ class TPPTrainer:
         Load model
         '''
         self.model_class = get_model(self.opt)
-        model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
+        self.model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
     
         self.opt.__dict__.update(model_param)
 
-        trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_parameters = sum(p.numel() for p in model.parameters())
+        trainable_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        total_parameters = sum(p.numel() for p in self.model.parameters())
         self.opt.trainable_parameters = trainable_parameters
         self.opt.epoch = opt.n_training_steps/opt.training_size
         logger.info(print_args(self.opt))
@@ -94,8 +94,9 @@ class TPPTrainer:
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 
         If you want to use another learning rate scheduler, plz modify it in src.optim.
         '''
-        self.sched_optimizer = ScheduledOptim(opt, model)
-        self.model = DP(model)
+        self.sched_optimizer = ScheduledOptim(opt, self.model)
+        if self.opt.cuda:
+            self.model = DP(self.model)
         self.task()
     
     
@@ -151,7 +152,7 @@ class TPPTrainer:
         '''
         Start training.
         '''
-        self.evaluation_report(0)
+        # self.evaluation_report(0)
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
@@ -258,7 +259,7 @@ class TPPTrainer:
 
     def save(self, current_step, eva_report_format_dict, test_report_format_dict):
         # We will store the checkpoint after model evaluation.
-        checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict(),
+        checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict() if self.opt.cuda else self.model.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
         if self.opt.save_mode == 'all':
