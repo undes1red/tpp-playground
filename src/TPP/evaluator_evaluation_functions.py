@@ -326,6 +326,54 @@ def mae_e_and_f1_by_time_event(model, dataset, desc, opt):
     f.close()
 
 
+def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
+    '''
+    This function is called when task_name = mae_e_and_f1.
+
+    This function calculates the average of mae_e and macro-f1 between the model prediction based on history
+    and the ground truth on all available event sequences.
+    We dump all mae_e values for calculating Q1, Q2, and Q3 later.
+    '''
+    elapsed_time = 0
+    data_size = 0
+
+    list_mae = []
+    f1 = []
+
+    with tqdm(dataset, desc = f'MAE and macro-f1 for imputated events in {desc}:') as progress_bar:
+        for minibatch in progress_bar:
+            mae_per_seq, f1_per_seq = model('mae_and_f1_imputated_events', minibatch, opt)
+                                                                               # [batch_size, seq_len]
+            list_mae.append(mae_per_seq.flatten().tolist())
+            f1.append(f1_per_seq)
+
+        elapsed_time = progress_bar.format_dict['elapsed']
+        data_size = progress_bar.format_dict['total']
+
+
+    f1 = np.array(f1).mean()
+    mean_mae = np.concatenate(list_mae).mean().item()
+
+    if not os.path.exists(opt.store_dir):
+        os.makedirs(opt.store_dir)
+    
+    '''
+    Report the average of mae-e and f1.
+    '''
+    result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1_of_imputated_events.txt')
+    f = open(result_file, 'w')
+    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}. Evaluation speed: {elapsed_time/data_size}s per sequence.')
+    f.close()
+
+    '''
+    Dump the detailed distribution of mae-e for further usage.
+    '''
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_of_imputated_events.pkl')
+    f = open(mae_e_dist_file, 'wb')
+    pkl.dump({'mae_e': list_mae, 'f1': f1}, f)
+    f.close()
+
+
 def samples_from_et(model, dataset, desc, opt):
     '''
     This function is called when task_name = mae_e_and_f1.

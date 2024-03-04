@@ -47,6 +47,8 @@ class TPPEvaluatorArguments(BasicArguments):
         parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
         parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
         parser.add_argument('--task_name', type=str, help='Define which evaluation task you\'d like to start.')
+        parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
+
 
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',

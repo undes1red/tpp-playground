@@ -3,9 +3,7 @@ from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import getLogger
 from src.TPP.utils import read_yaml, print_args
-from src.TPP.evaluator_evaluation_functions import draw, spearman_and_l1, mae_and_f1, \
-                                                   mae_e_and_f1, which_event_occurs_first, mae_e_and_f1_by_time_event, \
-                                                   samples_from_et
+from src.TPP.evaluator_evaluation_functions import *
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
 
@@ -68,7 +66,12 @@ class TPPEvaluator:
         self.opt.trainable_parameters = trainable_parameters
         logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
-        self.model = DP(model)
+        if self.opt.cuda:
+            self.model = DP(model)
+        else:
+            self.model = model
+
+        self.model.eval()
         
         self.task()
     
@@ -83,6 +86,7 @@ class TPPEvaluator:
             'mae_e_and_f1_by_time_event': self.task_mae_e_and_f1_by_time_event,
             'which_event_occurs_first': self.task_which_event_occurs_first,
             'samples_from_et': self.task_samples_from_et,
+            'mae_and_f1_of_imputated_events': self.task_mae_and_f1_of_imputated_events
         },
         'all':{
             'sample': self.task_sample,
@@ -147,6 +151,18 @@ class TPPEvaluator:
 
         if self.opt.test:
             mae_e_and_f1_by_time_event(self.model, self.test_data, 'test', opt = self.opt)
+
+
+    def task_mae_and_f1_of_imputated_events(self):
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.train:
+            mae_and_f1_of_imputated_events(self.model, self.training_data, 'train', opt = self.opt)
+
+        if self.opt.evaluation:
+            mae_and_f1_of_imputated_events(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+
+        if self.opt.test:
+            mae_and_f1_of_imputated_events(self.model, self.test_data, 'test', opt = self.opt)
 
 
     def task_mae_e_and_f1(self):
