@@ -10,6 +10,6 @@ class BasicArguments:
                             help="Set it to true if you want to use GPU to accelerate model training.")
 
         # The number of Dataloader worker
-        self.parser.add_argument('--n_worker', default=4, type=int,
+        self.parser.add_argument('--n_worker', default=8, type=int,
                   help='The number of dataloader workers. For most datasets, multiprocessing might speed up the training procedure. But you should set it to lower value, even 0 \
                       if you meet \'received 0 items of ancdata\' exception.')

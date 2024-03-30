@@ -369,7 +369,7 @@ class THPWrapper(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
-            probability = self.model.integration_probability_estimator(expanded_probability_per_event, timestamp, resolution)[..., -1]
+            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_last_result = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 
