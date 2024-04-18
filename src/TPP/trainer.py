@@ -152,7 +152,7 @@ class TPPTrainer:
         '''
         Start training.
         '''
-        # self.evaluation_report(0)
+        self.evaluation_report(0)
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)

@@ -165,7 +165,7 @@ def mae_e_and_f1(model, dataset, desc, opt):
         probability_integral_from_zero_to_infinite = []
     elapsed_time = 0
     data_size = 0
-    capable_of_sending_event_next = ['fenn', 'fullynn', 'sahp', 'thp']
+    capable_of_sending_event_next = ['fenn', 'fullynn', 'sahp', 'thp', 'marked_lognormmix']
 
     with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc}') as progress_bar:
         for minibatch in progress_bar:

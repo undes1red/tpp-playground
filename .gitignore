@@ -153,3 +153,6 @@ src/missing/*
 src/Transformers/*
 src/TPP_patch/*
 src/ehd/*
+
+# data serialization files
+*.yml

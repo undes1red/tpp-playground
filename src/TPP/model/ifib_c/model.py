@@ -310,7 +310,7 @@ class IFIBCModel(BasicModel):
         mae_step = mae_step if mae_step is not None else self.mae_step
         sample_rate_list = step_split(sample_rate, mae_step)
 
-        def evaluate(taus, probability_threshold, integral_from_zero_to_inf, ):
+        def evaluate(taus, probability_threshold, integral_from_zero_to_inf):
             taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
             probability_integral_from_t_to_inf = self.model(events_history, time_history, taus, mean, var)
                                                                                # [sample_rate, batch_size, seq_len, num_events]

@@ -180,7 +180,8 @@ class MarkedLogNormMixWrapper(BasicModel):
         
         probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-        torch.nn.init.uniform_(probability_threshold)                          # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
         tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                      bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len + 1]
@@ -306,9 +307,9 @@ class MarkedLogNormMixWrapper(BasicModel):
             return p_gap
 
         batch_size, seq_len = input_events.shape
-        probability_threshold = torch.zeros((self.sample_rate, batch_size, seq_len, self.num_events + 1))
+        probability_threshold = torch.zeros((self.sample_rate, batch_size, seq_len, self.num_events + 1), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-        torch.nn.init.uniform_(probability_threshold)
+        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
         tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                      bisect_target, probability_threshold, p_m)# [sample_rate, batch_size, seq_len + 1, num_events + 1]
@@ -563,7 +564,7 @@ class MarkedLogNormMixWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         _, mae_e, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
 
-        return mae_e, f1_2, probability_sum
+        return mae_e[..., :-1], f1_2, probability_sum[..., :-1], input_events[..., :-1]
 
 
     def train_step(model, minibatch, device):
