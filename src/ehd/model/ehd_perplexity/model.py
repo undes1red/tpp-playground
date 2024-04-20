@@ -9,9 +9,9 @@ from src.ehd.model.utils import BasicModule, check_tensor, move_from_tensor_to_n
 from src.ehd.model.ehd_perplexity.plot import * 
 from src.ehd.model.ehd_perplexity.nes.nes import NES
 from src.ehd.utils import suffix
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EHD(BasicModule):
@@ -212,7 +212,6 @@ class EHD(BasicModule):
         Since we removed all sequence shorter than seq_len_x + seq_len_h.
         We do not need to worry about the input_mask anymore.
         '''
-
         assert (input_mask == 1).all()
         (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
             = self.divide_history_and_future(input_time, input_events, input_mask)
@@ -223,7 +222,6 @@ class EHD(BasicModule):
         cum_input_time = input_time.cumsum(dim = -1)                           # [batch_size, seq_len]
         batch_size = input_time.shape[0]
 
-        
         (L_c, L_g), history_mask, (padded_filtered_events, padded_filtered_masks), (padded_filtered_times, padded_filtered_event_embeddings) \
             = self.nes_module(self.model, (time_history, time_future, events_history, events_future, mask_history, mask_future, mean, var), \
                               mask_history, number_of_events, \

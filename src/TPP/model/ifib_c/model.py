@@ -89,7 +89,7 @@ class IFIBCModel(BasicModel):
 
     def remove_dummy_event_from_mask(self, mask):
         '''
-        Remove the probability of the dummy event by mask.
+        Flip the mask of the end dummy event from 1 to 0.
         '''
         mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
         for idx, mask_per_seq in enumerate(mask):
@@ -128,7 +128,6 @@ class IFIBCModel(BasicModel):
         time_next.requires_grad = False
         check_tensor(probability_for_each_event)                               # [batch_size, seq_len, num_events]
         check_tensor(probability_integral_from_t_to_infinite)                  # [batch_size, seq_len, num_events]
-        assert probability_for_each_event.shape == probability_integral_from_t_to_infinite.shape
 
         '''
         Remove the probability of the dummy event by mask.
@@ -464,8 +463,7 @@ class IFIBCModel(BasicModel):
         
         _, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, \
                                                 mean, var, return_mean = False, sample_rate = sample_rate, \
-                                                mae_step = sample_step)
-                                                                               # [sample_rate, batch_size, seq_len] * 2
+                                                mae_step = sample_step)        # [sample_rate, batch_size, seq_len] * 2
 
         # Preprocess
         sample_rate_list = step_split(sample_rate, sample_step)

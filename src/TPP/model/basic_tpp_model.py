@@ -1,5 +1,3 @@
-import torch
-
 import torch.nn as nn
 
 from abc import ABCMeta, abstractmethod
@@ -28,7 +26,6 @@ class BasicModel(nn.Module, metaclass = ABCMeta):
         return NotImplementedError('Please Implement forward()!')
 
 
-    @torch.no_grad()
     def mean_absolute_error(self, *args):
         '''
         This function calculates the MAE (Mean Absolute Error) of one input minibatch.
@@ -37,7 +34,6 @@ class BasicModel(nn.Module, metaclass = ABCMeta):
         return NotImplementedError('mean_absolute_error() not implemented!')
 
 
-    @torch.no_grad()
     def mean_absolute_error_e(self, *args):
             '''
             This function calculates the MAE (Mean Absolute Error) of one input minibatch.
@@ -57,7 +53,6 @@ class BasicModel(nn.Module, metaclass = ABCMeta):
 
     @staticmethod
     @abstractmethod
-    @torch.no_grad()
     def evaluation_step(model, minibatch, device):
         '''
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.

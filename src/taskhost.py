@@ -1,15 +1,12 @@
-import datetime, os, sys, torch, importlib, random
+import sys, torch, importlib, random, re, operator
 import numpy as np
 
-import torch.distributed as dist
-import torch.multiprocessing as mp
-
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger, version_check
 
 '''
 The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.
 '''
-logger = getLogger('TaskHost')
+logger = get_logger('TaskHost')
 
 
 class TaskHost:
@@ -31,14 +28,14 @@ class TaskHost:
     
 
     def pytorch_warning(self, version):
-        warning_and_action = self.pytorch_warning_dict.get(version)
-        if warning_and_action is not None:
-            warning, action = warning_and_action
-            if action == 'continue':
-                logger.warning(warning)
-                logger.warning('Continue training.')
-            else:
-                logger.exception(warning)
+        for key, warning_message in self.pytorch_warning_dict.items():
+            if version_check(version, key):
+                warning, action = warning_message
+                if action == 'continue':
+                    logger.warning(warning)
+                    logger.warning('Continue training.')
+                else:
+                    logger.exception(warning)
     
 
     def reproducibility(self):
@@ -101,7 +98,6 @@ class TaskHost:
         '''
         logger.debug(f'Root path: {self.root_path}.')
         logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
-
         self.reproducibility()
         
         '''
@@ -109,14 +105,13 @@ class TaskHost:
         '''
         logger.info(f'PyTorch Version: {torch.__version__}.')
         self.pytorch_warning(torch.__version__)
-
         self.cuda()
 
-        # start the task
+        '''
+        start the task.
+        '''
         self.main()
 
-        sys.exit(0)
-    
 
     def main(self):
         '''
@@ -137,3 +132,5 @@ class TaskHost:
         self.opt.device = torch.device(f'cuda' if self.opt.cuda else 'cpu')
     
         self.worker.work(opt = self.opt)
+
+        sys.exit(0)

@@ -1,12 +1,12 @@
 import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger
 from src.TPP.dataloader.utils import seed_worker
 from src.TPP.utils import read_yaml
 
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def dataloader_zoo(opt):

@@ -1,17 +1,15 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-import lzma
 import numpy as np
-import pickle as pkl
 import gc
 
 from einops import pack
 from tqdm import tqdm
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt
 
 
-logger = getLogger(name = __file__)
+logger = get_logger(name = __file__)
 
 
 def draw(model, minibatch, desc, batch_idx, opt):
@@ -42,8 +40,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
     # Create the plot storing directory if not exist.
     plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
     opt.plot_store_dir_for_this_batch = plot_store_dir_for_this_batch
-    if not os.path.exists(plot_store_dir_for_this_batch):
-        os.makedirs(plot_store_dir_for_this_batch)
+    mkdir_if_not_exist(plot_store_dir_for_this_batch)
 
     plots = model('graph', minibatch, opt)
     
@@ -60,7 +57,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
                 ax = getattr(sns, instruction['plot_type'])(ax = ax, **instruction['kwargs'])
         
         logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
-        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.png'), dpi = 1000)
+        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.png'), dpi = 1000, bbox_inches = "tight")
         fig.clear()
         plt.close(fig = fig)
         del ax
@@ -92,12 +89,12 @@ def spearman_and_l1(model, dataset, desc, opt):
     spearman = spearman / size_of_dataset
     l1 = l1 / size_of_dataset
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
+    mkdir_if_not_exist(opt.store_dir)
+
     result_file = os.path.join(opt.store_dir, f'{desc}_spearman_and_l1.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.\n Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.\n',
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
 
 def mae_and_f1(model, dataset, desc, opt):
@@ -123,30 +120,27 @@ def mae_and_f1(model, dataset, desc, opt):
             else:
                 mae, mae_ps = pack((mae, mae_per_seq.flatten()), '*')
             f1 += f1_per_seq
+
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
     f1 = f1 / size_of_dataset
     mean_mae = mae.mean().item()
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.\n Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.\n',
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
     '''
     Dump the detailed distribution of mae for further usage.
     '''
     mae_dist_file = os.path.join(opt.store_dir, f'{desc}_mae.pkl')
-    f = open(mae_dist_file, 'wb')
-    pkl.dump(mae, f)
-    f.close()
+    dump_to_pkl(mae, mae_dist_file, compression = 'bz2')
 
 
 def mae_e_and_f1(model, dataset, desc, opt):
@@ -197,32 +191,27 @@ def mae_e_and_f1(model, dataset, desc, opt):
     mean_mae_e = mae_e.mean().item()
     mean_probability_sum = probability_sum.mean().item()
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-    
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(t) is {mean_probability_sum}. \n Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(t) is {mean_probability_sum}.\n',
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
     '''
     Dump the detailed distribution of mae-e for further usage.
     '''
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e.pkl')
-    f = open(mae_e_dist_file, 'wb')
-    pkl.dump(mae_e, f)
-    f.close()
+    dump_to_pkl(mae_e, mae_e_dist_file, compression = 'bz2')
 
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_data.pkl')
-    f = open(mae_e_dist_file, 'wb')
     if opt.model_name == 'ifib_c':
-        pkl.dump({'mae_e': list_mae_e, 'events_next': events_next, 'pm': probability_integral_from_zero_to_infinite}, f)
+        data = {'mae_e': list_mae_e, 'events_next': events_next, 'pm': probability_integral_from_zero_to_infinite}
     else:
-        pkl.dump({'mae_e': list_mae_e, 'events_next': events_next}, f)
-    f.close()
+        data = {'mae_e': list_mae_e, 'events_next': events_next}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
 def which_event_occurs_first(model, dataset, desc, opt):
@@ -254,24 +243,20 @@ def which_event_occurs_first(model, dataset, desc, opt):
     f1 = np.array(f1).mean()
     mean_mae_e = mae_e.mean().item()
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-    
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_which_event_first.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. \n Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}.\n', 
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
     '''
     Dump the detailed distribution of mae-e for further usage.
     '''
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_which_event_first.pkl')
-    f = open(mae_e_dist_file, 'wb')
-    pkl.dump(mae_e, f)
-    f.close()
+    dump_to_pkl(mae_e, mae_e_dist_file, compression = 'bz2')
 
 
 def mae_e_and_f1_by_time_event(model, dataset, desc, opt):
@@ -289,7 +274,6 @@ def mae_e_and_f1_by_time_event(model, dataset, desc, opt):
     elapsed_time = 0
     data_size = 0
 
-
     with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc} following time event paradigm') as progress_bar:
         for minibatch in progress_bar:
             mae_e_per_seq, f1_per_seq, events_pred_index_per_seq, events_next_per_seq = model('mae_e_and_f1_by_time_event', minibatch, opt)
@@ -302,28 +286,24 @@ def mae_e_and_f1_by_time_event(model, dataset, desc, opt):
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
-
     f1 = np.array(f1).mean()
     mean_mae_e = np.concatenate(list_mae_e).mean().item()
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-    
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1_by_time_event.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}.\n', 
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
     '''
     Dump the detailed distribution of mae-e for further usage.
     '''
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_by_time_event.pkl')
-    f = open(mae_e_dist_file, 'wb')
-    pkl.dump({'mae_e': list_mae_e, 'event_next': event_next, 'f1': f1, 'events_pred_index': events_pred_index}, f)
-    f.close()
+    data = {'mae_e': list_mae_e, 'event_next': event_next, 'f1': f1, 'events_pred_index': events_pred_index}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
 def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
@@ -336,7 +316,6 @@ def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
     '''
     elapsed_time = 0
     data_size = 0
-
     list_mae = []
     f1 = []
 
@@ -350,28 +329,24 @@ def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
-
     f1 = np.array(f1).mean()
     mean_mae = np.concatenate(list_mae).mean().item()
 
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-    
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1_of_imputated_events.txt')
-    f = open(result_file, 'w')
-    f.write(f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}. Evaluation speed: {elapsed_time/data_size}s per sequence.')
-    f.close()
+    strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.\n', 
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+    write_to_txt(strings, result_file)
 
     '''
     Dump the detailed distribution of mae-e for further usage.
     '''
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_of_imputated_events.pkl')
-    f = open(mae_e_dist_file, 'wb')
-    pkl.dump({'mae_e': list_mae, 'f1': f1}, f)
-    f.close()
+    data = {'mae_e': list_mae, 'f1': f1}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
 def samples_from_et(model, dataset, desc, opt):
@@ -392,13 +367,10 @@ def samples_from_et(model, dataset, desc, opt):
             samples.append(samples_per_seq.tolist())
             p_ms.append(p_ms_per_seq.tolist())
     
-    if not os.path.exists(opt.store_dir):
-        os.makedirs(opt.store_dir)
-
+    mkdir_if_not_exist(opt.store_dir)
     '''
     Dump the detailed distribution of mae-e for further usage.
     '''
-    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_samples_for_every_point.pkl.lzma')
-    f = lzma.open(mae_e_dist_file, 'wb')
-    pkl.dump({'samples': samples, 'p_ms': p_ms}, f)
-    f.close()
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_samples_for_every_point.pkl')
+    data = {'samples': samples, 'p_ms': p_ms}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')

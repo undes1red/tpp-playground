@@ -4,6 +4,18 @@ from tqdm import tqdm
 from functools import reduce
 
 
+suffix_shortcut_dict = {
+    'model_name': '',
+    'lr': 'lr',
+    'training_batch_size': 'bs',
+    'used_batch_size': 'bs',
+    'n_training_steps': 'nts',
+    'dataloader_config': '',
+    'used_dataloader_config': '',
+    'model_config': ''
+}
+
+
 def add(a, b):
     return a + b
 
@@ -64,21 +76,10 @@ def read_yaml(yaml_path):
 
 # Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
-    shortcut_dict = {
-        'model_name': '',
-        'lr': 'lr',
-        'training_batch_size': 'bs',
-        'used_batch_size': 'bs',
-        'n_training_steps': 'nts',
-        'dataloader_config': '',
-        'used_dataloader_config': '',
-        'model_config': ''
-    }
-    
     output = []
     for item in args:
         hyperparameter = getattr(opt, item)
-        translated_suffix = shortcut_dict[item] + str(hyperparameter)
+        translated_suffix = suffix_shortcut_dict[item] + str(hyperparameter)
         output.append(translated_suffix)
     
     output = "_".join(output)
@@ -119,7 +120,7 @@ class Metric():
     '''
     def __init__(self, metric_number, smaller_is_better = None):
         self.metric_number = metric_number
-        self.map = {True:1, False: -1}
+        self.map = {True: 1, False: -1}
         self.best_metric = [math.inf] * self.metric_number
         if smaller_is_better is None:
             self.mask = [1] * self.metric_number
@@ -146,15 +147,6 @@ class Metric():
     
     def show(self):
         return self.best_metric
-
-
-# add a prefix for all keys in a dict.
-# wandb use only
-def add_prefix_to_keys(dct, temp):
-    tmp_dct = dict(dct)
-    del tmp_dct['num_format']
-    result = {temp + str(key): item for key, item in tmp_dct.items()}
-    return result
 
 
 # A more neat way to print hyperparameters:

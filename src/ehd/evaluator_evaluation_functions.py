@@ -6,10 +6,10 @@ import pickle as pkl
 
 from einops import pack
 from tqdm import tqdm
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger
 
 
-logger = getLogger(name = __file__)
+logger = get_logger(name = __file__)
 
 
 def draw(model, minibatch, desc, batch_idx, opt):

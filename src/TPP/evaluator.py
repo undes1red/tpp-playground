@@ -1,7 +1,7 @@
 import os, torch
 from torch.nn import DataParallel as DP
 
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger
 from src.TPP.utils import read_yaml, print_args
 from src.TPP.evaluator_evaluation_functions import *
 from src.TPP.model import get_model
@@ -12,7 +12,7 @@ from src.TPP.dataloader import prepare_dataloaders
 Detailed training procedure after all required data are ready.
 Define the logger.
 '''
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TPPEvaluator:

@@ -1,7 +1,7 @@
 import importlib
-from src.taskhost import getLogger
+from src.taskhost import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 # One should register their models here.
 # The key of each model is foremost.

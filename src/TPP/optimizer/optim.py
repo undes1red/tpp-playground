@@ -1,11 +1,11 @@
 '''A wrapper for a scheduled optimizer '''
 
 import math
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger
 from src.TPP.utils import mean, read_yaml
 import torch.optim as optim
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ScheduledOptim():

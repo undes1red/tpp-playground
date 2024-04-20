@@ -3,10 +3,10 @@
 
 import subprocess, os, argparse, importlib
 from batch_task_worker_utils import task_generator_worker, remove_empty_str
-from src.taskhost import getLogger
+from src.taskhost import get_logger
 
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 root_path = os.path.dirname(os.path.abspath(__file__))
 logger.info(f'project root is {root_path}.')
 logger.info(f'Please ensure the root_path is correct!')

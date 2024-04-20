@@ -4,16 +4,15 @@ import pandas as pd
 from itertools import cycle
 from torch.nn import DataParallel as DP
 
-from src.taskhost_utils import getLogger
+from src.taskhost_utils import get_logger, mkdir_if_not_exist
 from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, \
-                          lst_divide, evaluation, Metric, add_prefix_to_keys, \
-                          print_args
+                          lst_divide, evaluation, Metric, print_args
 from src.TPP.model import get_model
 from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
 
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TPPTrainer:
@@ -109,10 +108,9 @@ class TPPTrainer:
         self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
         self.output_checkpoint_folder = 'model_' + self.folder_suffix
         self.log_folder = 'log_' + self.folder_suffix
-        if not os.path.exists(os.path.join(self.opt.save_model, self.output_checkpoint_folder)):
-            os.makedirs(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
-        if not os.path.exists(os.path.join(self.opt.log, self.log_folder)):
-            os.makedirs(os.path.join(self.opt.log, self.log_folder))
+
+        mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
+        mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
 
         '''
         Write hyperparameters into the model dir.
@@ -126,16 +124,17 @@ class TPPTrainer:
         '''
         Setting up file loggers and a wandb online logger.
         '''
-        if self.opt.log:
-            if self.opt.wandb:
-                import wandb
-                wandb.init(project = 'Temporal point process', config = vars(self.opt), group = self.opt.dataset_name, \
-                           name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
-                                            self.opt.dataset_name, str(self.opt.dataloader_config)]), \
-                           dir = os.path.join(self.opt.log, self.log_folder), \
-                           resume = 'never', settings = wandb.Settings(start_method="fork")
-                           )
-                wandb.watch(self.model, log = 'all', log_freq = self.opt.n_report_steps)
+        if self.opt.log and self.opt.wandb:
+            import wandb
+            wandb.init(project = 'Marked Temporal Point Process Training', \
+                       config = vars(self.opt), group = self.opt.dataset_name, \
+                       name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
+                                        self.opt.dataset_name, str(self.opt.dataloader_config)]), \
+                       dir = os.path.join(self.opt.log, self.log_folder), \
+                       resume = 'never',
+                       notes = f'Training {self.opt.model_name} with config file {str(self.opt.model_config)} on dataset {self.opt.dataset_name}.'
+                       )
+            wandb.watch(self.model, log = 'all', log_freq = self.opt.n_report_steps, log_graph = True)
     
         '''
         Metric checker for choosing the best model during training.
@@ -146,15 +145,15 @@ class TPPTrainer:
     
         desc = '  - (Training)   '
         step_range = range(1, self.opt.n_training_steps + 1)
-        training = cycle(iter(self.training_data))
+        training_iter = cycle(iter(self.training_data))
         self.sched_optimizer.zero_grad()
 
         '''
         Start training.
         '''
         self.evaluation_report(0)
-        for current_step in tqdm(step_range, desc=desc, leave=False):
-            data = next(training)
+        for current_step in tqdm(step_range, desc = desc, leave = False):
+            data = next(training_iter)
             step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
@@ -190,9 +189,10 @@ class TPPTrainer:
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)
 
-            logger.warning('Training finished!')
             if self.opt.wandb:
                 wandb.finish()
+        
+        logger.warning('Training finished!')
 
 
     def train_report(self, current_step):
@@ -208,10 +208,10 @@ class TPPTrainer:
 
         if self.opt.wandb:
             import wandb
-            wandb.log(
-                add_prefix_to_keys(self.model_class.log_print_format(report_sum, \
-                    procedure = 'Training'), temp = 'train_'), commit = False, step = current_step)
+            log_print_format_dict.pop('num_format')
+            wandb.log({'Training': log_print_format_dict}, commit = False, step = current_step)
             wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
+
         self.report_sum = [0] * self.format_dict_length
 
 
@@ -244,17 +244,15 @@ class TPPTrainer:
                            model_performance_dict = log_print_format_dict_test,
                            procedure_monitor_dict = procedure_monitor_dict)
 
+        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
         if self.opt.log:
             self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
             self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
-        if self.opt.wandb:
-            import wandb
-            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(eva_report, \
-                procedure = 'Evaluation'), temp = 'evaluation_'), commit = False, step = current_step)
-            wandb.log(add_prefix_to_keys(self.model_class.log_print_format(test_report, \
-                procedure = 'Test'), temp = 'test_'), step = current_step)
-        
-        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
+            if self.opt.wandb:
+                import wandb
+                log_print_format_dict_eva.pop('num_format')
+                log_print_format_dict_test.pop('num_format')
+                wandb.log({'Evaluation': log_print_format_dict_eva, 'Test': log_print_format_dict_test}, step = current_step)
 
 
     def save(self, current_step, eva_report_format_dict, test_report_format_dict):
