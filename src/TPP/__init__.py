@@ -15,19 +15,18 @@ from src.TPP.evaluator import TPPEvaluator
 
 
 pytorch_version_warnings = {
-    '>=2.1.0,<=2.2.2': [
+    '>=2.1.0': [
 '''
-We have noticed the evaluation procedure of IFIB is over 1x slower on PyTorch 2.1.2 than PyTorch 2.0.1, from around 3 mins to nearly 7 mins on synthetic datasets.
-Other PyTorch releases belonging to the 2.1.y family are not tested, so we can not tell if this problem persists in PyTorch 2.1.0 and 2.1.1.
-We are not clear about the real cause of this regression. 
-However, we suspect it might be the aten:fill_kernel introduced in PyTorch 2.1.0 as other people have reported this function causes a performance regression at https://github.com/pytorch/pytorch/issues/117081 targeting all PyTorch 2.1.y releases.
-If aten:fill_kernel is the one to blame, then this issue should also persist on PyTorch 2.1.0 and 2.1.1 + cu118.
-Because of this, we suggest to use PyTorch 2.0.1 + cu117. You can still train these models on the current setting, but you might not be able to reproduce the evaluation speed we have reported in the paper.
+We have noticed the evaluation procedure of IFIB, FullyNN, and FENN is around 1-2x slower on PyTorch 2.x.y(x > 0) than PyTorch 2.0.1 and previous releases.
+The benchmark results suggest that there might be a performance regression in nn.Linear() when its inputs are high dimensional tensors, i.e. tensors having four, five, or even higher dimensions.
+This means possibly all MTPP models in this codebase are affected given processing high dimensional tensors are ubiquitous in our code.
+One can track this regression at https://github.com/pytorch/pytorch/issues/124838.
+Because of this, we suggest to use PyTorch 2.0.1 and previous. You can still train these models on the later releases because we have not observed any model performance degradation, but you may not be able to reproduce the evaluation speed we have reported in the paper.
 '''.replace("\n", ""), 'continue'],
 
     '==1.4.0': [
 '''
-It is known that several learning rate schedulers including LambdaLR, which we use in optim.py, fail to run. Please update PyTorch to 1.5.0 or above.
+It is known that several learning rate schedulers shipped by PyTorch 1.4.0 are buggy and fail to run. Please update PyTorch to 1.5.0 or above.
 Detailed information is available at https://github.com/pytorch/pytorch/issues/36313
 '''.replace("\n", ""), 'stop'],
 }

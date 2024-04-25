@@ -1,4 +1,4 @@
-import sys, torch, importlib, random, re, operator
+import sys, torch, importlib, random
 import numpy as np
 
 from src.taskhost_utils import get_logger, version_check
@@ -38,8 +38,10 @@ class TaskHost:
                     logger.exception(warning)
     
 
-    def reproducibility(self):
+    def global_pytorch_settings(self):
         '''
+        Reproducibility.
+
         Please check https://pytorch.org/docs/stable/notes/randomness.html?highlight=reproducibility for further information about
         reproducibility
         '''
@@ -59,12 +61,22 @@ class TaskHost:
         torch.manual_seed(self.opt.seed)
         np.random.seed(self.opt.seed)
         torch.backends.cudnn.benchmark = False
-        # Please read documentations and check if you have used any operations which don't have a deterministic implementation before
-        # set it to True. 
+
+        '''
+        Please read documentations and check if you have used any operations which don't have a deterministic implementation before
+        set it to True.
+        '''
         torch.use_deterministic_algorithms(False)
-        # torch.use_deterministic_algorithms(True)
-        # For gradient debug usage.
+        
+        '''
+        For gradient debug usage.
+        '''
         # torch.autograd.set_detect_anomaly(True)
+
+        '''
+        Allow tf32 in matmul to improve speed on recent hardware.
+        '''
+        torch.backends.cuda.matmul.allow_tf32 = True
     
     
     def cuda(self):
@@ -77,6 +89,7 @@ class TaskHost:
             self.opt.cuda = False
         elif self.opt.cuda and torch.cuda.is_available():
             logger.warning('We use cuda to speed up model training!')
+            logger.warning(f'We use PyTorch compiled against CUDA {torch.version.cuda}.')
             logger.info('Found {} CUDA devices.'.format(torch.cuda.device_count()))
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
@@ -98,7 +111,7 @@ class TaskHost:
         '''
         logger.debug(f'Root path: {self.root_path}.')
         logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
-        self.reproducibility()
+        self.global_pytorch_settings()
         
         '''
         Show and check PyTorch version.
