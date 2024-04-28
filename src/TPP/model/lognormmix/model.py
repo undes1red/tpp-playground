@@ -170,7 +170,8 @@ class LogNormMixWrapper(BasicModel):
 
         probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len]
-        torch.nn.init.uniform_(probability_threshold)                          # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
         tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                      bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
         tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]

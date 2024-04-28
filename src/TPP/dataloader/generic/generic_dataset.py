@@ -102,8 +102,8 @@ class generic_dataset(utils.data.Dataset):
         for item in data:
             pad_length = max_length_of_this_batch - item[0].size
             mask = np.array([1] * item[0].size + [0] * pad_length)
-            padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'mean')
-            padded_event = np.pad(item[1], (0, pad_length), mode = 'minimum')
+            padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'constant', constant_values = 0)
+            padded_event = np.pad(item[1], (0, pad_length), mode = 'constant', constant_values = self.number_of_events)
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
             padded_item = [padded_time_seq, padded_event, padded_score, mask]
             if self.evaluate:

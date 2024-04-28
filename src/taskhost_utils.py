@@ -84,7 +84,7 @@ def dump_to_pkl(data, filepath, compression = None):
     Add proper suffix to the base file name if compression is not None.
     '''
     head, tail = os.path.split(filepath)
-    tail = tail + f'{'.' + compression if compression is not None else ""}'
+    tail = tail + f'{"." + compression if compression is not None else ""}'
     filepath = os.path.join(head, tail)
 
     selected_open_function = dict_compression_algorithms[compression]
