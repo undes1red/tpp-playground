@@ -18,8 +18,8 @@ class TIFIBCModel(BasicModel):
                  device, d_hidden, n_layers,
                  removes_tail, tanh_parameter,
                  n_head, d_qk, d_v,
-                 epsilon = 0.0, sample_rate = 32, mae_step = 32,
-                 mae_e_step = 32, survival_loss_during_training = False):
+                 epsilon = 0.0, sample_rate = 32, mae_step = 8,
+                 mae_e_step = 8, survival_loss_during_training = False):
         super(TIFIBCModel, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -326,7 +326,7 @@ class TIFIBCModel(BasicModel):
             time_next_zero = torch.zeros_like(probability_threshold)           # [sub_sample_rate, batch_size, seq_len]
             time_next_zero = repeat(time_next_zero, '... -> ... ne', ne = self.num_events)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
-            integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mean = mean, var = var)
+            integral_from_zero_to_inf = self.model(events_history, time_history, time_next_zero, mask_history, mean = mean, var = var)
                                                                                # [sub_sample_rate, batch_size, seq_len, num_events]
             tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                               bisect_target, probability_threshold, integral_from_zero_to_inf))

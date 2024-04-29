@@ -7,7 +7,6 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 from src.TPP.model.tifib_c.transformers import TransEncoder
 from src.TPP.model.tifib_c.nonneg import NonNegLinear
-from src.TPP.model.tifib_c.activate import *
 
 
 class new_tanh(nn.Module):

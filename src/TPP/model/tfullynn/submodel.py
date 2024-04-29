@@ -6,7 +6,6 @@ from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.tfullynn.nonneg import NonNegLinear
 from src.TPP.model.tfullynn.transformers import TransEncoder
-from src.TPP.model.tfullynn.activate import *
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 
@@ -55,6 +54,7 @@ class TFullyNN(nn.Module):
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
         ])
+        self.layer_activation = nn.Tanh()
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.nonneg_activation = nn.Softplus()
 
