@@ -106,6 +106,7 @@ class LogNormMixWrapper(BasicModel):
         return time_loss + surv_last_loss, time_loss, event_loss, the_number_of_events
 
 
+    @torch.inference_mode()
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, var):
         '''
         The shape of minibatch
@@ -158,6 +159,7 @@ class LogNormMixWrapper(BasicModel):
         return (-loglik).sum()
 
 
+    @torch.inference_mode()
     def mean_absolute_error(self, input_events, input_time, input_mask, mean, var):
         '''
         The input should be the original minibatch.
@@ -180,17 +182,7 @@ class LogNormMixWrapper(BasicModel):
         return mae, tau_pred
     
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, var):
         # Obtain dedicated MAE and predicted time.
         gap, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
@@ -208,6 +200,17 @@ class LogNormMixWrapper(BasicModel):
         f1 = f1_score(y_pred = predicted_events, y_true = input_events, average = 'macro')
 
         return gap, f1
+
+
+    def plot(self, minibatch, opt):
+        plot_type_to_functions = {
+            'intensity': self.intensity,
+            'integral': self.integral,
+            'probability': self.probability,
+            'debug': self.debug
+        }
+    
+        return plot_type_to_functions[opt.plot_type](minibatch, opt)
 
 
     def extract_plot_data(self, minibatch):
@@ -267,6 +270,7 @@ class LogNormMixWrapper(BasicModel):
         return NotImplementedError('LogNormMix is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -304,6 +308,7 @@ class LogNormMixWrapper(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -341,6 +346,7 @@ class LogNormMixWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
                                                                                # [batch_size, seq_len + 1] * 4 + float + float
@@ -374,6 +380,7 @@ class LogNormMixWrapper(BasicModel):
         return spearman, l1
     
 
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
@@ -398,6 +405,7 @@ class LogNormMixWrapper(BasicModel):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.train()
+
         time_loss, time_loss_without_dummy, events_loss, the_number_of_events\
               = model(task_name = 'train', **extract_minibatch(minibatch))
 
@@ -422,6 +430,7 @@ class LogNormMixWrapper(BasicModel):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.eval()
+
         time_loss, surv_last_loss, event_loss, mae, f1_pred_time, the_number_of_events \
             = model(task_name = 'evaluate', **extract_minibatch(minibatch))
 

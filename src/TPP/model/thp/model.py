@@ -140,6 +140,7 @@ class THPWrapper(BasicModel):
     '''
     Functions for model propagation and evaluation
     '''
+    @torch.inference_mode()
     def evaluate_procedure(self, time, events, mask):
         '''
         Check if events data is present.
@@ -187,6 +188,7 @@ class THPWrapper(BasicModel):
                mae, f1_pred_time, the_number_of_events
 
 
+    @torch.inference_mode()
     def evaluate_f1(self, intensity_all_events, events_next, mask_next):
         events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
@@ -234,6 +236,7 @@ class THPWrapper(BasicModel):
         return mtpp_nll_loss, events_loss
 
 
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         gap, pred_time = self.mean_absolute_error(time_history, time_next, events_history, mask_history, mask_next)
 
@@ -245,6 +248,7 @@ class THPWrapper(BasicModel):
         return gap, f1_pred
     
 
+    @torch.inference_mode()
     def mean_absolute_error(self, time_history, time_next, events_history, mask_history, mask_next):
         '''
         The input should be the original minibatch
@@ -281,6 +285,7 @@ class THPWrapper(BasicModel):
         return mae, tau_pred
 
 
+    @torch.inference_mode()
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var, return_mean = True):
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -302,7 +307,7 @@ class THPWrapper(BasicModel):
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
         # F1 value and top_k_acc are only avaliable when batch_size = 1
-        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, probability_integral_to_inf)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_to_inf, mask_next, self.num_events)
 
         # F1:        [batch_size]
         # top_k_acc: [batch_size, num_events]        
@@ -347,6 +352,7 @@ class THPWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
+    @torch.inference_mode()
     def prediction_with_all_event_types(self, events_history, time_history, p_x, resolution, mask_history, mean, var, inf_val, return_mean):
         '''
         The input should be the original minibatch
@@ -438,6 +444,7 @@ class THPWrapper(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, var
 
 
+    @torch.inference_mode()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -479,6 +486,7 @@ class THPWrapper(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -519,6 +527,7 @@ class THPWrapper(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -561,6 +570,7 @@ class THPWrapper(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -609,6 +619,7 @@ class THPWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -655,6 +666,7 @@ class THPWrapper(BasicModel):
         return spearman, l1
     
 
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -735,6 +747,7 @@ class THPWrapper(BasicModel):
         return mae, f1_1
 
     
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -774,7 +787,6 @@ class THPWrapper(BasicModel):
 
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
-    
         model.eval()
 
         time, events, score, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]

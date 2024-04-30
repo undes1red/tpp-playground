@@ -494,7 +494,7 @@ class TFENNModel(BasicModel):
         '''
         Step 3: calculate macro-F1 and top-K accuracy
         '''
-        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, p_m)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, p_m, mask_next, self.num_events)
 
         predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
@@ -883,6 +883,7 @@ class TFENNModel(BasicModel):
             minibatch: [batch_size, seq_len]
                        contains [time_seq, event_seq, score, mask]
         '''
+        model.train()
     
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model(         
@@ -901,7 +902,8 @@ class TFENNModel(BasicModel):
 
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
-    
+        model.eval()
+
         [time_seq, event_seq, score, mask], (mean, var) = minibatch
         time_loss, loss_survival, events_loss, mae, f1, the_number_of_events = model(
                 task_name = 'evaluate', input_time = time_seq, \

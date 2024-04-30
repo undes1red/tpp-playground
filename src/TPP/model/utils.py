@@ -168,28 +168,32 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_last_resu
 '''
 custom metrics
 '''
-def get_f1_and_top_k_acc_in_mae_e(events_true, num_events, p_m):
+def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
     f1 = []
     top_k_acc = []
-    for (events_true_per_seq, probability_integral_per_seq) in zip(events_true, p_m):
-        events_true_per_seq, probability_integral_per_seq = \
-            move_from_tensor_to_ndarray(events_true_per_seq, probability_integral_per_seq)
+    for (events_true_per_seq, probability_integral_per_seq, input_mask_per_seq) in zip(events_true, p_m, input_mask):
+        events_true_per_seq, probability_integral_per_seq, input_mask_per_seq \
+            = move_from_tensor_to_ndarray(events_true_per_seq, probability_integral_per_seq, input_mask_per_seq)
         y_pred = np.argmax(probability_integral_per_seq, axis = -1)
 
-        f1.append(f1_score(y_true = events_true_per_seq, y_pred = y_pred, average = 'macro'))
+        selected_events_true_per_seq = events_true_per_seq[input_mask_per_seq == 1]
+        selected_y_pred = y_pred[input_mask_per_seq == 1]
+        selected_probability_integral_per_seq = probability_integral_per_seq[input_mask_per_seq == 1]
+
+        f1.append(f1_score(y_true = selected_events_true_per_seq, y_pred = selected_y_pred, average = 'macro'))
         top_k_acc_single_event_seq = []
         if num_events > 2:
             for k in range(1, num_events):
                 top_k_acc_single_event_seq.append(
-                    top_k_accuracy_score(y_true = events_true_per_seq,
-                                         y_score = probability_integral_per_seq,
+                    top_k_accuracy_score(y_true = selected_events_true_per_seq,
+                                         y_score = selected_probability_integral_per_seq,
                                          k = k,
                                          labels = np.arange(num_events))
                 )
         else:
             top_k_acc_single_event_seq.append(
                 accuracy_score(
-                    y_true = events_true_per_seq, y_pred = y_pred
+                    y_true = selected_events_true_per_seq, y_pred = selected_y_pred
                 )
             )
         top_k_acc.append(top_k_acc_single_event_seq)

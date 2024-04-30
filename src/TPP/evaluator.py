@@ -71,8 +71,8 @@ class TPPEvaluator:
         else:
             self.model = model
 
+        # Fix module behaviours during evaluation.
         self.model.eval()
-        
         self.task()
     
 

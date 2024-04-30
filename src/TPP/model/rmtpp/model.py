@@ -120,6 +120,7 @@ class RMTPP(BasicModel):
         return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
 
 
+    @torch.inference_mode()
     def evaluate_procedure(self, events, time, mask, mean, var):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
@@ -193,6 +194,7 @@ class RMTPP(BasicModel):
         return loss, time_loss, events_loss
 
 
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
         _, _, mark, _ = self.model(events_history, time_history, pred_time, mean, var)
@@ -206,6 +208,7 @@ class RMTPP(BasicModel):
         return mae, f1
 
 
+    @torch.inference_mode()
     def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
         '''
         The input should be the original minibatch
@@ -267,6 +270,7 @@ class RMTPP(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, var
 
 
+    @torch.inference_mode()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -304,6 +308,7 @@ class RMTPP(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -340,6 +345,7 @@ class RMTPP(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -378,6 +384,7 @@ class RMTPP(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -416,6 +423,7 @@ class RMTPP(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -461,6 +469,7 @@ class RMTPP(BasicModel):
         return spearman, l1
     
 
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -481,6 +490,8 @@ class RMTPP(BasicModel):
 
 
     def train_step(model, minibatch, device):
+        model.train()
+
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', events, time, mask, mean, var)
 
@@ -494,6 +505,8 @@ class RMTPP(BasicModel):
 
 
     def evaluation_step(model, minibatch, device):
+        model.eval()
+
         [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
         time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
         mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, var)

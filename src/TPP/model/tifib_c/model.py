@@ -355,7 +355,7 @@ class TIFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         predict_index = torch.argmax(probability_integral_from_zero_to_infinite, dim = -1)
                                                                                # [batch_size, seq_len]
-        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, probability_integral_from_zero_to_infinite)
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_from_zero_to_infinite, mask_next, self.num_events)
 
         predict_index_one_hot = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]

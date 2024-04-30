@@ -118,6 +118,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return time_loss + surv_last_loss, time_loss, the_number_of_events
 
 
+    @torch.inference_mode()
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, var):
         '''
         The shape of minibatch
@@ -168,6 +169,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return (-loglik).sum()
 
 
+    @torch.inference_mode()
     def mean_absolute_error(self, input_events, input_time, input_mask, mean, var):
         '''
         The input should be the original minibatch.
@@ -190,6 +192,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return gap, tau_pred
 
 
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, var):
         # Obtain dedicated MAE and predicted time.
         gap, pred_time = self.mean_absolute_error(input_events, input_time, input_mask, mean, var)
@@ -210,6 +213,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return gap, f1
 
 
+    @torch.inference_mode()
     def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, var, return_mean = True):
         '''
         Well...We will do something totally different by performing event-wise MAE.
@@ -223,33 +227,11 @@ class MarkedLogNormMixWrapper(BasicModel):
         predict_index = torch.argmax(probability_distribution_of_mark, dim = -1)
                                                                                # [batch_size, seq_len + 1]
         
-        f1 = []
-        top_k_acc = []
-        for (events_next_per_seq, probability_integral_per_seq, input_mask_per_seq) in \
-            zip(input_events, probability_distribution_of_mark, input_mask):
-            events_next_per_seq, probability_integral_per_seq, input_mask_per_seq \
-                = move_from_tensor_to_ndarray(events_next_per_seq, probability_integral_per_seq, input_mask_per_seq)
-            events_next_per_seq = events_next_per_seq[input_mask_per_seq == 1]
-            probability_integral_per_seq = probability_integral_per_seq[input_mask_per_seq == 1]
 
-            f1.append(f1_score(y_true = events_next_per_seq, y_pred = np.argmax(probability_integral_per_seq, axis = -1), average = 'macro'))
-            top_k_acc_single_event_seq = []
-            if self.num_events > 2:
-                for k in range(1, self.num_events):
-                    top_k_acc_single_event_seq.append(
-                        top_k_accuracy_score(y_true = events_next_per_seq,
-                                             y_score = probability_integral_per_seq,
-                                             k = k,
-                                             labels = np.arange(self.num_events + 1))
-                    )
-            else:
-                top_k_acc_single_event_seq.append(
-                    accuracy_score(
-                        y_true = events_next_per_seq,
-                        y_pred = np.argmax(probability_integral_per_seq, axis = -1)
-                    )
-                )
-            top_k_acc.append(top_k_acc_single_event_seq)
+        f1, top_k_acc_raw = get_f1_and_top_k_acc_in_mae_e(input_events, probability_distribution_of_mark, input_mask, self.num_events + 1)
+        top_k_acc = []
+        for item in top_k_acc_raw:
+            top_k_acc.append(item[:-1])
 
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.prediction_with_all_event_types(input_events, input_time, input_mask, \
@@ -293,6 +275,7 @@ class MarkedLogNormMixWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
+    @torch.inference_mode()
     def prediction_with_all_event_types(self, input_events, input_time, input_mask, p_m, mean, var, return_mean):
         '''
         The input should be the original minibatch
@@ -360,6 +343,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return input_time, input_events, input_mask, input_intensity, mean, var
 
 
+    @torch.inference_mode()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -387,6 +371,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return NotImplementedError('LogNormMix is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -427,6 +412,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return plots
 
 
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -512,6 +498,7 @@ class MarkedLogNormMixWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
                                                                                # [batch_size, seq_len + 1] * 4 + float + float
@@ -546,6 +533,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return spearman, l1
     
 
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
@@ -556,6 +544,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return mae, f1_1
 
 
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, var = self.extract_plot_data(input_data)
 
@@ -578,6 +567,7 @@ class MarkedLogNormMixWrapper(BasicModel):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.train()
+
         time_loss, time_loss_without_dummy, the_number_of_events\
               = model(task_name = 'train', **extract_minibatch(minibatch))
 
@@ -600,6 +590,7 @@ class MarkedLogNormMixWrapper(BasicModel):
             return {'input_events': input_events, 'input_time': input_time, 'input_mask': input_mask, 'mean': mean, 'var': var}
 
         model.eval()
+
         time_loss, surv_last_loss, mae, f1_pred_time, the_number_of_events \
             = model(task_name = 'evaluate', **extract_minibatch(minibatch))
 
