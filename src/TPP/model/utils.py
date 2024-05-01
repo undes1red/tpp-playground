@@ -115,12 +115,12 @@ def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceilin
 Approximate an integral based on its definition.
 dim refers to the dimension index of expanded_func_value where the integration should be performed.
 '''
-def approximate_integration(expanded_func_value, expanded_x, dim, only_last_result = False, same_dim_on_expanded_x = False):
+def approximate_integration(expanded_func_value, expanded_x, dim, only_integral = False, func_val_x_having_same_shape = False):
     # tensor check
     func_val_number_of_dim = len(expanded_func_value.shape)
     integration_sample_rate = expanded_func_value.shape[dim]
 
-    if same_dim_on_expanded_x:
+    if func_val_x_having_same_shape:
         assert expanded_x.shape == expanded_func_value.shape
         dim_expanded_x = dim
     else:
@@ -136,7 +136,7 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_last_resu
                                                                                # [..., integration_sample_rate - 1, ...]
     width_of_rectangle = expanded_x.diff(dim = dim_expanded_x)                 # [..., integration_sample_rate - 1, ...]
 
-    if not same_dim_on_expanded_x:
+    if not func_val_x_having_same_shape:
         the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
         einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
         width_of_rectangle = rearrange(width_of_rectangle, einop)              # [..., integration_sample_rate - 1, ...]
@@ -159,7 +159,7 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_last_resu
     integral_of_all_events = torch.concat((integral_start_from_zero, integral_of_all_events), dim = dim)
                                                                                # [..., integration_sample_rate, ...]
     
-    if only_last_result:
+    if only_integral:
         integral_of_all_events = torch.select(integral_of_all_events, dim, -1) # [...]
 
     return integral_of_all_events

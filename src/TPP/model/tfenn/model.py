@@ -486,7 +486,7 @@ class TFENNModel(BasicModel):
         '''        
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_last_result = True)
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = reduce(p_m, 'b s ne -> b s', 'sum')         # [batch_size, seq_len]
         predict_index = torch.argmax(p_m, dim = -1)                            # [batch_size, seq_len]
@@ -571,7 +571,7 @@ class TFENNModel(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
             
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-            probability = approximate_integration(p_dist, time_interval, dim = -2, only_last_result = True)
+            probability = approximate_integration(p_dist, time_interval, dim = -2, only_integral = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 

@@ -85,7 +85,7 @@ class THP(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         all_lambda = softplus_ext(intensity_all_events_pre_softplus + expanded_scaled_time, F.softplus(self.beta))
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        integral_all_events = approximate_integration(all_lambda, expanded_time, dim = -2, only_last_result = True)
+        integral_all_events = approximate_integration(all_lambda, expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
         
         return integral_all_events, intensity_all_events

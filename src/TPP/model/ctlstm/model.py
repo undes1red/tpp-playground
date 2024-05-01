@@ -299,7 +299,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len, resolution_inf, 1]
         expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
                                                                                # [batch_size, seq_len, resolution_inf, num_events]
-        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_last_result = True)
+        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
@@ -372,7 +372,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
-            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_last_result = True)
+            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
     

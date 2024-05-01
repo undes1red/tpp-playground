@@ -100,7 +100,7 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_last_result = True)
+        integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
 
         return integral_all_events, intensity_all_events
