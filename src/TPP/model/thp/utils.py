@@ -12,32 +12,6 @@ def get_subsequent_mask(seq):
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
     return subsequent_mask
 
-'''
-as slow af.
-
-def old_softplus_ext(input, beta, threshold = 20):
-    \'''
-    This softplus function allows beta being a vector.
-
-    input:     [..., d_input]
-    beta:      [d_input]
-    threshold: int
-    \'''
-    if type(beta) == int:
-        return F.softplus(input = input, beta = beta, threshold = threshold)
-
-    assert input.shape[-1] == beta.shape[-1]
-    last_dim = input.shape[-1]
-    result = []
-
-    for index in range(last_dim):
-        result.append(F.softplus(input = input[..., index], beta = beta[index].item(), threshold = threshold))
-
-    result = torch.stack(result, dim = -1)
-
-    return result
-'''
-
 
 def softplus_ext(input, beta, threshold = 20):
     '''

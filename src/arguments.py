@@ -8,6 +8,8 @@ class BasicArguments:
                             help='Set global random seed.')
         self.parser.add_argument('--cuda', action='store_true', 
                             help="Set it to true if you want to use GPU to accelerate model training.")
+        self.parser.add_argument('--replace', action='store_true', 
+                            help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
 
         # The number of Dataloader worker
         self.parser.add_argument('--n_worker', default=8, type=int,

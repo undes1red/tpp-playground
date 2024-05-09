@@ -1,5 +1,5 @@
 # Several extensive operations for python list.
-import math, yaml
+import math, yaml, os
 from tqdm import tqdm
 from functools import reduce
 
@@ -156,3 +156,35 @@ def print_args(opt):
         output += str(key) + ': ' + str(value) + '\n'
 
     return output
+
+
+def replace_check(opt, root_path, *subdirs):
+    '''
+    This function must ensure we use the same index in all subdirs.
+    Throw an exception if indexes calculated in each dirs do not match.
+    '''
+    calculated_indexes = []
+    folder_suffix = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
+    
+    for subdir in subdirs:
+        leaf_dir_name = f'{subdir}_' + folder_suffix
+        tmp_path = os.path.join(root_path, subdir, opt.procedure)
+        files = os.scandir(tmp_path)
+        valid_dir_names = [int(dir_item.name) for dir_item in filter(lambda x: not x.is_file() and x.name.isdigit(), files)]
+        valid_dir_names = sorted(valid_dir_names)
+        
+        index = 1
+        for vaild_dir_name in valid_dir_names:
+            vaild_dir = os.path.join(tmp_path, str(vaild_dir_name), opt.dataset_name, leaf_dir_name)
+            if os.path.exists(vaild_dir):
+                index += 1
+            else:
+                break
+        
+        calculated_indexes.append(index)
+    
+    baseline = calculated_indexes[0]
+    for index in calculated_indexes:
+        assert index == baseline
+    
+    return str(baseline)

@@ -1,6 +1,6 @@
 import os, argparse
 from src.arguments import BasicArguments
-from src.TPP.utils import suffix
+from src.TPP.utils import suffix, replace_check
 
 
 class TPPEvaluatorArguments(BasicArguments):
@@ -31,7 +31,9 @@ class TPPEvaluatorArguments(BasicArguments):
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
         self.parser.add_argument('--model_config', type=str, default=None, help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{model_name}/{model_config}.")
-        
+        self.parser.add_argument('--model_replace_index', type=int, default=1, help="The replace index of the model. Only used when replace = True.")
+
+
         # Optimizer-related hyperparameters
         self.parser.add_argument('--lr', type=float, default=0.1, 
                             help='The learning rate used when training the model.')
@@ -74,6 +76,8 @@ def Evaluator_postprocess(opt, root_path):
     if opt.agg_update_step > 1:
         opt.n_training_steps *= opt.agg_update_step
 
+    opt.model_replace_index = str(opt.model_replace_index) if not opt.replace else ''
+
     opt.training_batch_size = 1
     opt.evaluation_batch_size = 1
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
@@ -81,7 +85,6 @@ def Evaluator_postprocess(opt, root_path):
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
-
     if opt.combine_used_and_current_dataloader_config:
         opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
         opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None
@@ -89,9 +92,9 @@ def Evaluator_postprocess(opt, root_path):
     # locate where checkpoints are stored.
     model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
     folder_suffix = 'model_' + model_hyperparameters
-    opt.checkpoint_folder = os.path.join(root_path, 'model', opt.procedure, opt.dataset_name, folder_suffix)
+    opt.checkpoint_folder = os.path.join(root_path, 'model', opt.procedure, opt.model_replace_index, opt.dataset_name, folder_suffix)
 
     # where figures, records are stored.
-    opt.store_dir = os.path.join(root_path, 'results', opt.procedure, opt.dataset_name, 'results_' + model_hyperparameters)
+    opt.store_dir = os.path.join(root_path, 'results', opt.procedure, opt.model_replace_index, opt.dataset_name, 'results_' + model_hyperparameters)
 
     return opt
