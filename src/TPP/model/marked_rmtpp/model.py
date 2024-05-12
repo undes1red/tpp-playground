@@ -5,6 +5,7 @@ from sklearn.metrics import f1_score
 from src.TPP.model.utils import *
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
 from src.TPP.model.marked_rmtpp.plot import *
+from src.TPP.utils import pack_one_value_to_dict
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 
 
@@ -698,24 +699,19 @@ class MRMTPP(BasicModel):
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['events_loss'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
-                                         'events_loss': ':6.5f'}
+            format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['relative_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[2])
             return format_dict
 
         def test_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_NLL_loss'] = input[0]
-            format_dict['avg_survival_loss'] = input[1]
-            format_dict['relative_NLL_loss'] = input[2]
-            format_dict['events_loss'] = input[3]
-            format_dict['mae'] = input[4]
-            format_dict['f1_pred_at_pred_time'] = input[5]
-            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', \
-                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f',
-                                         'mae': ':2.8f', 'f1_pred_at_pred_time': ':6.5f'}
+            format_dict['absolute_NLL_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['avg_survival_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[2])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[3])
+            format_dict['mae'] = pack_one_value_to_dict(input[4], '2.8f')
+            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[5], '2.8f')
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))

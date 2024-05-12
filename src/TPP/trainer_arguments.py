@@ -13,6 +13,10 @@ class TPPTrainerArguments(BasicArguments):
         self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
+        self.parser.add_argument('--training_data_name', type=str, default='train', help='Name of the dataset used for training the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        self.parser.add_argument('--evaluate_data_name', type=str, default='evaluate', help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{evaluate_data_name}.{dataset_type}.')
+        self.parser.add_argument('--test_data_name', type=str, default='test', help='Name of the dataset used for testing the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{test_data_name}.{dataset_type}.')
+
 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='Training steps used for training the model.')

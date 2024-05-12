@@ -2,6 +2,7 @@
 import math, yaml, os
 from tqdm import tqdm
 from functools import reduce
+from torch.utils.flop_counter import FlopCounterMode
 
 
 suffix_shortcut_dict = {
@@ -36,30 +37,26 @@ def lst_divide(lst, denominator):
 
 
 # How to print formated logs via logger and format definitions.
-def print_performances(logger, procedure, model_performance_dict, procedure_monitor_dict):
-    info_model_performance, kwargs_model_performance \
-        = print_performance_worker(logger, 'model_performance', **model_performance_dict)
-    info_procedure_monitor, kwargs_procedure_monitor \
-        = print_performance_worker(logger, 'procedure_monitor', **procedure_monitor_dict)
+def print_performances(logger, procedure, data_dict):
+    info_string = ''
+    for key, value in data_dict.items():
+        sub_info = ' ,' + key + ': {' + value['num_format'] + '}' + value['suffix']
+        info_string += sub_info.format(value['data'])
     
-    info = f'{procedure:12}'
-    info += info_model_performance.format_map(kwargs_model_performance)
-    info += info_procedure_monitor.format_map(kwargs_procedure_monitor)
-    
-    logger.info(info)
+    info_string = f'{procedure:12}' + info_string
+    logger.info(info_string)
 
 
-def print_performance_worker(logger, dict_label, num_format = None, suffix = None, **kwargs):
-    if num_format is None or len(num_format) != len(kwargs):
-        logger.exception(f'{dict_label} mismatches its num_format dict!')
-    if suffix is not None and len(suffix) != len(kwargs):
-        logger.exception(f'{dict_label} mismatches its suffix dict!')
+def pack_one_value_to_dict(data, num_format = '6.5f', suffix = ''):
+    return {'data': data, 'num_format': ':' + num_format, 'suffix': suffix}
 
-    info = ''
-    for key in kwargs.keys():
-        info += (''.join([' ,', key, ': {', key, num_format[key], '}']) + ('' if suffix is None else f'{suffix[key]}'))
-    
-    return info, kwargs
+
+def only_keep_data(dict_input):
+    plain_results = {}
+    for key, value in dict_input.items():
+        plain_results[key] = value['data']
+
+    return plain_results
 
 
 # Read and convert a YAML file into a dict object.
@@ -88,7 +85,7 @@ def suffix(opt, *args):
 
 
 # General evaluation procedure.
-def evaluation(data, model, model_class, device, output_length, desc):
+def get_evaluation_results(data, model, model_class, device, output_length, desc):
     sum_ = [0] * output_length
     dataset_size = len(data)
     
@@ -96,7 +93,7 @@ def evaluation(data, model, model_class, device, output_length, desc):
         batch_sum = model_class.evaluation_step(model, minibatch, device)
         sum_ = lst_add_lst(sum_, lst_divide(batch_sum, dataset_size))
 
-    return sum_
+    return {'results': sum_}
 
 
 # extract dataset name from the input string
@@ -188,3 +185,26 @@ def replace_check(opt, root_path, *subdirs):
         assert index == baseline
     
     return str(baseline)
+
+
+def possible_checkpoint_detect(opt, root_path):
+    # We check if the checkpoint and related checkpoint.csv exist.
+    # If checkpoint.csv exists, the training process should successfully complete, so checkpoint should exist.
+    # If only the checkpoint, we might meet a runtime error during training.
+    # We count runs that leaves a legit checkpoint.
+    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
+    folder_name = 'model_' + model_hyperparameters
+
+    # Scan valid folders.
+    tmp_path = os.path.join(root_path, 'model', opt.procedure)
+    files = os.scandir(tmp_path)
+    possible_valid_dir_names = [int(dir_item.name) for dir_item in filter(lambda x: not x.is_file() and x.name.isdigit(), files)]
+    valid_dir_indexes = []
+
+    for possible_valid_dir_name in possible_valid_dir_names:
+        possible_checkpoint = os.path.join(tmp_path, str(possible_valid_dir_name), opt.dataset_name, folder_name, 'checkpoint.chkpt')
+        # possible_checkpoint_log = os.path.join(tmp_path, str(possible_valid_dir_name), opt.dataset_name, folder_name, 'checkpoint.csv')
+        if os.path.exists(possible_checkpoint):
+            valid_dir_indexes.append(possible_valid_dir_name)
+    
+    return valid_dir_indexes

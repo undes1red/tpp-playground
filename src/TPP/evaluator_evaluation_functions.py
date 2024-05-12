@@ -4,6 +4,7 @@ import os
 import numpy as np
 import gc
 
+from torch.utils.flop_counter import FlopCounterMode
 from einops import pack
 from tqdm import tqdm
 from src.taskhost_utils import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt
@@ -77,12 +78,13 @@ def spearman_and_l1(model, dataset, desc, opt):
     data_size = 0
     size_of_dataset = len(dataset)
     with tqdm(dataset, desc = f'Spearman and L1 for {desc}') as progress_bar:
-        for minibatch in progress_bar:
-            spearman_for_this_batch, l1_for_this_batch = model('spearman_and_l1', minibatch, opt)               
-                                                                               # [batch_size, seq_len * resolution]
-            spearman += spearman_for_this_batch
-            l1 += l1_for_this_batch
+        with FlopCounterMode(display = False) as counter:
+            for minibatch in progress_bar:
+                spearman_for_this_batch, l1_for_this_batch = model('spearman_and_l1', minibatch, opt)               
+                spearman += spearman_for_this_batch
+                l1 += l1_for_this_batch
 
+        flops = sum(counter.flop_counts['Global'].values())
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
     
@@ -93,7 +95,8 @@ def spearman_and_l1(model, dataset, desc, opt):
 
     result_file = os.path.join(opt.store_dir, f'{desc}_spearman_and_l1.txt')
     strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.\n',
-               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n', 
+               f'Computation: {flops / 1000**4} TFlops.']
     write_to_txt(strings, result_file)
 
 
@@ -112,15 +115,16 @@ def mae_and_f1(model, dataset, desc, opt):
     size_of_dataset = len(dataset)
     
     with tqdm(dataset, desc = f'MAE and macro-f1 for {desc}') as progress_bar:
-        for minibatch in progress_bar:
-            mae_per_seq, f1_per_seq = model('mae_and_f1', minibatch, opt)
-                                                                               # [batch_size, seq_len]
-            if mae is None:
-                mae = mae_per_seq.flatten()
-            else:
-                mae, mae_ps = pack((mae, mae_per_seq.flatten()), '*')
-            f1 += f1_per_seq
+        with FlopCounterMode(display = False) as counter:
+            for minibatch in progress_bar:
+                mae_per_seq, f1_per_seq = model('mae_and_f1', minibatch, opt)
+                if mae is None:
+                    mae = mae_per_seq.flatten()
+                else:
+                    mae, _ = pack((mae, mae_per_seq.flatten()), '*')
+                f1 += f1_per_seq
 
+        flops = sum(counter.flop_counts['Global'].values())
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
@@ -133,7 +137,9 @@ def mae_and_f1(model, dataset, desc, opt):
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
     strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.\n',
-               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n'
+               f'Computation: {flops / 1000**4} TFlops.']
+
     write_to_txt(strings, result_file)
 
     '''
@@ -162,26 +168,28 @@ def mae_e_and_f1(model, dataset, desc, opt):
     capable_of_sending_event_next = ['fenn', 'fullynn', 'sahp', 'thp', 'marked_lognormmix']
 
     with tqdm(dataset, desc = f'MAE-E and macro-f1 for {desc}') as progress_bar:
-        for minibatch in progress_bar:
-            if opt.model_name == 'ifib_c':
-                mae_e_per_seq, f1_per_seq, probability_sum_per_seq, \
-                    probability_integral_from_zero_to_infinite_per_seq, events_next_per_seq = model('mae_e_and_f1', minibatch, opt)
-                                                                               # [batch_size, seq_len, num_events]
-            elif opt.model_name in capable_of_sending_event_next:
-                mae_e_per_seq, f1_per_seq, probability_sum_per_seq, events_next_per_seq = model('mae_e_and_f1', minibatch, opt)
-                                                                               # [batch_size, seq_len]
-            else:
-                mae_e_per_seq, f1_per_seq, probability_sum_per_seq = model('mae_e_and_f1', minibatch, opt)
-                                                                               # [batch_size, seq_len]
-                events_next_per_seq = np.array([])
+        with FlopCounterMode(display = False) as counter:
+            for minibatch in progress_bar:
+                if opt.model_name == 'ifib_c':
+                    mae_e_per_seq, f1_per_seq, probability_sum_per_seq, \
+                        probability_integral_from_zero_to_infinite_per_seq, events_next_per_seq = model('mae_e_and_f1', minibatch, opt)
+                                                                                   # [batch_size, seq_len, num_events]
+                elif opt.model_name in capable_of_sending_event_next:
+                    mae_e_per_seq, f1_per_seq, probability_sum_per_seq, events_next_per_seq = model('mae_e_and_f1', minibatch, opt)
+                                                                                   # [batch_size, seq_len]
+                else:
+                    mae_e_per_seq, f1_per_seq, probability_sum_per_seq = model('mae_e_and_f1', minibatch, opt)
+                                                                                   # [batch_size, seq_len]
+                    events_next_per_seq = np.array([])
+    
+                list_mae_e.append(mae_e_per_seq.flatten().tolist())
+                list_probability_sum.append(probability_sum_per_seq.flatten().tolist())
+                events_next.append(events_next_per_seq.flatten().tolist())
+                f1 += f1_per_seq
+                if opt.model_name == 'ifib_c':
+                    probability_integral_from_zero_to_infinite.append(probability_integral_from_zero_to_infinite_per_seq.tolist())
 
-            list_mae_e.append(mae_e_per_seq.flatten().tolist())
-            list_probability_sum.append(probability_sum_per_seq.flatten().tolist())
-            events_next.append(events_next_per_seq.flatten().tolist())
-            f1 += f1_per_seq
-            if opt.model_name == 'ifib_c':
-                probability_integral_from_zero_to_infinite.append(probability_integral_from_zero_to_infinite_per_seq.tolist())
-
+        flops = sum(counter.flop_counts['Global'].values())
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
@@ -197,7 +205,8 @@ def mae_e_and_f1(model, dataset, desc, opt):
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
     strings = [f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(t) is {mean_probability_sum}.\n',
-               f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
+               f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n'
+               f'Computation: {flops / 1000**4} TFlops.']
     write_to_txt(strings, result_file)
 
     '''

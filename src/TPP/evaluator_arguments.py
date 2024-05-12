@@ -1,6 +1,6 @@
 import os, argparse
 from src.arguments import BasicArguments
-from src.TPP.utils import suffix, replace_check
+from src.TPP.utils import possible_checkpoint_detect
 
 
 class TPPEvaluatorArguments(BasicArguments):
@@ -31,8 +31,6 @@ class TPPEvaluatorArguments(BasicArguments):
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
         self.parser.add_argument('--model_config', type=str, default=None, help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{model_name}/{model_config}.")
-        self.parser.add_argument('--model_replace_index', type=int, default=1, help="The replace index of the model. Only used when replace = True.")
-
 
         # Optimizer-related hyperparameters
         self.parser.add_argument('--lr', type=float, default=0.1, 
@@ -42,9 +40,9 @@ class TPPEvaluatorArguments(BasicArguments):
         parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\
                                                   test set(if set), and evaluation set(if set), respectively. So there will be\
                                                   {enabled_dataset} * figure_count plots when the plotter finish running.')
-        parser.add_argument('--train', action='store_true')
-        parser.add_argument('--test', action='store_true')
-        parser.add_argument('--evaluation', action='store_true')
+        parser.add_argument('--training_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        parser.add_argument('--evaluate_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        parser.add_argument('--test_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
         parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'integral', 'debug', 'debug_addition_only'], default = 'intensity', help='Temporal point process only.')
         parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
         parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
@@ -76,8 +74,6 @@ def Evaluator_postprocess(opt, root_path):
     if opt.agg_update_step > 1:
         opt.n_training_steps *= opt.agg_update_step
 
-    opt.model_replace_index = str(opt.model_replace_index) if not opt.replace else ''
-
     opt.training_batch_size = 1
     opt.evaluation_batch_size = 1
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
@@ -88,13 +84,13 @@ def Evaluator_postprocess(opt, root_path):
     if opt.combine_used_and_current_dataloader_config:
         opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
         opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None
+
+    if not opt.replace:
+        opt.replace_index = possible_checkpoint_detect(opt, root_path)
+    else:
+        opt.replace_index = ['',]
+
+    opt.checkpoint_of_this_procedure = os.path.join(root_path, 'model', opt.procedure)
+    opt.results_of_this_procedure = os.path.join(root_path, 'results', opt.procedure)
     
-    # locate where checkpoints are stored.
-    model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
-    folder_suffix = 'model_' + model_hyperparameters
-    opt.checkpoint_folder = os.path.join(root_path, 'model', opt.procedure, opt.model_replace_index, opt.dataset_name, folder_suffix)
-
-    # where figures, records are stored.
-    opt.store_dir = os.path.join(root_path, 'results', opt.procedure, opt.model_replace_index, opt.dataset_name, 'results_' + model_hyperparameters)
-
     return opt

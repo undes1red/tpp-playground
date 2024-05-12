@@ -5,6 +5,7 @@ from scipy.stats import spearmanr
 
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.ifib_c.submodel import IFIBC
+from src.TPP.utils import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.ifib_c.plot import *
 
@@ -859,48 +860,6 @@ class IFIBCModel(BasicModel):
         sampled_data_time_event, sampled_timestamp_time_event \
             = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
                                               sampled_time_next_time_event, opt.resolution, mean, var, sampled_mask_next_time_event)
-
-        '''
-        Here, we show the relation between mark and time. Different mark should receive different time predictions.
-        This part we do not sample a complete sequence.
-        '''
-        
-        '''
-        the_number_of_samples = 10000
-        history_length = int(events_history.shape[1] * 0.4)
-        mark_mask = torch.ones(self.num_events, device = self.device)
-        events_history_for_sample = events_history[..., :history_length]       # [batch_size, seq_len]
-        time_history_for_sample = time_history[..., :history_length]           # [batch_size, the_number_of_samples, seq_len]
-        sampled_times, _, p_m = self.sample_one_event_from_model_event_time(the_number_of_samples, events_history_for_sample, \
-                                                                       time_history_for_sample, mean, var, mark_mask = mark_mask, output_p_m = True)
-        sampled_times_1, sampled_marks_1 = self.sample_one_event_from_model_time_event(the_number_of_samples, \
-                                                                                       events_history_for_sample, \
-                                                                                       time_history_for_sample, mean, var)
-
-        import pickle as pkl
-        import os
-        f_sampled_time = open(os.path.join(opt.plot_store_dir_for_this_batch, 'sampled_time.pkl'), 'wb')
-        pkl.dump({'sampled_times': move_from_tensor_to_ndarray(sampled_times), \
-                  'p_m': move_from_tensor_to_ndarray(p_m)}, f_sampled_time)
-        f_sampled_time.close()
-
-        # which event will happen first.
-        f_sampled_time = open(os.path.join(opt.plot_store_dir_for_this_batch, 'which_event_first.pkl'), 'wb')
-        info = {'event_history': move_from_tensor_to_ndarray(events_history_for_sample),
-                'time_history': move_from_tensor_to_ndarray(time_history_for_sample),
-                'sampled_time': move_from_tensor_to_ndarray(sampled_times)}
-        pkl.dump(info, f_sampled_time)
-        f_sampled_time.close()
-
-        # why time-event bad.
-        f_event_time = open(os.path.join(opt.plot_store_dir_for_this_batch, 'time-event.pkl'), 'wb')
-        info = {'event_history': move_from_tensor_to_ndarray(events_history_for_sample), 
-                'time_history': move_from_tensor_to_ndarray(time_history_for_sample),
-                'sampled_time': move_from_tensor_to_ndarray(sampled_times_1), 
-                'sampled_mark': move_from_tensor_to_ndarray(sampled_marks_1)}
-        pkl.dump(info, f_event_time)
-        f_event_time.close()
-        '''
     
         '''
         Append additional info into the data dict.
@@ -1227,26 +1186,20 @@ class IFIBCModel(BasicModel):
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_loss'] = input[0]
-            format_dict['relative_loss'] = input[1]
-            format_dict['events_loss'] = input[2]
-            format_dict['num_format'] = {'absolute_loss': ':6.5f', 'relative_loss': ':6.5f', \
-                                         'events_loss': ':6.5f'}
+            format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['relative_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[2])
             return format_dict
 
         def test_log_print_format(input):
             format_dict = {}
-            format_dict['absolute_NLL_loss'] = input[0]
-            format_dict['avg_survival_loss'] = input[1]
-            format_dict['relative_NLL_loss'] = input[2]
-            format_dict['events_loss'] = input[3]
-            format_dict['f1_pred_at_time_next'] = input[4]
-            format_dict['mae'] = input[5]
-            format_dict['f1_pred_at_pred_time'] = input[6]
-            format_dict['num_format'] = {'absolute_NLL_loss': ':6.5f', 'avg_survival_loss': ':6.5f', 
-                                         'relative_NLL_loss': ':6.5f', 'events_loss': ':6.5f', 
-                                         'f1_pred_at_time_next': ':2.8f', 'mae': ':2.8f', 
-                                         'f1_pred_at_pred_time': ':2.8f'}
+            format_dict['absolute_NLL_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['avg_survival_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[0])
+            format_dict['f1_pred_at_time_next'] = pack_one_value_to_dict(input[0], '2.8f')
+            format_dict['mae'] = pack_one_value_to_dict(input[0], '2.8f')
+            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[0], '2.8f')
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))

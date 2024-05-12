@@ -2,7 +2,7 @@ import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
 from src.taskhost_utils import get_logger
-from src.TPP.dataloader.utils import seed_worker
+from src.TPP.dataloader.utils import seed_worker, check_exist
 from src.TPP.utils import read_yaml
 
 
@@ -33,12 +33,17 @@ def prepare_dataloaders(opt):
     * opt:  namespace
             This namespace stores all parsed arguments.
     '''
-    file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
+    available_file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
+
+    # find if required dataset files exists.
+    file_names = check_exist(available_file_names, opt.dataset_type, opt.training_data_name, 
+                                                                     opt.evaluate_data_name, 
+                                                                     opt.test_data_name)
 
     if len(file_names) == 0:
         logger.exception(f'No available dataset file in {opt.data_path}!')
     else:
-        logger.info(f'We are going to read {len(file_names)} files in {opt.data_path}. They are all {opt.dataset_type} files. Is that right?')
+        logger.info(f'We are going to read {len(file_names)} files in {opt.data_path}. They are {file_names}. Is that right?')
     
     dataloader_config_dict = read_yaml(opt.abs_dataloader_config) if opt.abs_dataloader_config else {}
 
@@ -69,26 +74,26 @@ def prepare_dataloaders(opt):
     opt.info_dict = read_yaml(os.path.join(opt.data_path, 'dataset_card.yml'))
 
     #========= Preparing dataloaders =========#
-    train_dataset = dataset(data_raw['train'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-    evaluate_dataset = dataset(data_raw['evaluate'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-    test_dataset = dataset(data_raw['test'], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-
     train_iterator, evaluation_iterator, test_iterator = None, None, None
     g = torch.Generator()
     g.manual_seed(opt.seed)
 
-    if getattr(opt, 'train', True):
+    if getattr(opt, 'training_data_name') is not None:
+        train_dataset = dataset(data_raw[opt.training_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
         train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.training_batch_size, \
             collate_fn = train_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
-    if getattr(opt, 'evaluation', True):
+    if getattr(opt, 'evaluate_data_name', True) is not None:
+        evaluate_dataset = dataset(data_raw[opt.evaluate_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
         evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.evaluation_batch_size, \
             collate_fn = evaluate_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
-    if getattr(opt, 'test', True):
+    if getattr(opt, 'test_data_name', True) is not None:
+        test_dataset = dataset(data_raw[opt.test_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
         test_iterator = DataLoader(test_dataset, batch_size=opt.evaluation_batch_size, \
             collate_fn = test_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
 
-    return train_iterator, evaluation_iterator, test_iterator
-
+    return {'Training': train_iterator, 
+            'Evaluation': evaluation_iterator, 
+            'Test': test_iterator}

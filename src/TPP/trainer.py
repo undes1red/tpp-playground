@@ -3,10 +3,11 @@ from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
 from torch.nn import DataParallel as DP
+from torch.utils.flop_counter import FlopCounterMode
 
 from src.taskhost_utils import get_logger, mkdir_if_not_exist
-from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, \
-                          lst_divide, evaluation, Metric, print_args
+from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, only_keep_data, \
+                          lst_divide, get_evaluation_results, Metric, print_args, pack_one_value_to_dict
 from src.TPP.model import get_model
 from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
@@ -28,14 +29,15 @@ class TPPTrainer:
         }
 
 
-    def get_procedure_monitor_dict(self):
-        return {
-            'num_format': {'lr': ':8.5f', 'tensor_memory_consumption': ':5f', 'reserved_memory': ':5f'},
-            'suffix': {'lr': '', 'tensor_memory_consumption': 'MiB', 'reserved_memory': 'MiB'},
-            'lr': self.sched_optimizer.get_lr(),
-            'tensor_memory_consumption': torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
-            'reserved_memory': torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
-        }
+    def get_procedure_monitor_dict(self, additional_info = {}):
+        monitored_info = {'lr': pack_one_value_to_dict(self.sched_optimizer.get_lr(), '8.5f'),
+                          'tensor_memory_consumption': pack_one_value_to_dict(torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0, '5f', 'MiB'),
+                          'reserved_memory': pack_one_value_to_dict(torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0, '5f', 'MiB')
+                         }
+        for key, value in additional_info.items():
+            monitored_info[key] = pack_one_value_to_dict(**value)
+        
+        return monitored_info
 
 
     def work(self, opt):
@@ -61,8 +63,8 @@ class TPPTrainer:
         ========= Load Dataset =========
         '''
         if self.opt.data_path:
-            self.training_data, self.evaluation_data, self.test_data = prepare_dataloaders(opt)
-            self.opt.training_size = len(self.training_data)
+            self.raw_data = prepare_dataloaders(opt)
+            self.opt.training_size = len(self.raw_data['Training'])
         else:
             raise logger.exception("Wrong input data path.")
     
@@ -142,10 +144,11 @@ class TPPTrainer:
         self.metric_checker = Metric(self.model_class.metric_number, getattr(self.model_class, 'smaller_is_better', None))
         self.format_dict_length = self.model_class.format_dict_length
         self.report_sum = [0] * self.format_dict_length
+        self.training_flop = 0
     
         desc = '  - (Training)   '
         step_range = range(1, self.opt.n_training_steps + 1)
-        training_iter = cycle(iter(self.training_data))
+        training_iter = cycle(iter(self.raw_data['Training']))
         self.sched_optimizer.zero_grad()
 
         '''
@@ -154,7 +157,12 @@ class TPPTrainer:
         self.evaluation_report(0)
         for current_step in tqdm(step_range, desc = desc, leave = False):
             data = next(training_iter)
-            step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
+
+            with FlopCounterMode(display = False) as counter:
+                step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
+            
+            self.training_flop += sum(counter.flop_counts['Global'].values())
+
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
@@ -197,92 +205,85 @@ class TPPTrainer:
 
     def train_report(self, current_step):
         logger.warning(f'Brief training status report at step {current_step}.')
-        report_sum = self.model_class.postprocess(self.report_sum, procedure = 'Training')
-        log_print_format_dict = self.model_class.log_print_format(report_sum, procedure = 'Training')
-        if self.opt.log:
-            self.transform_report_sum_into_recording_df(**log_print_format_dict, procedure = 'Training', current_step = current_step)
-        procedure_monitor_dict = self.get_procedure_monitor_dict()
-        print_performances(logger = logger, procedure = 'Training', \
-                           model_performance_dict = log_print_format_dict,
-                           procedure_monitor_dict = procedure_monitor_dict)
 
-        if self.opt.wandb:
-            import wandb
-            log_print_format_dict.pop('num_format')
-            wandb.log({'Training': log_print_format_dict}, commit = False, step = current_step)
-            wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
+        dict_flops = {'FLOPS': {'data': self.training_flop / 1000**4, 'num_format': '8.5f', 'suffix': 'TFlops'}}
+        report_sum = self.model_class.postprocess(self.report_sum, procedure = 'Training')
+        
+        log_print_format_dict = self.model_class.log_print_format(report_sum, procedure = 'Training')
+        procedure_monitor_dict = self.get_procedure_monitor_dict(dict_flops)
+        plain_training_results = only_keep_data(log_print_format_dict)
+
+        log_print_format_dict.update(procedure_monitor_dict)
+        print_performances(logger = logger, procedure = 'Training', data_dict = log_print_format_dict)
+        
+        if self.opt.log:
+            self.transform_report_sum_into_recording_df(procedure = 'Training', current_step = current_step, data = plain_training_results)
+            if self.opt.wandb:
+                import wandb
+                wandb.log({'Training': plain_training_results}, commit = False, step = current_step)
+                wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
 
         self.report_sum = [0] * self.format_dict_length
+        self.training_flop = 0
+    
+
+    def evaluation(self, dataset_name, current_step):
+        evaluation_results = get_evaluation_results(self.raw_data[dataset_name], self.model, self.model_class, device = self.opt.device, \
+                                                    output_length = self.format_dict_length, desc = f'  - ({dataset_name})   ')
+        # dict_flops = {'FLOPS': {'data': evaluation_results['flops'] / 1000**4, 'num_format': '8.5f', 'suffix': 'TFlops'}}
+        report = self.model_class.postprocess(evaluation_results['results'], procedure = dataset_name)
+
+        log_print_format_dict = self.model_class.log_print_format(report, procedure = dataset_name)
+        procedure_monitor_dict = self.get_procedure_monitor_dict()
+        plain_evaluation_results = only_keep_data(log_print_format_dict)
+
+        log_print_format_dict.update(procedure_monitor_dict)
+        print_performances(logger = logger, procedure = dataset_name, data_dict = log_print_format_dict)
+
+        if self.opt.log:
+            self.transform_report_sum_into_recording_df(procedure = dataset_name, current_step = current_step, data = plain_evaluation_results)
+            if self.opt.wandb:
+                import wandb
+                wandb.log({dataset_name: evaluation_results}, step = current_step)
+        
+        return plain_evaluation_results
 
 
     def evaluation_report(self, current_step):
         logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
 
         '''
-        Evaluation on the dev dataset.
+        Evaluation and checkpoint saving.
         '''
-        eva_report = self.model_class.postprocess(
-            evaluation(self.evaluation_data, self.model, self.model_class, device = self.opt.device, \
-                       output_length = self.format_dict_length, desc = '  - (Evaluation)   '), procedure = 'Evaluation'
-        )
-        log_print_format_dict_eva = self.model_class.log_print_format(eva_report, procedure = 'Evaluation')
-        procedure_monitor_dict = self.get_procedure_monitor_dict()
-        print_performances(logger = logger, procedure = 'Evaluation', \
-                           model_performance_dict = log_print_format_dict_eva,
-                           procedure_monitor_dict = procedure_monitor_dict)
-
-        '''
-        Evaluation on the test dataset.
-        '''
-        test_report = self.model_class.postprocess(
-            evaluation(self.test_data, self.model, self.model_class, device = self.opt.device, \
-                       output_length = self.format_dict_length, desc = '  - (Test)   '), procedure = 'Test'
-        )
-        log_print_format_dict_test = self.model_class.log_print_format(test_report, procedure = 'Test')
-        procedure_monitor_dict = self.get_procedure_monitor_dict()
-        print_performances(logger = logger, procedure = 'Test', \
-                           model_performance_dict = log_print_format_dict_test,
-                           procedure_monitor_dict = procedure_monitor_dict)
-
-        self.save(current_step, log_print_format_dict_eva, log_print_format_dict_test)
-        if self.opt.log:
-            self.transform_report_sum_into_recording_df(**log_print_format_dict_eva, procedure = 'Evaluation', current_step = current_step)
-            self.transform_report_sum_into_recording_df(**log_print_format_dict_test, procedure = 'Test', current_step = current_step)
-            if self.opt.wandb:
-                import wandb
-                log_print_format_dict_eva.pop('num_format')
-                log_print_format_dict_test.pop('num_format')
-                wandb.log({'Evaluation': log_print_format_dict_eva, 'Test': log_print_format_dict_test}, step = current_step)
+        evaluation_results = self.evaluation('Evaluation', current_step)
+        test_results = self.evaluation('Test', current_step)
+        self.save(current_step, evaluation_results, test_results)
 
 
-    def save(self, current_step, eva_report_format_dict, test_report_format_dict):
+    def save(self, current_step, evaluation_results, test_results):
         # We will store the checkpoint after model evaluation.
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict() if self.opt.cuda else self.model.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
         if self.opt.save_mode == 'all':
-            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, \
-                                      (f'checkpoint_at_step_{current_step}' + '.chkpt'))
+            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, f'checkpoint_at_step_{current_step}.chkpt')
             torch.save(checkpoint, model_name)
             logger.warning(f'----> The checkpoint file at step {current_step} has been stored. <----')
-            metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
-            self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
-                                                        **dict(zip(metric_names, metric_values)))
+            metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
+            self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = dict(zip(metric_names, metric_values)))
         elif self.opt.save_mode == 'best':
             model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, 'checkpoint.chkpt')
-            metric_values, metric_names = self.model_class.choose_metric(eva_report_format_dict, test_report_format_dict)
+            metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
             assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
             if current_step >= self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
                 torch.save(checkpoint, model_name)
                 logger.warning(f'----> We have updated the model checkpoint at step {current_step}. <----')
-                self.transform_report_sum_into_recording_df(num_format = {}, procedure = 'Best', current_step = current_step,\
-                                                            **dict(zip(metric_names, metric_values)))
+                self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = dict(zip(metric_names, metric_values)))
 
 
-    def transform_report_sum_into_recording_df(self, num_format, procedure, current_step, **kwargs):
-        df_perline = kwargs
+    def transform_report_sum_into_recording_df(self, procedure, current_step, data):
         new_df_perline_dict = {'current_step': current_step}
-        new_df_perline_dict.update(df_perline)
+        new_df_perline_dict.update(data)
 
         if self.df_records[procedure] is None:
             empty_execution_log_dict = {}

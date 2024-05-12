@@ -2,10 +2,11 @@ import os, torch
 from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import get_logger
-from src.TPP.utils import read_yaml, print_args
+from src.TPP.utils import read_yaml, print_args, suffix
 from src.TPP.evaluator_evaluation_functions import *
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
+from torch.utils.flop_counter import FlopCounterMode
 
 
 '''
@@ -16,13 +17,6 @@ logger = get_logger(__name__)
 
 
 class TPPEvaluator:
-    def __init__(self):
-        '''
-        Now, we use pd.DataFrame to record training records.
-        '''
-        pass
-
-
     def work(self, opt):
         '''
         Store required initial information
@@ -33,48 +27,55 @@ class TPPEvaluator:
         ========= Load Dataset =========
         '''
         if self.opt.data_path:
-            self.training_data, self.evaluation_data, self.test_data = prepare_dataloaders(opt)
+            self.raw_data = prepare_dataloaders(opt)
         else:
             raise logger.exception("Wrong input data path.")
     
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.param_names = list(model_param.keys())
-        logger.info(f'The input model hyperparameters are {model_param}')
-        
-        '''
-        ========= Restore Model from the checkpoint =========
-        '''
-
-        logger.info(f'Choosed model checkpoint file is in directory {self.opt.checkpoint_folder}.')
+        logger.info(f'The input model hyperparameters are {model_param}.')
         self.model_class = get_model(self.opt)
         model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
-
         self.opt.__dict__.update(model_param)
-        
-        '''
-        Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DDP.
-        '''
-        model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
-        model_state_dict = model_raw['model']
-        model.load_state_dict(model_state_dict)
-        model.requires_grad_(requires_grad = False)
-        logger.info(print_args(self.opt))
-        trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        self.opt.trainable_parameters = trainable_parameters
-        logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
-        if self.opt.cuda:
-            self.model = DP(model)
-        else:
-            self.model = model
+        '''
+        ========= Restore Model from the checkpoint =========
+        '''
+        model_hyperparameters = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
+        checkpoint_folder_suffix = 'model_' + model_hyperparameters
+        results_folder_suffix = 'results_' + model_hyperparameters
+        for index in opt.replace_index:
+            # locate where checkpoints are stored.
+            opt.checkpoint_folder = os.path.join(opt.checkpoint_of_this_procedure, str(index), opt.dataset_name, checkpoint_folder_suffix)
+            # where figures, records are stored.
+            opt.store_dir = os.path.join(opt.results_of_this_procedure, str(index), opt.dataset_name, results_folder_suffix)
+            logger.info(f'We will load the model checkpoint in {opt.checkpoint_folder}.')
+            logger.info(f'Results will be stored in {opt.store_dir}.')
 
-        # Fix module behaviours during evaluation.
-        self.model.eval()
-        self.task()
+            '''
+            Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DP if possible.
+            '''
+            model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
+            model_state_dict = model_raw['model']
+            model.load_state_dict(model_state_dict)
+            model.requires_grad_(requires_grad = False)
+            logger.info(print_args(self.opt))
+            trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            self.opt.trainable_parameters = trainable_parameters
+            logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
+
+            if self.opt.cuda:
+                self.model = DP(model)
+            else:
+                self.model = model
     
+            # Fix module behaviours during evaluation.
+            self.model.eval()
+            self.task()
+
 
     def task(self):
         task_dict = {
@@ -86,11 +87,9 @@ class TPPEvaluator:
             'mae_e_and_f1_by_time_event': self.task_mae_e_and_f1_by_time_event,
             'which_event_occurs_first': self.task_which_event_occurs_first,
             'samples_from_et': self.task_samples_from_et,
-            'mae_and_f1_of_imputated_events': self.task_mae_and_f1_of_imputated_events
-        },
+            'mae_and_f1_of_imputated_events': self.task_mae_and_f1_of_imputated_events},
         'all':{
-            'sample': self.task_sample,
-        }
+            'sample': self.task_sample,}
         }
 
         return task_dict[self.opt.save_mode][self.opt.task_name]()
@@ -98,20 +97,20 @@ class TPPEvaluator:
 
     def task_graph(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            for idx, train_data in enumerate(self.training_data):
+        if self.opt.training_data_name is not None:
+            for idx, train_data in enumerate(self.raw_data['Training']):
                 draw(self.model, train_data, 'train', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
 
-        if self.opt.evaluation:
-            for idx, evaluation_data in enumerate(self.evaluation_data):
+        if self.opt.evaluate_data_name is not None:
+            for idx, evaluation_data in enumerate(self.raw_data['Evaluation']):
                 draw(self.model, evaluation_data, 'evaluation', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
 
-        if self.opt.test:
-            for idx, test_data in enumerate(self.test_data):
+        if self.opt.test_data_name is not None:
+            for idx, test_data in enumerate(self.raw_data['Test']):
                 draw(self.model, test_data, 'test', batch_idx = idx, opt = self.opt)
                 if idx >= self.opt.figure_count - 1:
                     break
@@ -119,86 +118,86 @@ class TPPEvaluator:
 
     def task_spearman_and_l1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            spearman_and_l1(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            spearman_and_l1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            spearman_and_l1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            spearman_and_l1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            spearman_and_l1(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            spearman_and_l1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_mae_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            mae_and_f1(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            mae_and_f1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            mae_and_f1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            mae_and_f1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            mae_and_f1(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            mae_and_f1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_mae_e_and_f1_by_time_event(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            mae_e_and_f1_by_time_event(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            mae_e_and_f1_by_time_event(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            mae_e_and_f1_by_time_event(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            mae_e_and_f1_by_time_event(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            mae_e_and_f1_by_time_event(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            mae_e_and_f1_by_time_event(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_mae_and_f1_of_imputated_events(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            mae_and_f1_of_imputated_events(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            mae_and_f1_of_imputated_events(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            mae_and_f1_of_imputated_events(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            mae_and_f1_of_imputated_events(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            mae_and_f1_of_imputated_events(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            mae_and_f1_of_imputated_events(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_mae_e_and_f1(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            mae_e_and_f1(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            mae_e_and_f1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            mae_e_and_f1(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            mae_e_and_f1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            mae_e_and_f1(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            mae_e_and_f1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_which_event_occurs_first(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            which_event_occurs_first(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            which_event_occurs_first(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            which_event_occurs_first(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            which_event_occurs_first(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            which_event_occurs_first(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            which_event_occurs_first(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_samples_from_et(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.train:
-            samples_from_et(self.model, self.training_data, 'train', opt = self.opt)
+        if self.opt.training_data_name is not None:
+            samples_from_et(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
-        if self.opt.evaluation:
-            samples_from_et(self.model, self.evaluation_data, 'evaluation', opt = self.opt)
+        if self.opt.evaluate_data_name is not None:
+            samples_from_et(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
-        if self.opt.test:
-            samples_from_et(self.model, self.test_data, 'test', opt = self.opt)
+        if self.opt.test_data_name is not None:
+            samples_from_et(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_sample(self):
