@@ -6,7 +6,6 @@ from src.TPP.utils import read_yaml, print_args, suffix
 from src.TPP.evaluator_evaluation_functions import *
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
-from torch.utils.flop_counter import FlopCounterMode
 
 
 '''
@@ -81,11 +80,12 @@ class TPPEvaluator:
         task_dict = {
             'best':{
             'graph': self.task_graph,
-            'spearman_and_l1': self.task_spearman_and_l1,
-            'mae_and_f1': self.task_mae_and_f1,
-            'mae_e_and_f1': self.task_mae_e_and_f1,
-            'mae_e_and_f1_by_time_event': self.task_mae_e_and_f1_by_time_event,
-            'which_event_occurs_first': self.task_which_event_occurs_first,
+            'spearman_and_l1': self.task_evaluation_on_entire_dataset,
+            'mae_and_f1': self.task_evaluation_on_entire_dataset,
+            'mae_e_and_f1': self.task_evaluation_on_entire_dataset,
+            'mae_e_and_f1_by_time_event': self.task_evaluation_on_entire_dataset,
+            'which_event_occurs_first': self.task_evaluation_on_entire_dataset,
+
             'samples_from_et': self.task_samples_from_et,
             'mae_and_f1_of_imputated_events': self.task_mae_and_f1_of_imputated_events},
         'all':{
@@ -116,40 +116,16 @@ class TPPEvaluator:
                     break
 
 
-    def task_spearman_and_l1(self):
+    def task_evaluation_on_entire_dataset(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.training_data_name is not None:
-            spearman_and_l1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Training'], 'train', opt = self.opt)
 
         if self.opt.evaluate_data_name is not None:
-            spearman_and_l1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
 
         if self.opt.test_data_name is not None:
-            spearman_and_l1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
-
-
-    def task_mae_and_f1(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.training_data_name is not None:
-            mae_and_f1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
-
-        if self.opt.evaluate_data_name is not None:
-            mae_and_f1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
-
-        if self.opt.test_data_name is not None:
-            mae_and_f1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
-
-
-    def task_mae_e_and_f1_by_time_event(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.training_data_name is not None:
-            mae_e_and_f1_by_time_event(self.model, self.raw_data['Training'], 'train', opt = self.opt)
-
-        if self.opt.evaluate_data_name is not None:
-            mae_e_and_f1_by_time_event(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
-
-        if self.opt.test_data_name is not None:
-            mae_e_and_f1_by_time_event(self.model, self.raw_data['Test'], 'test', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_mae_and_f1_of_imputated_events(self):
@@ -162,30 +138,6 @@ class TPPEvaluator:
 
         if self.opt.test_data_name is not None:
             mae_and_f1_of_imputated_events(self.model, self.raw_data['Test'], 'test', opt = self.opt)
-
-
-    def task_mae_e_and_f1(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.training_data_name is not None:
-            mae_e_and_f1(self.model, self.raw_data['Training'], 'train', opt = self.opt)
-
-        if self.opt.evaluate_data_name is not None:
-            mae_e_and_f1(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
-
-        if self.opt.test_data_name is not None:
-            mae_e_and_f1(self.model, self.raw_data['Test'], 'test', opt = self.opt)
-
-
-    def task_which_event_occurs_first(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.training_data_name is not None:
-            which_event_occurs_first(self.model, self.raw_data['Training'], 'train', opt = self.opt)
-
-        if self.opt.evaluate_data_name is not None:
-            which_event_occurs_first(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
-
-        if self.opt.test_data_name is not None:
-            which_event_occurs_first(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_samples_from_et(self):

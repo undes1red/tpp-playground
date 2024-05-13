@@ -206,7 +206,7 @@ class TPPTrainer:
     def train_report(self, current_step):
         logger.warning(f'Brief training status report at step {current_step}.')
 
-        dict_flops = {'FLOPS': {'data': self.training_flop / 1000**4, 'num_format': '8.5f', 'suffix': 'TFlops'}}
+        dict_flops = {'FLOPS': pack_one_value_to_dict(self.training_flop / 1000**4, '8.5f', 'TFlops')}
         report_sum = self.model_class.postprocess(self.report_sum, procedure = 'Training')
         
         log_print_format_dict = self.model_class.log_print_format(report_sum, procedure = 'Training')

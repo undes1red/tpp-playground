@@ -760,7 +760,7 @@ class THPWrapper(BasicModel):
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_history, mask_next, mean, var)
         
-        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes, probability_sum, events_next, = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
 
         return maes, f1_2, probability_sum, events_next
 

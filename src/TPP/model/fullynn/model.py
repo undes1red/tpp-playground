@@ -902,7 +902,7 @@ class FullyNNModel(BasicModel):
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
         
-        _, maes, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes, probability_sum, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
 
         return maes, f1_2, probability_sum, events_next
 
