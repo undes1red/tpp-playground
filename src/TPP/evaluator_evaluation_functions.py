@@ -5,10 +5,9 @@ import numpy as np
 import gc
 
 from torch.utils.flop_counter import FlopCounterMode
-from einops import pack
 from tqdm import tqdm
 from src.taskhost_utils import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt
-
+from src.TPP.evaluation_functions_utils import flatten
 
 logger = get_logger(name = __file__)
 
@@ -76,8 +75,6 @@ def spearman_and_l1_postprocess(all_evaluation_results, desc, opt):
     spearman = np.mean(spearman)
     l1 = np.mean(l1)
 
-    mkdir_if_not_exist(opt.store_dir)
-
     result_file = os.path.join(opt.store_dir, f'{desc}_spearman_and_l1.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.'
     write_to_txt(strings, result_file)
@@ -93,9 +90,7 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     '''
     mae, f1 = all_evaluation_results
     f1 = np.mean(f1)
-    mean_mae = np.mean(mae)
-
-    mkdir_if_not_exist(opt.store_dir)
+    mean_mae = np.mean(flatten(mae))
 
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.'
@@ -145,11 +140,9 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
         data = {'mae_e': mae_e}
         dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
-    mean_mae_e = np.mean(mae_e)
+    mean_mae_e = np.mean(flatten(mae_e))
     f1 = np.mean(f1)
     mean_probability_sum = np.mean(sum_of_pm)
-
-    mkdir_if_not_exist(opt.store_dir)
 
     '''
     Report the average of mae-e and f1.
@@ -163,9 +156,8 @@ def mae_e_and_f1_by_time_event_postprocess(all_evaluation_results, desc, opt):
     mae_e, f1, events_pred_index, events_next = all_evaluation_results
 
     f1 = np.mean(f1)
-    mean_mae_e = np.mean(mae_e)
+    mean_mae_e = np.mean(flatten(mae_e))
 
-    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
@@ -187,9 +179,8 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     '''
     mae, f1 = all_evaluation_results
     f1 = np.mean(f1)
-    mean_mae = np.mean(mae)
+    mean_mae = np.mean(flatten(mae))
 
-    mkdir_if_not_exist(opt.store_dir)
     '''
     Report the average of mae-e and f1.
     '''
@@ -235,6 +226,7 @@ def basic_evaluation_loop(model, dataset, desc, opt):
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
 
+    mkdir_if_not_exist(opt.store_dir)
     result_file = os.path.join(opt.store_dir, f'{desc}_{task_name}_misc.txt')
     strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n', 
                f'Computation: {flops / 1000**4} TFlops.']

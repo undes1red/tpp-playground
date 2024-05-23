@@ -154,7 +154,7 @@ class SAHPWrapper(BasicModel):
     '''
     Functions for model evaluation
     '''
-    @torch.inference_mode()
+    @torch.no_grad()
     def evaluate_procedure(self, time, events, mask):
         '''
         Check if events data is present.
@@ -237,7 +237,7 @@ class SAHPWrapper(BasicModel):
         return mtpp_loss, events_loss
     
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
         mae, pred_time = self.mean_absolute_error(time_history = time_history, time_next = time_next, 
                                                   events_history = events_history, 
@@ -254,7 +254,7 @@ class SAHPWrapper(BasicModel):
         return mae, f1
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def mean_absolute_error(self, time_history, time_next, events_history, mask_history, mask_next):
         '''
         The input should be the original minibatch
@@ -295,7 +295,7 @@ class SAHPWrapper(BasicModel):
         return mae, tau_pred
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, var, return_mean = True):
         '''
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
@@ -367,7 +367,7 @@ class SAHPWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_x, resolution, inf_val, mean, var, return_mean):
         '''
         The input should be the original minibatch
@@ -458,7 +458,7 @@ class SAHPWrapper(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, var
     
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -501,7 +501,7 @@ class SAHPWrapper(BasicModel):
         return plots
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -542,7 +542,7 @@ class SAHPWrapper(BasicModel):
         return plots
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -584,7 +584,7 @@ class SAHPWrapper(BasicModel):
         return plots
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -633,7 +633,7 @@ class SAHPWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -679,7 +679,7 @@ class SAHPWrapper(BasicModel):
         return spearman, l1
     
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -760,7 +760,7 @@ class SAHPWrapper(BasicModel):
         return mae, f1_1
 
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
