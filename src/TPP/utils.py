@@ -2,7 +2,7 @@
 import math, yaml, os
 from tqdm import tqdm
 from functools import reduce
-from torch.utils.flop_counter import FlopCounterMode
+import torch
 
 
 suffix_shortcut_dict = {
@@ -166,6 +166,11 @@ def replace_check(opt, root_path, *subdirs):
     for subdir in subdirs:
         leaf_dir_name = f'{subdir}_' + folder_suffix
         tmp_path = os.path.join(root_path, subdir, opt.procedure)
+        if not os.path.exists(tmp_path):
+            # Return 1 if the tmp_path does not exist.
+            calculated_indexes.append(1)
+            continue
+
         files = os.scandir(tmp_path)
         valid_dir_names = [int(dir_item.name) for dir_item in filter(lambda x: not x.is_file() and x.name.isdigit(), files)]
         valid_dir_names = sorted(valid_dir_names)
@@ -182,7 +187,7 @@ def replace_check(opt, root_path, *subdirs):
     
     baseline = calculated_indexes[0]
     for index in calculated_indexes:
-        assert index == baseline
+        assert index == baseline, f'We get different task indexes in {subdirs}!'
     
     return str(baseline)
 

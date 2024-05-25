@@ -1,4 +1,4 @@
-import sys, torch, importlib, random
+import sys, torch, importlib, random, os
 import numpy as np
 
 from src.taskhost_utils import get_logger, version_check
@@ -49,8 +49,8 @@ class TaskHost:
             import time
             logger.warning(f'Reproducibility only presents when a random seed is present. If you want reproducible results, please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
             logger.warning(f'No explicit random seed detected, the framework will spontaneously select a number as the random seed.')
-            random.seed(int(time.time()) % 65535)
-            self.opt.seed = random.randint(0, 65535)
+            random.seed(int(time.time()) % int.from_bytes(os.urandom(3), byteorder = 'big'))
+            self.opt.seed = random.randint(0, 10e5)
             logger.info(f'The model prefers {self.opt.seed} this time.')
         else:
             logger.info(f'You request, we follow. We will use number {self.opt.seed} as the random seed.')
@@ -77,6 +77,11 @@ class TaskHost:
         Allow tf32 in matmul to improve speed on recent hardware.
         '''
         torch.backends.cuda.matmul.allow_tf32 = True
+
+        '''
+        Might benefit the Dataloader.
+        '''
+        torch.multiprocessing.set_sharing_strategy('file_system')
     
     
     def cuda(self):

@@ -7,7 +7,7 @@ import gc
 from torch.utils.flop_counter import FlopCounterMode
 from tqdm import tqdm
 from src.taskhost_utils import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt
-from src.TPP.evaluation_functions_utils import flatten
+from src.TPP.evaluation_functions_utils import flatten, free_model_from_gpu
 
 logger = get_logger(name = __file__)
 
@@ -195,16 +195,28 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(mae, mae_e_dist_file, compression = 'bz2')
 
 
+def samples_from_et_postprocess(all_evaluation_results, desc, opt):
+    '''
+    Dump the detailed distribution of mae-e for further usage.
+    '''
+    samples, p_ms = all_evaluation_results
+
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_samples_for_every_point.pkl')
+    data = {'samples': samples, 'p_ms': p_ms}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
+
 desc_funcs = {
     'spearman_and_l1': ['Spearman and L1 for {0}', spearman_and_l1_postprocess],
     'mae_and_f1': ['MAE and macro-f1 for {0}', mae_and_f1_postprocess],
     'mae_e_and_f1': ['MAE-E and macro-f1 for {0}', mae_e_and_f1_postprocess],
     'mae_e_and_f1_by_time_event': ['MAE-E and macro-f1 for {0} following NER', mae_e_and_f1_by_time_event_postprocess],
     'which_event_occurs_first': ['Predict the next event by finding which event occurs first for {0}', which_event_occurs_first_postprocess],
+    'samples_from_et': [f'Samples of {0} for each mark', ]
 }
 
 
-def basic_evaluation_loop(model, dataset, desc, opt):
+def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True):
     task_name = opt.task_name
     desc_string, postprocess_func = desc_funcs[task_name]
 
@@ -225,6 +237,10 @@ def basic_evaluation_loop(model, dataset, desc, opt):
         flops = sum(counter.flop_counts['Global'].values())
         elapsed_time = progress_bar.format_dict['elapsed']
         data_size = progress_bar.format_dict['total']
+    
+    if early_offload:
+        # How to remove a model and free its memory?
+        free_model_from_gpu(model)
 
     mkdir_if_not_exist(opt.store_dir)
     result_file = os.path.join(opt.store_dir, f'{desc}_{task_name}_misc.txt')
@@ -276,31 +292,4 @@ def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
     '''
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_of_imputated_events.pkl')
     data = {'mae_e': list_mae, 'f1': f1}
-    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
-
-
-def samples_from_et(model, dataset, desc, opt):
-    '''
-    This function is called when task_name = mae_e_and_f1.
-
-    This function calculates the average of mae_e and macro-f1 between the model prediction based on history
-    and the ground truth on all available event sequences.
-    We dump all mae_e values for calculating Q1, Q2, and Q3 later.
-    '''
-    samples = []
-    p_ms = []
-
-    with tqdm(dataset, desc = f'Samples of {desc} from ET') as progress_bar:
-        for minibatch in progress_bar:
-            samples_per_seq, p_ms_per_seq = model('samples_from_et', minibatch, opt)
-                                                                               # [batch_size, seq_len]
-            samples.append(samples_per_seq.tolist())
-            p_ms.append(p_ms_per_seq.tolist())
-    
-    mkdir_if_not_exist(opt.store_dir)
-    '''
-    Dump the detailed distribution of mae-e for further usage.
-    '''
-    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_samples_for_every_point.pkl')
-    data = {'samples': samples, 'p_ms': p_ms}
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')

@@ -78,15 +78,18 @@ class TPPEvaluator:
 
     def task(self):
         task_dict = {
-            'best':{
+        'best':{
+            # Follwoing tasks involves a part of the dataset.
             'graph': self.task_graph,
+
+            # Following tasks involves the entire dataset.
             'spearman_and_l1': self.task_evaluation_on_entire_dataset,
             'mae_and_f1': self.task_evaluation_on_entire_dataset,
             'mae_e_and_f1': self.task_evaluation_on_entire_dataset,
             'mae_e_and_f1_by_time_event': self.task_evaluation_on_entire_dataset,
             'which_event_occurs_first': self.task_evaluation_on_entire_dataset,
+            'samples_from_et': self.task_evaluation_on_entire_dataset,
 
-            'samples_from_et': self.task_samples_from_et,
             'mae_and_f1_of_imputated_events': self.task_mae_and_f1_of_imputated_events},
         'all':{
             'sample': self.task_sample,}
@@ -119,13 +122,13 @@ class TPPEvaluator:
     def task_evaluation_on_entire_dataset(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.training_data_name is not None:
-            basic_evaluation_loop(self.model, self.raw_data['Training'], 'train', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Training'], 'train', opt = self.opt, early_offload = False)
 
         if self.opt.evaluate_data_name is not None:
-            basic_evaluation_loop(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt, early_offload = False)
 
         if self.opt.test_data_name is not None:
-            basic_evaluation_loop(self.model, self.raw_data['Test'], 'test', opt = self.opt)
+            basic_evaluation_loop(self.model, self.raw_data['Test'], 'test', opt = self.opt, early_offload = True)
 
 
     def task_mae_and_f1_of_imputated_events(self):
@@ -138,18 +141,6 @@ class TPPEvaluator:
 
         if self.opt.test_data_name is not None:
             mae_and_f1_of_imputated_events(self.model, self.raw_data['Test'], 'test', opt = self.opt)
-
-
-    def task_samples_from_et(self):
-        # We will get three records from the training set, test set, and evaluation set, respectively.
-        if self.opt.training_data_name is not None:
-            samples_from_et(self.model, self.raw_data['Training'], 'train', opt = self.opt)
-
-        if self.opt.evaluate_data_name is not None:
-            samples_from_et(self.model, self.raw_data['Evaluation'], 'evaluation', opt = self.opt)
-
-        if self.opt.test_data_name is not None:
-            samples_from_et(self.model, self.raw_data['Test'], 'test', opt = self.opt)
 
 
     def task_sample(self):

@@ -1194,12 +1194,12 @@ class IFIBCModel(BasicModel):
         def test_log_print_format(input):
             format_dict = {}
             format_dict['absolute_NLL_loss'] = pack_one_value_to_dict(input[0])
-            format_dict['avg_survival_loss'] = pack_one_value_to_dict(input[0])
-            format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[0])
-            format_dict['events_loss'] = pack_one_value_to_dict(input[0])
-            format_dict['f1_pred_at_time_next'] = pack_one_value_to_dict(input[0], '2.8f')
-            format_dict['mae'] = pack_one_value_to_dict(input[0], '2.8f')
-            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[0], '2.8f')
+            format_dict['avg_survival_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[2])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[3])
+            format_dict['f1_pred_at_time_next'] = pack_one_value_to_dict(input[4], '2.8f')
+            format_dict['mae'] = pack_one_value_to_dict(input[5], '2.8f')
+            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[6], '2.8f')
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))

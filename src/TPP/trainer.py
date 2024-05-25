@@ -35,7 +35,7 @@ class TPPTrainer:
                           'reserved_memory': pack_one_value_to_dict(torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0, '5f', 'MiB')
                          }
         for key, value in additional_info.items():
-            monitored_info[key] = pack_one_value_to_dict(**value)
+            monitored_info[key] = value
         
         return monitored_info
 
