@@ -97,7 +97,7 @@ class TPPTrainer:
         '''
         self.sched_optimizer = ScheduledOptim(opt, self.model)
         if self.opt.cuda:
-            self.model = DP(self.model)
+            self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
         self.task()
     
     

@@ -80,18 +80,18 @@ def prepare_dataloaders(opt):
 
     if getattr(opt, 'training_data_name') is not None:
         train_dataset = dataset(data_raw[opt.training_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-        train_iterator = DataLoader(train_dataset, shuffle = True, batch_size=opt.training_batch_size, \
-            collate_fn = train_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+        train_iterator = DataLoader(train_dataset, shuffle = True, batch_size = opt.training_batch_size, \
+            collate_fn = train_dataset.data_collator, num_workers = opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
     if getattr(opt, 'evaluate_data_name', True) is not None:
         evaluate_dataset = dataset(data_raw[opt.evaluate_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-        evaluation_iterator = DataLoader(evaluate_dataset, batch_size=opt.evaluation_batch_size, \
-            collate_fn = evaluate_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+        evaluation_iterator = DataLoader(evaluate_dataset, batch_size = opt.evaluation_batch_size, \
+            collate_fn = evaluate_dataset.data_collator, num_workers = opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
     if getattr(opt, 'test_data_name', True) is not None:
         test_dataset = dataset(data_raw[opt.test_data_name], property_dict = opt.info_dict, device = opt.device, **dataloader_config_dict)
-        test_iterator = DataLoader(test_dataset, batch_size=opt.evaluation_batch_size, \
-            collate_fn = test_dataset.data_collator, num_workers=opt.n_worker, worker_init_fn = seed_worker,\
+        test_iterator = DataLoader(test_dataset, batch_size = opt.evaluation_batch_size, \
+            collate_fn = test_dataset.data_collator, num_workers = opt.n_worker, worker_init_fn = seed_worker,\
             generator = g, pin_memory = True)
 
     return {'Training': train_iterator, 

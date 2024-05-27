@@ -27,7 +27,7 @@ class FullyNNModel(BasicModel):
                  info_dict,
                  device,
                  epsilon = 1e-20,
-                 history_module = 'LSTM', survival_loss_during_training = False,
+                 history_module = 'LSTM', survival_loss_during_training = True,
                  mae_step = 16, mae_e_step = 16, sample_rate = 32):
         super(FullyNNModel, self).__init__()
         self.device = device

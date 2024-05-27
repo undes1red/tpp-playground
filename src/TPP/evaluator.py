@@ -67,7 +67,7 @@ class TPPEvaluator:
             logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
             if self.opt.cuda:
-                self.model = DP(model)
+                self.model = DP(model, device_ids = [self.opt.cuda_device, ])
             else:
                 self.model = model
     

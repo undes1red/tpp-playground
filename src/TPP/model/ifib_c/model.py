@@ -19,7 +19,7 @@ class IFIBCModel(BasicModel):
                  info_dict,
                  device,
                  removes_tail, tanh_parameter,
-                 history_module = 'LSTM', survival_loss_during_training = False,
+                 history_module = 'LSTM', survival_loss_during_training = True,
                  epsilon = 0.0, sample_rate = 32, mae_step = 32, mae_e_step = 32):
         super(IFIBCModel, self).__init__()
         self.device = device

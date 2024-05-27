@@ -28,7 +28,7 @@ class TFullyNNModel(BasicModel):
                  d_hidden, n_layers, \
                  n_head, d_qk, d_v,
                  sample_rate = 32, mae_step = 32, \
-                 mae_e_step = 32, survival_loss_during_training = False):
+                 mae_e_step = 32, survival_loss_during_training = True):
         super(TFullyNNModel, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']

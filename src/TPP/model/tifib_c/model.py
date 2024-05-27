@@ -20,7 +20,7 @@ class TIFIBCModel(BasicModel):
                  removes_tail, tanh_parameter,
                  n_head, d_qk, d_v,
                  epsilon = 0.0, sample_rate = 32, mae_step = 8,
-                 mae_e_step = 8, survival_loss_during_training = False):
+                 mae_e_step = 8, survival_loss_during_training = True):
         super(TIFIBCModel, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']

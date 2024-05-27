@@ -8,6 +8,8 @@ class BasicArguments:
                             help='Set global random seed.')
         self.parser.add_argument('--cuda', action='store_true', 
                             help="Set it to true if you want to use GPU to accelerate model training.")
+        self.parser.add_argument('--cuda_device', type=int, default=0,
+                            help="Select which CUDA device you want to use. Default number is 0. This argument does nothing if --cuda is not set.")
         self.parser.add_argument('--replace', action='store_true', 
                             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
 

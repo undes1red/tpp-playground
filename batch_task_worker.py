@@ -25,12 +25,9 @@ parser.add_argument('--dataset', type = str, help = 'The dataset name to select 
 parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
 
 opt = parser.parse_args()
-# Environment variables
-do_not_use_gpu = False
+use_gpu = False
 if opt.GPU is not None and opt.GPU >= 0:
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(opt.GPU)
-else:
-    do_not_use_gpu = True
+    use_gpu = True
 
 
 def task_generator(hyperparameter_list):
@@ -88,8 +85,9 @@ else:
     generated_hyperparameter_list, the_number_of_task = task_generator(parameter_retriver(opt))
     for hp_list in generated_hyperparameter_list:
         # Assemble the command list into a string.
-        if not do_not_use_gpu:
-            hp_list.append("--cuda")
+        if use_gpu:
+            hp_list.append('--cuda')
+            hp_list.extend(['--cuda_device', f'{opt.GPU}'])
         task = ['python3'] + hp_list
         task_string = " ".join(task)
         generated_tasks.append(task_string)

@@ -24,7 +24,7 @@ class TFENNModel(BasicModel):
                  d_hidden, n_layers,
                  n_head, d_qk, d_v, 
                  info_dict, device,
-                 survival_loss_during_training = False, 
+                 survival_loss_during_training = True, 
                  sample_rate = 32, mae_step = 32, mae_e_step = 32):
         '''
         This function creates a FENN model.

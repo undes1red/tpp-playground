@@ -13,7 +13,7 @@ from src.TPP.model.utils import *
 class SAHPWrapper(BasicModel):
     def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32,
-                 mae_step = 4, mae_e_step = 4, integration_sample_rate = 100, survival_loss_during_training = False):
+                 mae_step = 4, mae_e_step = 4, integration_sample_rate = 100, survival_loss_during_training = True):
         super(SAHPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']

@@ -12,7 +12,7 @@ from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper
 class RMTPP(BasicModel):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, info_dict, event_toggle, 
                  output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20,
-                 survival_loss_during_training = False):
+                 survival_loss_during_training = True):
         super(RMTPP, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']

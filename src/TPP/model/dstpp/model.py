@@ -23,7 +23,7 @@ class DSTPPWrapper(BasicModule):
                  dropout, padding_index,
                  loss_type, timesteps, samplingsteps, objective, beta_schedule,
                  info_dict, device, epsilon = 1e-20,
-                 survival_loss_during_training = False):
+                 survival_loss_during_training = True):
         '''
         This function creates a FENN model.
         '''

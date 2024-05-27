@@ -13,7 +13,7 @@ from src.TPP.model.utils import *
 class CTLSTMWrapper(BasicModel):
     def __init__(self, info_dict, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
-                 integration_sample_rate = 100, survival_loss_during_training = False):
+                 integration_sample_rate = 100, survival_loss_during_training = True):
         super(CTLSTMWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']

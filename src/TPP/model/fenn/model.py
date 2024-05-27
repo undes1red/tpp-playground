@@ -25,7 +25,7 @@ class FENNModel(BasicModel):
                  info_dict,
                  device,
                  epsilon = 1e-20, mae_step = 16, mae_e_step = 16,
-                 history_module = 'LSTM', survival_loss_during_training = False,
+                 history_module = 'LSTM', survival_loss_during_training = True,
                  sample_rate = 32):
         '''
         This function creates a FENN model.
