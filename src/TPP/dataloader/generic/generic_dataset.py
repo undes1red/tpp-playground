@@ -48,7 +48,11 @@ class generic_dataset(utils.data.Dataset):
         if self.evaluate:
             self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
         else:
-            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+            # Use T
+            # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+            # Do not use T
+            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
+            self.data.time_seq = self.data.time_seq.apply(append, number = 0.1)
             self.data.event = self.data.event.apply(append, number = self.number_of_events)
 
         self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
