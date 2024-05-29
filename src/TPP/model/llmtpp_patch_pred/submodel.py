@@ -8,24 +8,25 @@ import math
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
 from src.TPP.model.utils import L1_distance_across_events
-from src.TPP.model.llmtpp.transformers_module import lm_module_location
-from src.TPP.model.llmtpp.embedding import DataEmbedding
+from src.TPP.model.llmtpp_patch_pred.transformers_module import lm_module_location
+from src.TPP.model.llmtpp_patch_pred.embedding import DataEmbedding
 
 
 class LLMTPP(nn.Module):
-    def __init__(self, llm_class_name, full_llm_name, d_model, d_embedding, num_events, lm_layers, device, dropout, d_lm_embedding):
+    def __init__(self, llm_class_name, full_llm_name, patch_size, d_model, \
+                 d_embedding, num_events, lm_layers, d_lm_embedding, device, dropout):
         super(LLMTPP, self).__init__()
         self.device = device
 
         self.num_events = num_events
+        self.patch_size = patch_size
         # How many layers in the LM are trainable?
         self.lm_layers = lm_layers
         self.d_model = d_model
         self.d_embedding = d_embedding
         self.d_lm_embedding = d_lm_embedding
 
-        self.enc_embedding = DataEmbedding(self.num_events + 1, d_embedding, d_model, dropout = dropout, device = self.device)
-        self.div_term = torch.exp(torch.arange(0, d_model, 2, device = self.device) * -(math.log(10000.0) / d_model)).reshape(1, 1, -1)
+        self.enc_embedding = DataEmbedding(self.num_events + 1, d_embedding, d_model, self.patch_size, dropout = dropout, device = self.device)
 
         self.lm = lm_module_location.get(llm_class_name)
         if self.lm is None:
@@ -41,14 +42,13 @@ class LLMTPP(nn.Module):
                 param.requires_grad = True
             else:
                 param.requires_grad = False
-        
+
         self.mark = nn.Sequential(
             nn.Linear(d_lm_embedding, d_model, device = self.device),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.LayerNorm(d_model),
-            nn.Linear(d_model, self.num_events, device = self.device),
-            nn.Softmax(dim = -1)
+            nn.Linear(d_model, self.patch_size * self.num_events, device = self.device)
         )
 
         self.time = nn.Sequential(
@@ -56,18 +56,33 @@ class LLMTPP(nn.Module):
             nn.GELU(),
             nn.Dropout(0.1),
             nn.LayerNorm(d_model),
-            nn.Linear(d_model, 1, device = self.device),
+            nn.Linear(d_model, self.patch_size, device = self.device),
             nn.Softplus()
         )
 
 
-    def compute_temporal_embedding(self, time):
-        pe = torch.zeros(*(time.shape), self.d_model, device = self.device)
-        _time = time.unsqueeze(-1)
-        pe[..., 0::2] = torch.sin(_time * self.div_term)
-        pe[..., 1::2] = torch.cos(_time * self.div_term)
-        # pe = pe * non_pad_mask.unsqueeze(-1)
-        return pe
+    def patchify(self, events_history, time_history, mask_history):
+        # Split the input sequence into several patches.
+        seq_len = events_history.shape[-1]
+        free_events_size = seq_len % self.patch_size
+        num_of_patches = int(seq_len / self.patch_size) + (1 if free_events_size > 0 else 0)
+        p1d = (0, (self.patch_size - free_events_size) % self.patch_size)
+
+        events_history = torch.nn.functional.pad(events_history, p1d, 'constant', 0)
+                                                                               # [batch_size, num_of_patches * self.patch_size]
+        time_history = torch.nn.functional.pad(time_history, p1d, 'constant', 0)
+                                                                               # [batch_size, num_of_patches * self.patch_size]
+        mask_history = torch.nn.functional.pad(mask_history, p1d, 'constant', 0)
+                                                                               # [batch_size, num_of_patches * self.patch_size]
+        
+        events_history = rearrange(events_history, 'b (np ps) -> b np ps', np = num_of_patches)
+                                                                               # [batch_size, num_of_patches, self.patch_size]
+        time_history = rearrange(time_history, 'b (np ps) -> b np ps', np = num_of_patches)
+                                                                               # [batch_size, num_of_patches, self.patch_size]
+        mask_history = rearrange(mask_history, 'b (np ps) -> b np ps', np = num_of_patches)
+                                                                               # [batch_size, num_of_patches, self.patch_size]
+        
+        return events_history, time_history, mask_history
 
 
     def forward(self, mode, *args, **kwargs):
@@ -81,18 +96,25 @@ class LLMTPP(nn.Module):
 
     def model_forward(self, events_history, time_history, mask_history, mean, var):
         time_history = (time_history - mean) / var
-        events_embedding = self.enc_embedding(events_history)                  # [batch_size, seq_len, d_model]
-        times_embedding = self.compute_temporal_embedding(time_history)        # [batch_size, seq_len, d_model]
-        input_embs = events_embedding + times_embedding                        # [batch_size, seq_len, d_model]
 
-        input_embs = torch.nn.functional.pad(input_embs, (0, self.d_lm_embedding - input_embs.shape[-1])) * mask_history.unsqueeze(dim = -1)
-                                                                               # [batch_size, seq_len, d_lm_model]
+        events_history, time_history, mask_history = self.patchify(events_history, time_history, mask_history)
+                                                                               # [batch_size, num_of_patches, patch_size]
+        input_embs = self.enc_embedding(events_history, time_history, mask_history)
+                                                                               # [batch_size, num_of_patches, d_model]
+
+        input_embs = torch.nn.functional.pad(input_embs, (0, self.d_lm_embedding - input_embs.shape[-1]))
+                                                                               # [batch_size, num_of_patches, d_lm_model]
         outputs = self.retrieved_lm(inputs_embeds = input_embs).last_hidden_state
-                                                                               # [batch_size, seq_len, d_lm_model]
-        mark_dist = self.mark(outputs)                                         # [batch_size, seq_len, num_events]
-        time = self.time(outputs)                                              # [batch_size, seq_len, num_events]
+                                                                               # [batch_size, num_of_patches, d_lm_model]
+        mark_dist = self.mark(outputs)                                         # [batch_size, seq_len, patch_size * num_events]
+        mark_dist = rearrange(mark_dist, '... (ps ne) -> ... ps ne', ps = self.patch_size)
+                                                                               # [batch_size, seq_len, patch_size, num_events]
+        mark_dist = torch.nn.functional.softmax(mark_dist, dim = -1)           # [batch_size, seq_len, patch_size, num_events]
+        pred_time = self.time(outputs)                                         # [batch_size, seq_len, patch_size]
 
-        return time.squeeze(dim = -1), mark_dist
+        pred_time = (pred_time - (mean / var)) * var + mean
+
+        return pred_time, mark_dist
 
 
     def train_procedure(self, time_history, time_prediction, event_history, \
