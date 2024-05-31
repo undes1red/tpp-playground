@@ -926,12 +926,13 @@ class FENNModel(BasicModel):
         return maes, f1_2, probability_sum, events_next
 
 
-    def random_mask(self, start_with_dummy, end_with_dummy, mask_rate, **kwargs):
+    def random_mask(self, start_with_dummy, end_with_dummy, **kwargs):
         pad_values = {
-            'input_time': 0.0,
-            'input_events': self.num_events,
+            'input_time': -1.0,
+            'input_events': self.num_events + 1,
             'input_mask': 0,
         }
+
         end_of_a_sequence = kwargs['input_mask'].sum(dim = -1)                 # [batch_size]
 
         dummy_pad = (int(start_with_dummy), int(end_with_dummy), 0, 0)
@@ -944,8 +945,8 @@ class FENNModel(BasicModel):
         imputation_mask = torch.ones((batch_size, seq_len - seq_len_shift), device = self.device)
                                                                                # [batch_size, seq_len - seq_len_shift]
         torch.nn.init.uniform_(imputation_mask)                                # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = (imputation_mask > 1 - mask_rate).int()              # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = torch.nn.functional.pad(imputation_mask, dummy_pad, 'constant', value = 0)
+        imputation_mask = (imputation_mask > 1 - self.mask_rate).int()         # [batch_size, seq_len - seq_len_shift]
+        imputation_mask = torch.nn.functional.pad(imputation_mask, dummy_pad, 'constant', value = 0) * kwargs['input_mask']
                                                                                # [batch_size, seq_len]
         # Make sure the mask of dummy events is always 0, i.e. not affected.
         for batch_index, seq_index in enumerate(end_of_a_sequence):

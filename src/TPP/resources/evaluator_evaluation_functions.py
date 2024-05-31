@@ -7,7 +7,7 @@ import gc
 from torch.utils.flop_counter import FlopCounterMode
 from tqdm import tqdm
 from src.taskhost_utils import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt
-from src.TPP.evaluation_functions_utils import flatten, free_model_from_gpu
+from src.TPP.resources.evaluation_functions_utils import flatten, free_model_from_gpu
 
 logger = get_logger(name = __file__)
 

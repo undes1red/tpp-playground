@@ -2,8 +2,8 @@ import os, torch
 from torch.nn import DataParallel as DP
 
 from src.taskhost_utils import get_logger
-from src.TPP.utils import read_yaml, print_args, suffix
-from src.TPP.evaluator_evaluation_functions import *
+from src.TPP.utils import read_yaml, print_args, suffix, load_checkpoint
+from src.TPP.resources.evaluator_evaluation_functions import *
 from src.TPP.model import get_model
 from src.TPP.dataloader import prepare_dataloaders
 
@@ -56,15 +56,8 @@ class TPPEvaluator:
             '''
             Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DP if possible.
             '''
-            model_raw = torch.load(os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), map_location=opt.device)
-            model_state_dict = model_raw['model']
-            model.load_state_dict(model_state_dict)
-            model.requires_grad_(requires_grad = False)
+            model = load_checkpoint(logger, os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), model, device = opt.device)
             logger.info(print_args(self.opt))
-            trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            total_params = sum(p.numel() for p in model.parameters())
-            self.opt.trainable_parameters = trainable_parameters
-            logger.info(f'Model restore completed. The number of trainable parameters in this model: {trainable_parameters} out of {total_params}.')
 
             if self.opt.cuda:
                 self.model = DP(model, device_ids = [self.opt.cuda_device, ])

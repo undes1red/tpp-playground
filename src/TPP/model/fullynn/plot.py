@@ -4,7 +4,7 @@ from scipy.stats import spearmanr
 from einops import rearrange
 
 from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
-from src.TPP.evaluator_utils import expand_true_intensity, expand_true_probability
+from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
 
 large_graph_length = 18
 large_graph_height = 10

@@ -180,7 +180,7 @@ class IFIBCModel(BasicModel):
         '''
         Remove the probability of the dummy event by mask.
         '''
-        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
         
