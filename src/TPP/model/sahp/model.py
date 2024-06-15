@@ -97,7 +97,6 @@ class SAHPWrapper(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'graph': self.plot,
-            'mae_and_f1_imputated_events': self.get_mae_and_f1_of_imputated_data,
 
             # Functions for the EHD task.
             'ehd_perplexity': self.ehd_perplexity,
@@ -690,71 +689,6 @@ class SAHPWrapper(BasicModel):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, var)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
-
-        return mae, f1_1
-
-
-    def random_mask(self, start_with_dummy, end_with_dummy, mask_rate, **kwargs):
-        pad_values = {
-            'input_time': 0.0,
-            'input_events': self.num_events,
-            'input_mask': 0,
-        }
-        end_of_a_sequence = kwargs['input_mask'].sum(dim = -1)                 # [batch_size]
-
-        dummy_pad = (int(start_with_dummy), int(end_with_dummy), 0, 0)
-        seq_len_shift = int(start_with_dummy) + int(end_with_dummy)
-        batch_size, seq_len = list(kwargs.values())[0].shape
-        if len(kwargs) > 1:
-            for item in kwargs.values():
-                assert item.shape == (batch_size, seq_len)
-
-        imputation_mask = torch.ones((batch_size, seq_len - seq_len_shift), device = self.device)
-                                                                               # [batch_size, seq_len - seq_len_shift]
-        torch.nn.init.uniform_(imputation_mask)                                # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = (imputation_mask > 1 - mask_rate).int()              # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = torch.nn.functional.pad(imputation_mask, dummy_pad, 'constant', value = 0)
-                                                                               # [batch_size, seq_len]
-        # Make sure the mask of dummy events is always 0, i.e. not affected.
-        for batch_index, seq_index in enumerate(end_of_a_sequence):
-            if end_with_dummy:
-                imputation_mask[batch_index][seq_index - 1] = 0
-
-        def mask_tensor(key, value):
-            return value.masked_fill(imputation_mask.bool(), pad_values[key])  # [batch_size, seq_len]
-
-        if len(kwargs) == 1:
-            tmp_results = mask_tensor(**kwargs)
-        else:
-            tmp_results = []
-            for key, object in kwargs.items():
-                tmp_results.append(mask_tensor(key, object))
-            
-        return tmp_results
-
-
-    def get_mae_and_f1_of_imputated_data(self, input_data, opt):
-        input_time, input_events, input_intensity, input_mask, mean, var = self.extract_plot_data(input_data)
-
-        damaged_input_time, damaged_input_events, damaged_input_mask \
-            = self.random_mask(True, True, mask_rate = opt.mask_rate, input_time = input_time, input_events = input_events, input_mask = input_mask)
-                                                                               # [batch_size, seq_len] * 3
-        damaged_input_time = (damaged_input_time - mean) / var                 # [batch_size, seq_len]
-        
-        damaged_time_history, _ = self.divide_history_and_next(damaged_input_time)
-                                                                               # [batch_size, seq_len]
-        _, time_next = self.divide_history_and_next(input_time)
-                                                                               # [batch_size, seq_len]
-        damaged_events_history, _ = self.divide_history_and_next(damaged_input_events)
-                                                                               # [batch_size, seq_len]
-        _, events_next = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
-        damaged_mask_history, damaged_mask_next = self.divide_history_and_next(damaged_input_mask)
-                                                                               # [batch_size, seq_len]
-        
-        mae, f1_1 = self.mean_absolute_error_and_f1(damaged_events_history, damaged_time_history, events_next, \
-                                                    time_next, damaged_mask_history, 1 - damaged_mask_next, mean, var)
-        mae = mae[damaged_mask_next == 0]
         mae = move_from_tensor_to_ndarray(mae)
 
         return mae, f1_1

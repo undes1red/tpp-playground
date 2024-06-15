@@ -57,7 +57,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
                 ax = getattr(sns, instruction['plot_type'])(ax = ax, **instruction['kwargs'])
         
         logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
-        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.png'), dpi = 1000, bbox_inches = "tight")
+        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.pdf'), bbox_inches = "tight")
         fig.clear()
         plt.close(fig = fig)
         del ax

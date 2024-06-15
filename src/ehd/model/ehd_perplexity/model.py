@@ -252,7 +252,8 @@ class EHD(BasicModule):
 
         L_p = F.relu(log_p_h_o_t_l_x_o_mean.unsqueeze(dim = 0) - log_p_h_r_o_t_l_x_o_mean - self.perplexity_gap).mean()
 
-        Loss = self.loss_balancer * L_c + L_p
+        # Loss = self.loss_balancer * L_c + L_p
+        Loss = L_p
 
         '''
         Evaluation part.
