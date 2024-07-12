@@ -50,7 +50,7 @@ class TaskHost:
             logger.warning(f'Reproducibility only presents when a random seed is present. If you want reproducible results, please ABORT this run ASAP and manually assign a random seed using argument \'--seed\'')
             logger.warning(f'No explicit random seed detected, the framework will spontaneously select a number as the random seed.')
             random.seed(int(time.time()) % int.from_bytes(os.urandom(3), byteorder = 'big'))
-            self.opt.seed = random.randint(0, 10e5)
+            self.opt.seed = random.randint(0, 999999)
             logger.info(f'The model prefers {self.opt.seed} this time.')
         else:
             logger.info(f'You request, we follow. We will use number {self.opt.seed} as the random seed.')
