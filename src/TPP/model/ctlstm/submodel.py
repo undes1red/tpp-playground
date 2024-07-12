@@ -78,7 +78,7 @@ class CTLSTM(nn.Module):
         return cell_t
 
 
-    def forward(self, time_history, time_next, events_history, mask_history, num_dimension_prior_batch = 0):
+    def forward(self, time_history, time_next, events_history, num_dimension_prior_batch = 0):
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
 
@@ -106,7 +106,7 @@ class CTLSTM(nn.Module):
         return integral_all_events, intensity_all_events
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, mean, var):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate):
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
         
@@ -137,7 +137,7 @@ class CTLSTM(nn.Module):
         return expanded_integral_all_events, expanded_intensity_all_events, timestamp
 
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, num_dimension_prior_batch = 0, mean = 0, var = 1):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate, num_dimension_prior_batch = 0):
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
         
@@ -166,7 +166,7 @@ class CTLSTM(nn.Module):
         return expanded_integral_all_events, expanded_intensity_all_events, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, mask_next, integration_sample_rate):
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
         

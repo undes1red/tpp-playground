@@ -54,7 +54,19 @@ class TIFIBC(nn.Module):
         self.nonneg_integral = nn.Sigmoid()
 
 
-    def forward(self, events_history, time_history, time_next, mask_history, mean, var):
+    def forward(self, task_name, *args, **kwargs):
+        task_mapper = {
+            'default_forward': self.default_forward,
+            'sample': self.sample,
+            'probability': self.probability,
+            # 'get_event_embedding': self.get_event_embedding,
+            'model_probe_function': self.model_probe_function
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
+    
+
+    def default_forward(self, events_history, time_history, time_next, mask_history, mean, std):
         '''
         Args:
             events_history: [batch_size, seq_len]
@@ -66,7 +78,7 @@ class TIFIBC(nn.Module):
         '''
         Obtain historical embeddings.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
@@ -77,8 +89,8 @@ class TIFIBC(nn.Module):
         '''
         Obtain timestamp embeddings.
         '''
-        time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
-        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [..., batch_size, seq_len, num_events]
+        time_next = (time_next - mean) / std                                   # [..., batch_size, seq_len, num_events]
+        time_next_zero = torch.ones_like(time_next) * (-mean / std)            # [..., batch_size, seq_len, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_next.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [..., 1, 1, num_events, d_intensity]
@@ -132,7 +144,7 @@ class TIFIBC(nn.Module):
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
 
-    def sample(self, sampled_events_history, sampled_time_history, tau, mean, var):
+    def sample(self, sampled_events_history, sampled_time_history, tau, mean, std):
         '''
         Args:
             events_history: [number_of_sampled_sequences, sampled_seq_len]
@@ -144,7 +156,7 @@ class TIFIBC(nn.Module):
         '''
         Obtain historical embeddings.
         '''
-        sampled_time_history = (sampled_time_history - mean) / var             # [number_of_sampled_sequences, sampled_seq_len]
+        sampled_time_history = (sampled_time_history - mean) / std             # [number_of_sampled_sequences, sampled_seq_len]
 
         # FIXME: history embedding from Transformer.
         sampled_history_embedding = self.his_encoder(sampled_events_history, sampled_time_history, torch.ones_like(sampled_events_history))
@@ -165,8 +177,8 @@ class TIFIBC(nn.Module):
         '''
         Obtain timestamp embeddings.
         '''
-        tau = (tau - mean) / var                                               # [number_of_sampled_sequences, batch_size, num_events]
-        time_next_zero = torch.ones_like(tau) * (-mean / var)                  # [number_of_sampled_sequences, batch_size, num_events]
+        tau = (tau - mean) / std                                               # [number_of_sampled_sequences, batch_size, num_events]
+        time_next_zero = torch.ones_like(tau) * (-mean / std)                  # [number_of_sampled_sequences, batch_size, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(tau.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [1, 1, num_events, d_intensity]
@@ -219,7 +231,7 @@ class TIFIBC(nn.Module):
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
 
-    def probability(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
+    def probability(self, events_history, time_history, time_next, mask_history, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -232,7 +244,7 @@ class TIFIBC(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
@@ -252,7 +264,7 @@ class TIFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = True
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_expand_norm.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [1, 1, 1, num_events, d_intensity]
@@ -306,7 +318,7 @@ class TIFIBC(nn.Module):
         return expand_probability, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, std):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -318,7 +330,7 @@ class TIFIBC(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
@@ -339,7 +351,7 @@ class TIFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
         
         time_expand.requires_grad = True      
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_expand_norm.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [1, 1, 1, num_events, d_intensity]

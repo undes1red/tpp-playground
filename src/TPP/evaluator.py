@@ -38,6 +38,9 @@ class TPPEvaluator:
             **model_param
         )
         self.opt.__dict__.update(model_param)
+        if len(opt.replace_index) == 0:
+            logger.warning('The evaluation exited because NO checkpoint has been found.')
+            logger.warning('Perhaps, you have forgot the --replace in your script.')
 
         '''
         ========= Restore Model from the checkpoint =========

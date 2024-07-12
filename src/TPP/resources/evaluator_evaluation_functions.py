@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import seaborn as sns
 import os
 import numpy as np
@@ -44,20 +45,49 @@ def draw(model, minibatch, desc, batch_idx, opt):
 
     plots = model('graph', minibatch, opt)
     
-    plt.rcParams.update({'font.size': 22, 'figure.figsize': (9, 7)})
-    for plot_name, plot_instructions in plots.items():
-        fig = plt.figure()
-        ax = None
-        for instruction in plot_instructions:
-            if instruction.get('plot_type') == 'text':
-                ax.text(**instruction['kwargs'])
-            else:
-                if instruction.get('length') and instruction.get('height'):
-                    fig.set_size_inches(instruction.get('length'), instruction.get('height'))
-                ax = getattr(sns, instruction['plot_type'])(ax = ax, **instruction['kwargs'])
+    plt.rcParams.update(
+        {'font.size': 24,
+         'figure.figsize': (7, 7),
+         'text.usetex': True,
+         'mathtext.fontset': 'cm',
+         # 'font.family': 'STIXGeneral',
+         'font.family': 'Times New Roman',
+         'text.latex.preamble': r"\usepackage{amsmath}"})
+    
+    for plot_name, figure_instructions in plots.items():
+        # instruction['figure'] defines a figure.
+        figure_instruction = figure_instructions.get('figure')
+        if figure_instruction:
+            fig = plt.figure(figsize = figure_instruction.get('figsize'), layout = 'constrained')
+        else:
+            fig = plt.figure(layout = 'constrained')
+        # Grid specification.
+        grid = figure_instruction.get('layout') if figure_instruction.get('layout') else (1, 1)
+        gs = gridspec.GridSpec(*grid, figure = fig)
         
-        logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
+        plot_instructions = figure_instructions.get('plots')
+        if plot_instructions is None:
+            logger.warning('No figure to draw??')
+            continue
+        if len(plot_instructions) != (gs._nrows * gs._ncols):
+            logger.exception(f'The number of subplots and plot instructions mismatch! We have defined {len(plot_instructions)} plots but there are {gs._nrows * gs._ncols} available.')
+
+        for part, plot_instruction in zip(gs, plot_instructions):
+            ax = fig.add_subplot(part)
+            preamble = plot_instruction['preamble']
+            for key, kwargs in preamble.items():
+                func = getattr(ax, key)
+                func(**kwargs)
+
+            commands = plot_instruction['commands']
+            for subcommand in commands:
+                if subcommand.get('plot_type') == 'text':
+                    ax.text(**subcommand['kwargs'])
+                else:
+                    ax = getattr(sns, subcommand['plot_type'])(ax = ax, **subcommand['kwargs'])
+        
         plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.pdf'), bbox_inches = "tight")
+        logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
         fig.clear()
         plt.close(fig = fig)
         del ax
@@ -212,7 +242,7 @@ desc_funcs = {
     'mae_e_and_f1': ['MAE-E and macro-f1 for {0}', mae_e_and_f1_postprocess],
     'mae_e_and_f1_by_time_event': ['MAE-E and macro-f1 for {0} following NER', mae_e_and_f1_by_time_event_postprocess],
     'which_event_occurs_first': ['Predict the next event by finding which event occurs first for {0}', which_event_occurs_first_postprocess],
-    'samples_from_et': [f'Samples of {0} for each mark', ]
+    'samples_from_et': [f'Samples of {0} for each mark', samples_from_et_postprocess]
 }
 
 
@@ -239,7 +269,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True):
         data_size = progress_bar.format_dict['total']
     
     if early_offload:
-        # How to remove a model and free its memory?
+        # How to remove a model and free its memory immediately?
         free_model_from_gpu(model)
 
     mkdir_if_not_exist(opt.store_dir)

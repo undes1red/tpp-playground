@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 from einops import rearrange
 
-from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs, stable_palette, figure_instruction_generator
 from src.TPP.resources.syn_tpp_utils import expand_true_probability
 
 large_graph_length = 18
@@ -18,9 +18,12 @@ The framework will loop over the instruction list, so you can use multiple dicts
 
 def plot_probability(data, timestamp, opt):
     '''
-
     '''
-    plot_instruction = {}
+
+    num_events = opt.info_dict['num_events']
+    color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
+
+    plot_instructions = {}
     '''
     Part 1: the sum of probability distributions over all markers.
     '''
@@ -40,7 +43,7 @@ def plot_probability(data, timestamp, opt):
 
         df_event = pd.DataFrame.from_dict(
                 {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in events_next_per_seq]}
+                 'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
         if true_probability_per_seq is not None:
@@ -49,7 +52,6 @@ def plot_probability(data, timestamp, opt):
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten(),
                  'Truth': true_probability_per_seq[:seq_len, :].flatten()}
             )
-
             # Spearman correlation
             rho = spearmanr(a = true_probability_per_seq[:seq_len, :].flatten(), b = expand_probability_per_seq[:seq_len, :].flatten())[0]
             # Pearson correlation
@@ -58,7 +60,7 @@ def plot_probability(data, timestamp, opt):
             L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq, resolution = opt.resolution)
 
-            annotation = f'r = {r}, ρ = {rho}, L1 = {L1}'
+            annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
         else:
             df = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
@@ -66,15 +68,13 @@ def plot_probability(data, timestamp, opt):
             )
             annotation = ''
 
-
         df_probability_plot = pd.melt(df, 'Time')
         df_probability_plot.columns = ['Time', ' ', 'Probability']
 
-        subplot_instruction = [
+        plot_instruction = \
+        [
             {
                 'plot_type': 'lineplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x':'Time',
@@ -85,15 +85,14 @@ def plot_probability(data, timestamp, opt):
             },
             {
                 'plot_type': 'scatterplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x': 'Time',
                     'y': 'Point',
                     'data': df_event,
-                    'palette': 'pastel',
-                    'hue': 'Event'
+                    'palette': color_palette,
+                    'hue': 'Mark',
+                    'hue_order': [f'Mark {item}' for item in range(num_events)]
                 }
             },
             {
@@ -110,9 +109,16 @@ def plot_probability(data, timestamp, opt):
             }
         ]
 
-        plot_instruction[f'probability_{idx}'] = subplot_instruction
+        packed_instruction = figure_instruction_generator(
+            plot_instruction,
+            figure_kwargs = {
+                'figsize': (large_graph_length, large_graph_height),
+            }
+        )
 
-    return plot_instruction
+        plot_instructions[f'probability_{idx}'] = packed_instruction
+
+    return plot_instructions
 
 
 def plot_debug(data, timestamp, opt):
@@ -131,11 +137,11 @@ def plot_debug(data, timestamp, opt):
     11. event_next: 
     12. time_next:
     '''
+    num_events = opt.info_dict['num_events']
+    resolution = opt.resolution
+    color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
     plot_instruction = {}
-    num_events = data['expand_probability_for_each_event'].shape[-1]
-    resolution = data['expand_probability_for_each_event'].shape[-2]
-
     '''
     Part 1: expand intensity and expand integral
     Required plots: lineplot and scatterplot
@@ -153,46 +159,54 @@ def plot_debug(data, timestamp, opt):
 
         df_event = pd.DataFrame.from_dict(
                 {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in events_next_per_seq]}
+                 'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
-        event_list = [f'Event {i}' for i in range(num_events)]
+        event_list = [f'Mark {i}' for i in range(num_events)]
     
         df_probability = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
                  'Probability': expand_probability_per_seq[:seq_len, :, :].flatten(), 
-                 'Event': event_list * (seq_len * resolution)}
+                 'Mark': event_list * (seq_len * resolution)}
             )
         
         for df, y in [(df_probability, 'Probability'),]:
-            subplot_instruction = [
+            subplot_instruction = \
+            [
                 {
                     'plot_type': 'lineplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x':'Time',
                         'y': y,
-                        'hue': 'Event',
-                        'data': df
+                        'hue': 'Mark',
+                        'palette': color_palette,
+                        'data': df,
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 },
                 {
                     'plot_type': 'scatterplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x': 'Time',
                         'y': 'Point',
                         'data': df_event,
-                        'palette': 'pastel',
-                        'hue': 'Event'
+                        'palette': color_palette,
+                        'hue': 'Mark',
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 }
             ]
-            plot_instruction[f'sub{y.lower()}_{idx}'] = subplot_instruction
+
+            packed_instruction = figure_instruction_generator(
+                subplot_instruction,
+                figure_kwargs = {
+                    'figsize': (large_graph_length, large_graph_height),
+                }
+            )
+
+            plot_instruction[f'sub{y.lower()}_{idx}'] = packed_instruction
 
     '''
     Part 2: plot for spearman, pearson, and L1 distance matrix
@@ -219,8 +233,9 @@ def plot_debug(data, timestamp, opt):
         selected_matrices = data[f'{value}_matrix']
         for idx, each_matrix in enumerate(selected_matrices):
             df_matrix = \
-                matrix_to_pd(each_matrix, index_name = 'Event type', column_name = 'Event type ', value_name = value)
-            subplot_instruction = [
+                matrix_to_pd(each_matrix, index_name = 'Mark type', column_name = 'Mark type ', value_name = value)
+            subplot_instruction = \
+            [
                 {
                     'plot_type': 'heatmap',
                     'kwargs':
@@ -231,9 +246,13 @@ def plot_debug(data, timestamp, opt):
                         'vmax': max(1, np.max(df_matrix.values)),
                         'annot': True
                     }
-                },
+                }
             ]
-            plot_instruction[f'{value}_matrix_{idx}'] = subplot_instruction
+
+            packed_instruction = figure_instruction_generator(
+                subplot_instruction
+            )
+            plot_instruction[f'{value}_matrix_{idx}'] = packed_instruction
 
     '''
     Part 3: plot for Top-K accuracy
@@ -244,23 +263,28 @@ def plot_debug(data, timestamp, opt):
         data_top_k_per_seq = {
             'x': np.arange(1, max(num_events, 2)),
             'y': top_k_per_seq,
-            'marks': 'Top-K accuracy'
         }
         df_data_top_k_per_seq = pd.DataFrame.from_dict(data_top_k_per_seq)
-        sub_plot_instruction = [
+        subplot_instruction = \
+        [
+            {
+                'set_ylim': {'bottom': -0.05, 'top': 1.05},
+            },
             {
                 'plot_type': 'lineplot',
                 'kwargs':
                 {
                     'x': 'x',
                     'y': 'y',
-                    'hue': 'marks',
                     'data': df_data_top_k_per_seq,
                     'markers': True
                 }
             }
         ]
-        plot_instruction[f'top_k_accuracy_{idx}'] = sub_plot_instruction
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction 
+        )
+        plot_instruction[f'top_k_accuracy_{idx}'] = packed_instruction
 
     '''
     Part 4: The Logarithm of time prediction against all events.
@@ -279,23 +303,29 @@ def plot_debug(data, timestamp, opt):
         data_tau_pred_all_event_per_seq = {
             'x': [ele for ele in range(seq_len) for _ in range(num_events)] * sample_rate,
             'y': np.log(1 + tau_pred_all_event_per_seq[..., :seq_len, :]).flatten(),
-            'marks': [f'Event {i}' for i in range(num_events)] * seq_len * sample_rate
+            'Mark': [f'Mark {i}' for i in range(num_events)] * seq_len * sample_rate
         }
         df_data_tau_pred_all_event_per_seq = pd.DataFrame.from_dict(data_tau_pred_all_event_per_seq)
-        sub_plot_instruction = [
+        subplot_instruction = \
+        [
             {
                 'plot_type': 'lineplot',
                 'kwargs':
                 {
                     'x': 'x',
                     'y': 'y',
-                    'hue': 'marks',
+                    'hue': 'Mark',
                     'data': df_data_tau_pred_all_event_per_seq,
-                    'markers': True
+                    'palette': color_palette,
+                    'markers': True,
+                    'hue_order': [f'Mark {item}' for item in range(num_events)]
                 }
             }
         ]
-        plot_instruction[f't_pred_all_event_{idx}'] = sub_plot_instruction
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction
+        )
+        plot_instruction[f't_pred_all_event_{idx}'] = packed_instruction
 
 
     '''
@@ -322,7 +352,7 @@ def plot_debug(data, timestamp, opt):
         }
         df_data_maes_per_seq = pd.DataFrame.from_dict(data_maes_per_seq)
 
-        sub_plot_instruction = [
+        subplot_instruction = [
             {
                 'plot_type': 'lineplot',
                 'kwargs':
@@ -335,7 +365,10 @@ def plot_debug(data, timestamp, opt):
                 }
             }
         ]
-        plot_instruction[f'log_mae_k_{idx}'] = sub_plot_instruction
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction
+        )
+        plot_instruction[f'log_mae_k_{idx}'] = packed_instruction
     
 
     '''
@@ -355,7 +388,10 @@ def plot_debug(data, timestamp, opt):
         }
         df_data_probability_sum_per_seq = pd.DataFrame.from_dict(data_probability_sum_per_seq)
 
-        sub_plot_instruction = [
+        subplot_instruction = [
+            {
+                'set_ylim': {'bottom': -0.05, 'top': 1.05},
+            },
             {
                 'plot_type': 'lineplot',
                 'kwargs':
@@ -367,53 +403,10 @@ def plot_debug(data, timestamp, opt):
                 }
             }
         ]
-        plot_instruction[f'probability_sum_{idx}'] = sub_plot_instruction
-
-    '''
-    # scatter plot that shows the distribution of time given the mark information.
-    sampled_times = data['sampled_times']
-    sampled_times = move_from_tensor_to_ndarray(sampled_times)    
-    df_sampled_times = pd.DataFrame(sampled_times.squeeze())
-    mean_sampled_times = df_sampled_times.mean().values
-    std_sampled_times = df_sampled_times.std().values
-    df_sampled_times = pd.melt(df_sampled_times, value_vars = df_sampled_times.columns)
-    df_sampled_times.columns = ['Mark', 'Time']
-    annotation = ''
-    for mark, (mean_per_mark, std_per_mark) in enumerate(zip(mean_sampled_times, std_sampled_times)):
-        annotation += f'Mark {mark}: mean: {mean_per_mark}. std: {std_per_mark}. '
-
-    subplot_instruction = [
-        {
-            'plot_type': 'displot',
-            'length': large_graph_length,
-            'height': large_graph_height,
-            'kwargs':
-            {
-                'x': 'Time',
-                'data': df_sampled_times,
-                'palette': 'pastel',
-                'hue': 'Mark',
-                'kind': 'kde',
-                'fill': 'True',
-                'cut': '0',
-            }
-        },
-        {
-            'plot_type': 'text',
-            'kwargs':
-            {
-                'x': -1, 
-                'y': -1,
-                'verticalalignment': 'top',
-                'horizontalalignment': 'left',
-                's': annotation,
-                'fontsize': 12,
-            }
-        }
-    ]
-    plot_instruction[f'sampled_time_on_all_marks'] = subplot_instruction
-    '''
-
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction 
+        )
+        plot_instruction[f'probability_sum_{idx}'] = packed_instruction
 
     '''
     Part 7: expand intensity and expand integral on sampled event sequences.
@@ -438,15 +431,15 @@ def plot_debug(data, timestamp, opt):
 
         df_event = pd.DataFrame.from_dict(
                 {'Time': sampled_time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(sampled_events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in sampled_events_next_per_seq]}
+                 'Mark': [f'Mark {item}' for item in sampled_events_next_per_seq]}
         )
 
-        event_list = [f'Event {i}' for i in range(num_events)]
+        event_list = [f'Mark {i}' for i in range(num_events)]
     
         df_subprobability = pd.DataFrame.from_dict(
                 {'Time': sampled_timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
                  'Probability': sampled_expand_subprobability_per_seq[:seq_len, :, :].flatten(), 
-                 'Event': event_list * (seq_len * resolution)}
+                 'Mark': event_list * (seq_len * resolution)}
             )
 
         df_probability = pd.DataFrame.from_dict(
@@ -463,8 +456,6 @@ def plot_debug(data, timestamp, opt):
         subplot_instruction = [
             {
                 'plot_type': 'lineplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x':'Time',
@@ -475,19 +466,24 @@ def plot_debug(data, timestamp, opt):
             },
             {
                 'plot_type': 'scatterplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x': 'Time',
                     'y': 'Point',
                     'data': df_event,
-                    'palette': 'pastel',
-                    'hue': 'Event'
+                    'palette': color_palette,
+                    'hue': 'Mark',
+                    'hue_order': [f'Mark {item}' for item in range(num_events)]
                 }
             }
         ]
-        plot_instruction[f'sampled_probability_{idx}_event_time'] = subplot_instruction
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction,
+            figure_kwargs = {
+                'figsize': (large_graph_length, large_graph_height),
+            }
+        )
+        plot_instruction[f'sampled_probability_{idx}_event_time'] = packed_instruction
 
         '''
         sub-probability distribution of the sampled sequence.
@@ -496,31 +492,36 @@ def plot_debug(data, timestamp, opt):
             subplot_instruction = [
                 {
                     'plot_type': 'lineplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x':'Time',
                         'y': y,
-                        'hue': 'Event',
-                        'data': df
+                        'hue': 'Mark',
+                        'palette': color_palette,
+                        'data': df,
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 },
                 {
                     'plot_type': 'scatterplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x': 'Time',
                         'y': 'Point',
                         'data': df_event,
-                        'palette': 'pastel',
-                        'hue': 'Event'
+                        'palette': color_palette,
+                        'hue': 'Mark',
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 }
             ]
-            plot_instruction[f'sampled_sub{y.lower()}_{idx}_event_time'] = subplot_instruction
+            packed_instruction = figure_instruction_generator(
+                subplot_instruction,
+                figure_kwargs = {
+                    'figsize': (large_graph_length, large_graph_height),
+                }
+            )
+            plot_instruction[f'sampled_sub{y.lower()}_{idx}_event_time'] = packed_instruction
 
 
     sampled_events_next_time_event = data['sampled_events_next_time_event']    # [batch_size, seq_len]
@@ -542,15 +543,15 @@ def plot_debug(data, timestamp, opt):
 
         df_event = pd.DataFrame.from_dict(
                 {'Time': sampled_time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(sampled_events_next_per_seq), \
-                 'Event': [f'Event {item}' for item in sampled_events_next_per_seq]}
+                 'Mark': [f'Mark {item}' for item in sampled_events_next_per_seq]}
         )
 
-        event_list = [f'Event {i}' for i in range(num_events)]
+        event_list = [f'Mark {i}' for i in range(num_events)]
     
         df_subprobability = pd.DataFrame.from_dict(
                 {'Time': sampled_timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
                  'Probability': sampled_expand_subprobability_per_seq[:seq_len, :, :].flatten(), 
-                 'Event': event_list * (seq_len * resolution)}
+                 'Mark': event_list * (seq_len * resolution)}
             )
 
         df_probability = pd.DataFrame.from_dict(
@@ -567,8 +568,6 @@ def plot_debug(data, timestamp, opt):
         subplot_instruction = [
             {
                 'plot_type': 'lineplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x':'Time',
@@ -579,19 +578,24 @@ def plot_debug(data, timestamp, opt):
             },
             {
                 'plot_type': 'scatterplot',
-                'length': large_graph_length,
-                'height': large_graph_height,
                 'kwargs':
                 {
                     'x': 'Time',
                     'y': 'Point',
                     'data': df_event,
-                    'palette': 'pastel',
-                    'hue': 'Event'
+                    'palette': color_palette,
+                    'hue': 'Mark',
+                    'hue_order': [f'Mark {item}' for item in range(num_events)]
                 }
             }
         ]
-        plot_instruction[f'sampled_probability_{idx}_time_event'] = subplot_instruction
+        packed_instruction = figure_instruction_generator(
+            subplot_instruction,
+            figure_kwargs = {
+                'figsize': (large_graph_length, large_graph_height),
+            }
+        )
+        plot_instruction[f'sampled_probability_{idx}_time_event'] = packed_instruction
 
         '''
         sub-probability distribution of the sampled sequence.
@@ -600,30 +604,35 @@ def plot_debug(data, timestamp, opt):
             subplot_instruction = [
                 {
                     'plot_type': 'lineplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x':'Time',
                         'y': y,
-                        'hue': 'Event',
-                        'data': df
+                        'hue': 'Mark',
+                        'data': df,
+                        'palette': color_palette,
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 },
                 {
                     'plot_type': 'scatterplot',
-                    'length': large_graph_length,
-                    'height': large_graph_height,
                     'kwargs':
                     {
                         'x': 'Time',
                         'y': 'Point',
+                        'hue': 'Mark',
                         'data': df_event,
-                        'palette': 'pastel',
-                        'hue': 'Event'
+                        'palette': color_palette,
+                        'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 }
             ]
-            plot_instruction[f'sampled_sub{y.lower()}_{idx}_time_event'] = subplot_instruction
+            packed_instruction = figure_instruction_generator(
+                subplot_instruction,
+                figure_kwargs = {
+                    'figsize': (large_graph_length, large_graph_height),
+                }
+            )
+            plot_instruction[f'sampled_sub{y.lower()}_{idx}_time_event'] = packed_instruction
 
     return plot_instruction

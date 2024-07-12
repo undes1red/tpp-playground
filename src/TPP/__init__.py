@@ -18,7 +18,7 @@ pytorch_version_warnings = {
     '>=2.1.0': [
 '''
 We have noticed the evaluation procedure of IFIB, FullyNN, and FENN is around 1-2x slower on PyTorch 2.x.y(x > 0) than PyTorch 2.0.1 and previous releases.
-The benchmark results suggest that there might be a performance regression in nn.Linear() when its inputs are high dimensional tensors, i.e. tensors having four, five, or even higher dimensions.
+The benchmark results suggest that there might be a performance regression in nn.Linear() when its inputs are very tall tensors, i.e. tensors having four, five, or even higher dimensions.
 This means possibly all MTPP models in this codebase are affected given processing high dimensional tensors are ubiquitous in our code.
 One can track this regression at https://github.com/pytorch/pytorch/issues/124838.
 Because of this, we suggest to use PyTorch 2.0.1 and previous. You can still train these models on the later releases because we have not observed any model performance degradation, but you may not be able to reproduce the evaluation speed we have reported in the paper.

@@ -134,6 +134,6 @@ class TransformerTPP(nn.Module):
         """
 
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
-        enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
+        # enc_output = self.rnn(enc_output)                                    # [batch_size, seq_len, d_input]
 
         return enc_output

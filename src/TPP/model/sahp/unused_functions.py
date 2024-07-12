@@ -64,3 +64,99 @@
 
         return gap
 '''
+
+
+'''
+    @torch.no_grad()
+    def mean_absolute_error(self, time_history, time_next, events_history, mask_history, mask_next):
+        \'''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+
+        Update: 2022-09-23
+        Add event-wise MAE support.
+        \'''
+        sample_rate_list = step_split(self.sample_rate, self.mae_step)
+
+        def bisect_target(taus, probability_threshold):
+            \'''
+            Args:
+            1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
+            2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
+            3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
+            \'''
+            expanded_integral_all_events, _, = self.model(time_history, taus, events_history, mask_history, num_dimension_prior_batch = 1)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
+
+            return expanded_integral + torch.log(1 - probability_threshold)
+
+        tau_pred = []
+        for sub_sample_rate in sample_rate_list:
+            probability_threshold = torch.zeros((sub_sample_rate, *time_next.shape), device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
+                                                                               # [sample_rate, batch_size, seq_len]
+        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
+        mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
+
+        return mae, tau_pred
+    '''
+
+
+'''
+    @torch.no_grad()
+    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_x, resolution, inf_val, mean, var, return_mean):
+        \'''
+        The input should be the original minibatch
+        MAE evaluation part, dwg and fullynn exclusive
+        \'''
+        # Preprocess
+        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
+
+        def evaluate_all_event(taus):
+            expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
+                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch = 1)
+                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
+            expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+            intensity_event_mask = torch.diag(torch.ones(self.num_events, device = self.device))
+                                                                               # [num_events, num_events]
+            intensity_event_mask = rearrange(intensity_event_mask, f'ne ne1 -> {"() " * (len(expanded_intensity_across_events.shape) - 3)}ne () ne1')
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
+            expanded_intensity_per_event = (expanded_intensity_across_events * intensity_event_mask).sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+            expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
+                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
+            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            return probability
+    
+        def bisect_target(taus, probability_threshold):
+            p_xt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
+            p_t_x = p_xt / p_x                                                 # [sample_rate, batch_size, seq_len, num_events]
+            p_gap = p_t_x - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
+
+            return p_gap
+
+        tau_pred = []
+        batch_size, seq_len = time_history.shape
+        p_x = p_x.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
+        for sub_sample_rate in sample_rate_list:
+            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold, r_val = inf_val))
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
+        if return_mean:
+            tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len, num_events]
+        
+        return tau_pred
+    '''

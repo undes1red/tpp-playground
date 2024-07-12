@@ -55,7 +55,7 @@ class THP(nn.Module):
         return history
 
 
-    def forward(self, time_history, time_next, events_history, mask_history, mask_next = None):
+    def forward(self, time_history, time_next, events_history, mask_history):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
@@ -91,7 +91,7 @@ class THP(nn.Module):
         return integral_all_events, intensity_all_events
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, mean, var):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
         assert len(time_next.shape) == 2, "Wrong input time tensor shape."
 
         history = self.history_encoder(time_history, events_history, mask_history)
@@ -115,7 +115,7 @@ class THP(nn.Module):
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
         
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, mean, var):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
@@ -147,7 +147,7 @@ class THP(nn.Module):
         return expanded_integral_across_all_events, expanded_intensity_across_all_events, original_expanded_time
     
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate):
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
         history = repeat(history, 'b s di -> b s 1 di')                        # [batch_size, seq_len, 1, d_input]

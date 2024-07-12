@@ -48,7 +48,7 @@ class TFENN(nn.Module):
         self.nonneg_activation = nn.Softplus()
 
 
-    def forward(self, events_history, time_history, time_next, mask_history, mean, var):
+    def forward(self, events_history, time_history, time_next, mask_history, mean, std):
         '''
         The forwardpropagation function of FENN, triggered by pytorch.
 
@@ -66,8 +66,8 @@ class TFENN(nn.Module):
         * mean            type: float shape: N/A
                           The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
-        * var             type: float shape: N/A
-                          The variance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
+        * std             type: float shape: N/A
+                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
         Outputs:
         * integral        type: torch.tensor shape: [batch_size, seq_len, num_events]
@@ -75,8 +75,8 @@ class TFENN(nn.Module):
                           1. negative values, 2. inf, and 3. nan. Meanwhile, integral.requires_grad should be True.
         '''
 
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
-        time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
+        time_next = (time_next - mean) / std                                   # [..., batch_size, seq_len, num_events]
         
         # Reshape hidden output for full connection layers.
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
@@ -105,7 +105,7 @@ class TFENN(nn.Module):
         return integral
     
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
@@ -124,8 +124,8 @@ class TFENN(nn.Module):
         * mean            type: int shape: N/A
                           The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
-        * var             type: int shape: N/A
-                          The variance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
+        * std             type: int shape: N/A
+                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
         
         Ouputs:
@@ -140,7 +140,7 @@ class TFENN(nn.Module):
         '''
         Prepare the history embedding.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         # Reshape hidden output for full connection layers.
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
@@ -159,7 +159,7 @@ class TFENN(nn.Module):
         time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events]
+        normed_time_expand = (time_expand - mean) / std                        # [batch_size, seq_len, resolution, num_events]
 
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
@@ -201,7 +201,7 @@ class TFENN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, var):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
@@ -220,8 +220,8 @@ class TFENN(nn.Module):
         * mean            type: int shape: N/A
                           The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
-        * var             type: int shape: N/A
-                          The variance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
+        * std             type: int shape: N/A
+                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                           this value if needed.
         
         Ouputs:
@@ -236,7 +236,7 @@ class TFENN(nn.Module):
         '''
         Prepare the history embedding.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
@@ -255,7 +255,7 @@ class TFENN(nn.Module):
         time_expand = repeat(original_time_expand.clone(), '... -> ... ne', ne = self.num_events)                     
                                                                                # [..., batch_size, seq_len, resolution, num_events, num_events]
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [..., batch_size, seq_len, resolution, num_events, num_events]
+        normed_time_expand = (time_expand - mean) / std                        # [..., batch_size, seq_len, resolution, num_events, num_events]
 
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
@@ -296,7 +296,7 @@ class TFENN(nn.Module):
         return expand_integral, expand_intensity, timestamp
 
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, var):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, std):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -308,7 +308,7 @@ class TFENN(nn.Module):
         '''
         Prepare the history embedding.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
                                                                                # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
@@ -327,7 +327,7 @@ class TFENN(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / var                        # [batch_size, seq_len, resolution, num_events]
+        normed_time_expand = (time_expand - mean) / std                        # [batch_size, seq_len, resolution, num_events]
         
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]

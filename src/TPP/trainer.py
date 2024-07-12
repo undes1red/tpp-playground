@@ -80,7 +80,6 @@ class TPPTrainer:
         self.model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
         )
-    
         self.opt.__dict__.update(model_param)
 
         trainable_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -98,6 +97,7 @@ class TPPTrainer:
         self.sched_optimizer = ScheduledOptim(opt, self.model)
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
+
         self.task()
     
     
@@ -191,8 +191,6 @@ class TPPTrainer:
 
                 if key == 'Best':
                     log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
-                else:
-                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
                 logger.info(f'Logs of {key} process are stored in {log_filepath}.')
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)
@@ -260,25 +258,45 @@ class TPPTrainer:
         self.save(current_step, evaluation_results, test_results)
 
 
+    def should_we_save_model(self, mode, metric_data, current_step, warmup):
+        def checker_for_mode_all(metric_data):
+            return True
+
+        def checker_for_mode_bests(metric_data):
+            return self.metric_checker.compare(metric_data.values())
+        
+        dict_save_model_checkers_and_checkpoint_names = {
+            'all': [checker_for_mode_all, f'checkpoint_at_step_{current_step}.chkpt'],
+            'best': [checker_for_mode_bests, 'checkpoint.chkpt'],
+            'last': [checker_for_mode_all, 'checkpoint.chkpt']
+        }
+
+        save_should_or_not = False
+        checker, checkpoint_name = dict_save_model_checkers_and_checkpoint_names[mode]
+        if current_step >= warmup and checker(metric_data):
+            save_should_or_not = True
+
+        return save_should_or_not, checkpoint_name
+
+
     def save(self, current_step, evaluation_results, test_results):
         # We will store the checkpoint after model evaluation.
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict() if self.opt.cuda else self.model.state_dict(),
                       'optimizer': self.sched_optimizer.state_dict()}
 
-        if self.opt.save_mode == 'all':
-            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, f'checkpoint_at_step_{current_step}.chkpt')
+        metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
+        assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
+        metric_data = dict(zip(metric_names, metric_values))
+
+        save_should_or_not, checkpoint_name \
+            = self.should_we_save_model(mode = self.opt.save_mode, metric_data = metric_data, \
+                                        current_step = current_step, warmup = self.opt.n_warmup_steps)
+
+        if save_should_or_not:
+            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, checkpoint_name)
             torch.save(checkpoint, model_name)
-            logger.warning(f'----> The checkpoint file at step {current_step} has been stored. <----')
-            metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
-            self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = dict(zip(metric_names, metric_values)))
-        elif self.opt.save_mode == 'best':
-            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, 'checkpoint.chkpt')
-            metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
-            assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"
-            if current_step >= self.opt.n_warmup_steps and self.metric_checker.compare(metric_values):
-                torch.save(checkpoint, model_name)
-                logger.warning(f'----> We have updated the model checkpoint at step {current_step}. <----')
-                self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = dict(zip(metric_names, metric_values)))
+            self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = metric_data)
+            logger.warning(f'----> We stored the model in {checkpoint_name} at step {current_step}. <----')
 
 
     def transform_report_sum_into_recording_df(self, procedure, current_step, data):

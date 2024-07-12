@@ -50,13 +50,13 @@ class RecurrentTPP(nn.Module):
                                          hidden_size = self.context_size, batch_first = True, device = self.device)
 
 
-    def get_features(self, input_events, input_time, mean, var) -> torch.Tensor:
+    def get_features(self, input_events, input_time, mean, std) -> torch.Tensor:
         """
         Convert each event in a sequence into a feature vector using normalization.
 
         Args:
             sequences: [event_tensor, time_tensor, mask_tensor]
-            mean_and_var: (mean, var) or None
+            mean_and_std: (mean, std) or None
 
         Returns:
             features: Feature vector corresponding to each event,
@@ -65,7 +65,7 @@ class RecurrentTPP(nn.Module):
         """
         time_features = torch.log(input_time + self.zero_shift_factor).unsqueeze(-1)
                                                                                # [batch_size, seq_len + 1, 1]
-        time_features = (time_features - mean) / var                           # [batch_size, seq_len + 1, 1]
+        time_features = (time_features - mean) / std                           # [batch_size, seq_len + 1, 1]
         if self.event_toggle:
             mark_emb = self.mark_embedding(input_events)                       # [batch_size, seq_len + 1, mark_embedding_size]
             features = torch.cat([time_features, mark_emb], dim = -1)          # [batch_size, seq_len + 1, mark_embedding_size + 1]
@@ -111,7 +111,7 @@ class RecurrentTPP(nn.Module):
         raise NotImplementedError()
 
 
-    def log_prob(self, input_events, input_time, input_mask, mean, var) -> torch.Tensor:
+    def log_prob(self, input_events, input_time, input_mask, mean, std) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences.
 
         Args:
@@ -125,7 +125,7 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
         Returns:
@@ -133,7 +133,7 @@ class RecurrentTPP(nn.Module):
 
         """
         # extract features from minibatch, data normalization applies here.
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -168,7 +168,7 @@ class RecurrentTPP(nn.Module):
         return log_p, log_surv_last
 
 
-    def event_prober(self, input_events, input_time, input_mask, mean, var) -> torch.Tensor:
+    def event_prober(self, input_events, input_time, input_mask, mean, std) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences with a group of given timestamps.
 
         Args:
@@ -182,7 +182,7 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
         Returns:
@@ -190,7 +190,7 @@ class RecurrentTPP(nn.Module):
 
         """
         # extract features from minibatch, data normalization applies here.
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -210,7 +210,7 @@ class RecurrentTPP(nn.Module):
         return predicted_events
 
 
-    def probability_prober(self, input_events, input_time, input_mask, resolution, mean, var) -> torch.Tensor:
+    def probability_prober(self, input_events, input_time, input_mask, resolution, mean, std) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences.
         Args:
             batch: the input minibatch
@@ -223,7 +223,7 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
             resolution: Shows how many interpolative points each time interval has.
@@ -235,7 +235,7 @@ class RecurrentTPP(nn.Module):
         batch_size, seq_len = input_time.shape
         seq_len -= 1
 
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len + 1, mark_embedding_size + 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -264,7 +264,7 @@ class RecurrentTPP(nn.Module):
         return probability, timestamp
 
 
-    def probe_sum_of_cdf(self, input_events, input_time, input_mask, taus, mean, var) -> torch.Tensor:
+    def probe_sum_of_cdf(self, input_events, input_time, input_mask, taus, mean, std) -> torch.Tensor:
         """Compute the log-cdf for a batch of sequences.
 
         Args:
@@ -278,14 +278,14 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
         Returns:
             log_p: shape (batch_size,)
 
         """
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len, mark_embedding_size + 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len, mark_embedding_size + 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -303,7 +303,7 @@ class RecurrentTPP(nn.Module):
         return cdf_from_0_to_t, the_number_of_events
     
 
-    def probe_cdf(self, input_events, input_time, input_mask, taus, mean, var) -> torch.Tensor:
+    def probe_cdf(self, input_events, input_time, input_mask, taus, mean, std) -> torch.Tensor:
         """Compute the log-cdf for a batch of sequences.
 
         Args:
@@ -317,14 +317,14 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
         Returns:
             log_p: shape (batch_size,)
 
         """
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len, mark_embedding_size + 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len, mark_embedding_size + 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
@@ -341,7 +341,7 @@ class RecurrentTPP(nn.Module):
         return cdf_from_0_to_t, the_number_of_events
     
 
-    def mark_distribution(self, input_events, input_time, input_mask, mean, var) -> torch.Tensor:
+    def mark_distribution(self, input_events, input_time, input_mask, mean, std) -> torch.Tensor:
         """Compute log-likelihood for a batch of sequences with a group of given timestamps.
 
         Args:
@@ -355,7 +355,7 @@ class RecurrentTPP(nn.Module):
                 score,
                 [
                     mean,
-                    var
+                    std
                 ](if self.input_norm_data is True, otherwise it is a None.)
             ]
         Returns:
@@ -363,7 +363,7 @@ class RecurrentTPP(nn.Module):
 
         """
         # extract features from minibatch, data normalization applies here.
-        features = self.get_features(input_events, input_time, mean, var)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
+        features = self.get_features(input_events, input_time, mean, std)      # [batch_size, seq_len + 1, mark_embedding_size + 1] if self.event_toggle else [batch_size, seq_len + 1, 1]
 
         '''
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,

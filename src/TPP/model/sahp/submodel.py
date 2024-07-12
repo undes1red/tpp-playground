@@ -136,8 +136,7 @@ class SAHP(nn.Module):
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, d_input]
         expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, \
-                                                                   expanded_time, dim = -2)
+        expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time

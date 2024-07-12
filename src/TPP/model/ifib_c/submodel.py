@@ -66,7 +66,19 @@ class IFIBC(nn.Module):
         self.nonneg_integral = nn.Sigmoid()
 
 
-    def forward(self, events_history, time_history, time_next, mean, var, custom_events_history = False):
+    def forward(self, task_name, *args, **kwargs):
+        task_mapper = {
+            'default_forward': self.default_forward,
+            'sample': self.sample,
+            'probability': self.probability,
+            'get_event_embedding': self.get_event_embedding,
+            'model_probe_function': self.model_probe_function
+        }
+
+        return task_mapper[task_name](*args, **kwargs)
+
+
+    def default_forward(self, events_history, time_history, time_next, mean, std, custom_events_history = False):
         '''
         Args:
             events_history: [batch_size, seq_len] or [batch_size, seq_len, d_history] if custom_events_history = True
@@ -78,7 +90,7 @@ class IFIBC(nn.Module):
         '''
         Obtain historical embeddings.
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         if custom_events_history:
             events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
@@ -95,8 +107,8 @@ class IFIBC(nn.Module):
         '''
         Obtain timestamp embeddings.
         '''
-        time_next = (time_next - mean) / var                                   # [..., batch_size, seq_len, num_events]
-        time_next_zero = torch.ones_like(time_next) * (-mean / var)            # [..., batch_size, seq_len, num_events]
+        time_next = (time_next - mean) / std                                   # [..., batch_size, seq_len, num_events]
+        time_next_zero = torch.ones_like(time_next) * (-mean / std)            # [..., batch_size, seq_len, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_next.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [..., 1, 1, num_events, d_intensity]
@@ -152,91 +164,91 @@ class IFIBC(nn.Module):
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
 
-    def sample(self, sampled_events_history, sampled_time_history, tau, mean, var):
+    def sample(self, sampled_events_history, sampled_time_history, tau, mean, std):
         '''
         Args:
-            events_history: [batch_size, sampled_seq_len]
-            time_history:   [batch_size, sampled_seq_len]
-            tau:            [..., number_of_sampled_sequences, num_events] if we need events else [batch_size, 1]
-            mask:           [batch_size, sampled_seq_len]
+            events_history: [number_of_sampled_sequences, sampled_seq_len]
+            time_history:   [number_of_sampled_sequences, sampled_seq_len]
+            tau:            [number_of_sampled_sequences, num_events]
+            mask:           [number_of_sampled_sequences, sampled_seq_len]
+
+        When recursive_sample = True, 'batch_size' is 'number_of_sampled_sequences'.
         '''
 
         '''
         Obtain historical embeddings.
         '''
-        sampled_time_history = (sampled_time_history - mean) / var             # [batch_size, sampled_seq_len]
+        sampled_time_history = (sampled_time_history - mean) / std             # [number_of_sampled_sequences, sampled_seq_len]
 
-        sampled_events_embeddings = self.events(sampled_events_history)        # [batch_size, sampled_seq_len, d_history]
+        sampled_events_embeddings = self.events(sampled_events_history)        # [number_of_sampled_sequences, sampled_seq_len, d_history]
         sampled_history = torch.cat([sampled_events_embeddings, sampled_time_history.unsqueeze(dim = -1)], dim = -1)
-                                                                               # [batch_size, sampled_seq_len, d_history + 1]
+                                                                               # [number_of_sampled_sequences, sampled_seq_len, d_history + 1]
 
         # Reshape hidden output for full connection layers.
-        _, (sampled_history_embedding, _) = self.his_encoder(sampled_history)  # [1, batch_size, d_history]
-        sampled_history_embedding = rearrange(sampled_history_embedding, 'l b dh -> b l dh')
-                                                                               # [batch_size, 1, d_history]
-        sampled_history_embedding = repeat(sampled_history_embedding, 'b () dh -> () b ne dh', ne = self.num_events)
-                                                                               # [1, batch_size, num_events, d_history]
+        _, (sampled_history_embedding, _) = self.his_encoder(sampled_history)  # [1, number_of_sampled_sequences, d_history]
+        sampled_history_embedding = rearrange(sampled_history_embedding, '() bs dh -> bs () dh')
+                                                                               # [number_of_sampled_sequences, 1, d_history]
         sampled_history_embedding = self.history_mapper(sampled_history_embedding)
-                                                                               # [1, batch_size, num_events, d_intensity]
+                                                                               # [number_of_sampled_sequences, 1, d_intensity]
         '''
         Obtain timestamp embeddings.
         '''
-        tau = (tau - mean) / var                                               # [number_of_sampled_sequences, batch_size, num_events]
-        time_next_zero = torch.ones_like(tau) * (-mean / var)                  # [number_of_sampled_sequences, batch_size, num_events]
+        tau = (tau - mean) / std                                               # [number_of_sampled_sequences, num_events]
+        time_next_zero = torch.ones_like(tau) * (-mean / std)                  # [number_of_sampled_sequences, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(tau.shape) + 1 - len(self.time_bias.shape))}...')
-                                                                               # [1, 1, num_events, d_intensity]
+                                                                               # [1, num_events, d_intensity]
         time_embedding = tau.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t) + time_bias
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+                                                                               # [number_of_sampled_sequences, num_events, d_intensity]
         time_zero_embedding = time_next_zero.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t) + time_bias
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+                                                                               # [number_of_sampled_sequences, num_events, d_intensity]
         
-        time_embedding = self.time_mapper(time_embedding)                      # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
-        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+        time_embedding = self.time_mapper(time_embedding)                      # [number_of_sampled_sequences, num_events, d_intensity]
+        time_zero_embedding = self.time_mapper(time_zero_embedding)            # [number_of_sampled_sequences, num_events, d_intensity]
         
-        output = time_embedding + sampled_history_embedding                    # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
-        output_zero = time_zero_embedding + sampled_history_embedding          # [number_of_sampled_sequences, 1, num_events, d_intensity]
+        output = time_embedding + sampled_history_embedding                    # [number_of_sampled_sequences, num_events, d_intensity]
+        output_zero = time_zero_embedding + sampled_history_embedding          # [number_of_sampled_sequences, num_events, d_intensity]
 
         for layer_idx, layer in enumerate(self.mlp):
-            output = layer(output)                                             # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
-            output = self.layer_activation(output)                             # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+            output = layer(output)                                             # [number_of_sampled_sequences, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [number_of_sampled_sequences, num_events, d_intensity]
 
-            output_zero = layer(output_zero)                                   # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
-            output_zero = self.layer_activation(output_zero)                   # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+            output_zero = layer(output_zero)                                   # [number_of_sampled_sequences, num_events, d_intensity]
+            output_zero = self.layer_activation(output_zero)                   # [number_of_sampled_sequences, num_events, d_intensity]
 
             if layer_idx == 0:
-                output_max = torch.ones_like(output) * self.tanh_parameter     # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+                output_max = torch.ones_like(output) * self.tanh_parameter     # [number_of_sampled_sequences, num_events, d_intensity]
             else:
-                output_max = layer(output_max)                                 # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
-                output_max = self.layer_activation(output_max)                 # [number_of_sampled_sequences, batch_size, num_events, d_intensity]
+                output_max = layer(output_max)                                 # [number_of_sampled_sequences, num_events, d_intensity]
+                output_max = self.layer_activation(output_max)                 # [number_of_sampled_sequences, num_events, d_intensity]
 
         probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
         probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
         probability_integral_minimal = self.nonneg_integral(-self.aggregate(output_max))
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
 
         if self.removes_tail:
             regularized_probability_integral_from_t_to_inf = (probability_integral_from_t_to_inf - probability_integral_minimal)
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
             regularized_probability_integral_from_tl_to_inf = (probability_integral_from_tl_to_inf - probability_integral_minimal) + self.epsilon
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
         else:
             regularized_probability_integral_from_t_to_inf = probability_integral_from_t_to_inf
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
             regularized_probability_integral_from_tl_to_inf = probability_integral_from_tl_to_inf + self.epsilon
-                                                                               # [number_of_sampled_sequences, batch_size, num_events, 1]
+                                                                               # [number_of_sampled_sequences, num_events, 1]
 
         probability_integral_from_t_to_inf = rearrange(regularized_probability_integral_from_t_to_inf, '... 1 -> ...')
-                                                                               # [number_of_sampled_sequences, batch_size, num_events]
+                                                                               # [number_of_sampled_sequences, num_events]
         probability_integral_from_tl_to_inf = reduce(regularized_probability_integral_from_tl_to_inf, '... ne 1 -> ... ()', 'sum')
-                                                                               # [number_of_sampled_sequences, batch_size, 1]
+                                                                               # [number_of_sampled_sequences, 1]
 
         return probability_integral_from_t_to_inf / probability_integral_from_tl_to_inf
 
 
-    def probability(self, events_history, time_history, time_next, resolution, mean, var):
+    def probability(self, events_history, time_history, time_next, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -249,7 +261,7 @@ class IFIBC(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
@@ -271,7 +283,7 @@ class IFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = True
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_expand_norm.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [1, 1, 1, num_events, d_intensity]
@@ -329,7 +341,7 @@ class IFIBC(nn.Module):
         return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, std, mask):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -341,7 +353,7 @@ class IFIBC(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
@@ -364,7 +376,7 @@ class IFIBC(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
         
         time_expand.requires_grad = True      
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         time_bias = rearrange(self.time_bias, f'... -> {"() " * (len(time_expand_norm.shape) + 1 - len(self.time_bias.shape))}...')
                                                                                # [1, 1, 1, num_events, d_intensity]

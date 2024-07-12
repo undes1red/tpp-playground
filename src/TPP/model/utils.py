@@ -80,18 +80,86 @@ def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probab
     
     return (l + r)/2
 
+
+'''
+Thinning algorithm.
+'''
+def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_output_shape, device, intensity_func, \
+                      find_maximum_intensity_values_in_one_interval, *args, **kwargs):
+    sample_rate, batch_size, seq_len = sample_output_shape
+    thinning_unit_interval_length = max_sample_time_limit / maximum_thinning_loops
+
+    predicted_time = torch.zeros(sample_rate, batch_size, seq_len, dtype = torch.int32, device = device)
+                                                                           # [sample_rate, batch_size, seq_len]
+    # The initial mask tensor contains only zero.
+    # Zero means we have got a valid time sample.
+    # One means we need a resample
+    rejected_mask = torch.ones(sample_rate, batch_size, seq_len, dtype = torch.int32, device = device)
+                                                                           # [sample_rate, batch_size, seq_len]
+    thinning_loops = 0
+    while(rejected_mask.sum() > 0):
+        thinning_loops += 1
+        if thinning_loops > maximum_thinning_loops:
+            break
+
+        sampling_interval_left_side = torch.ones_like(rejected_mask) * thinning_unit_interval_length * (thinning_loops - 1)
+                                                                               # [sample_rate, batch_size, seq_len]
+        sampling_interval_right_side = torch.ones_like(rejected_mask) * thinning_unit_interval_length * thinning_loops
+                                                                               # [sample_rate, batch_size, seq_len]
+        intensity_values_for_thinning_upper_bound = find_maximum_intensity_values_in_one_interval(sampling_interval_left_side, sampling_interval_right_side, *args, **kwargs)
+                                                                               # [sample_rate, batch_size, seq_len]
+        # Exponential distribution: F(x) = 1 - exp(-\lambda x) => x = ln(1 - F(x)) / (-\lambda)
+        probability_threshold_for_exp = torch.zeros_like(intensity_values_for_thinning_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold_for_exp)                  # [sample_rate, batch_size, seq_len]
+        probability_threshold_for_thinning = torch.zeros_like(intensity_values_for_thinning_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
+        torch.nn.init.uniform_(probability_threshold_for_thinning)             # [sample_rate, batch_size, seq_len]
+        sampled_time = - torch.log(1 - probability_threshold_for_exp) / intensity_values_for_thinning_upper_bound
+                                                                               # [sample_rate, batch_size, seq_len]
+        # Part 1: exclude time exceeding the limit.
+        sampled_time_exceeding_limit = sampled_time > thinning_unit_interval_length
+                                                                               # [sample_rate, batch_size, seq_len]
+        # Part 2: exclude time rejected by the learned MTPP.
+        intensity_values_at_sampled_time = intensity_func(sampled_time, *args, **kwargs)
+                                                                               # [sample_rate, batch_size, seq_len]
+        sampled_time_rejected = probability_threshold_for_thinning > intensity_values_at_sampled_time / intensity_values_for_thinning_upper_bound
+                                                                               # [sample_rate, batch_size, seq_len]
+        rejected_in_this_loop = sampled_time_rejected | sampled_time_exceeding_limit
+                                                                               # [sample_rate, batch_size, seq_len]
+        accept_mask = rejected_mask & (~rejected_in_this_loop)                 # [sample_rate, batch_size, seq_len]
+        rejected_mask = rejected_mask & rejected_in_this_loop                  # [sample_rate, batch_size, seq_len]
+        predicted_time = predicted_time + accept_mask * sampled_time + rejected_mask * thinning_unit_interval_length
+                                                                               # [sample_rate, batch_size, seq_len]
+    return predicted_time
+
+
+'''
+Sample event from a (unnormalized) probability distribution.
+'''
+def predict_event(probability, sample = False):
+    # The shape of the input probability is [..., num_events].
+    if sample:
+        distribution_of_marks = torch.distributions.categorical.Categorical(probability)
+        sampled_marks = distribution_of_marks.sample()                         # [...]
+    else:
+        sampled_marks = torch.argmax(probability, dim = -1)                    # [...]
+    
+    return sampled_marks
+
+
 '''
 resolution_inf and resolution_between_events.
 '''
-def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, num_events, mean, var):
+def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, num_events, mean, std):
     '''
     Suggested batch_size: 1
     '''
 
-    if mean == 0 and var == 1:
-        max_ = time_next.mean() + 10 * time_next.var()
+    if mean == 0 and std == 1:
+        max_ = time_next.mean() + 10 * time_next.std()
     else:
-        max_ = mean + 10 * var
+        max_ = mean + 10 * std
 
     if mean == 0:
         resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
@@ -254,6 +322,53 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
 
     return L1
 
+def stable_palette(labels):
+    # Predefined palette.
+    colors = ['#4974a5', '#ffa500', '#5d782e', '#545454', '#d7b4ae', '#00ff00', '#00ffff', '#6fa287', \
+              '#ee30a7', '#9e482f', '#8b02e7', '#141387', '#eccb00', '#ff0000', '#ff9664', '#b73e64', \
+              '#0000ff', '#969696', '#969600', '#ffe600', '#ff6400', '#1f1e33']
+    
+    assert len(labels) < 23, 'Too many labels.'
+
+    return {label: color for (label, color) in zip(labels, colors)}
+
+
+def figure_instruction_generator(*args, figure_kwargs = {}):
+    packed_data = {}
+
+    # Packaging figure instructions.
+    if len(figure_kwargs) == 0:
+        figure_kwargs = {'layout': (1, 1)}
+    elif figure_kwargs.get('layout') is None:
+        figure_kwargs['layout'] = (1, 1)
+
+    packed_data['figure'] = figure_kwargs
+
+    # Packaging plot instructions 
+    packed_data['plots'] = []
+    found_preamble = False
+    for subplot in args:
+        plot_instruction = {'preamble': {}, 'commands': []}
+        for subplot_instruction in subplot:
+            '''
+            Preamble dict found.
+            '''
+            if subplot_instruction.get('plot_type') is None and not found_preamble:
+                found_preamble = True
+                plot_instruction['preamble'] = subplot_instruction
+                continue
+            
+            if subplot_instruction.get('plot_type') is None and found_preamble:
+                raise Exception('Multiple preambles found!')
+
+            '''
+            Only the instruction of the plot.
+            '''
+            plot_instruction['commands'].append(subplot_instruction)
+    
+        packed_data['plots'].append(plot_instruction)
+
+    return packed_data
 
 '''
 For EHD.

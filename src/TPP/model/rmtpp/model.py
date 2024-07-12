@@ -47,7 +47,7 @@ class RMTPP(BasicModel):
         * mean          type: float shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
-        * var           type: float shape: N/A
+        * std           type: float shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
         * evaluate      type: bool shape: N/A
@@ -65,6 +65,8 @@ class RMTPP(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'graph': self.plot,
+            'which_event_occurs_first': self.get_which_event_first,
+            'samples_from_et': self.samples_from_et,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -89,7 +91,7 @@ class RMTPP(BasicModel):
         return mask_without_dummy
 
 
-    def train_procedure(self, events, time, mask, mean, var):
+    def train_procedure(self, events, time, mask, mean, std):
         events_history, events_next = self.divide_history_and_next(events)
                                                                                # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
@@ -98,7 +100,7 @@ class RMTPP(BasicModel):
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        integral, intensity, mark, _ = self.model(events_history, time_history, time_next, mean, var)
+        integral, intensity, mark, _ = self.model(events_history, time_history, time_next, mean, std)
                                                                                # [batch_size, seq_len, 1] * 2, [batch_size, seq_length, num_events], and [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
         check_tensor(intensity)
         check_tensor(integral)
@@ -107,7 +109,7 @@ class RMTPP(BasicModel):
         # time_loss_without_dummy = \sum_{t_i}{\lambda^*(t_i)} + \int_{t_0}^{t_n}{\lambda^*(\tau)d\tau}
         # event_loss_without_dummy = \sum{x_i}{CrossEntropyLoss(\hat{x_i}, x_i)} for all real-world events.
         loss_without_dummy, time_loss_without_dummy, events_loss_without_dummy = \
-                   self.loss_function(intensity, integral, mark, events_next_without_dummy, mask_next_without_dummy)
+                self.loss_function(intensity, integral, mark, events_next_without_dummy, mask_next_without_dummy)
         
         probability_survival = 0
         if self.survival_loss_during_training:
@@ -122,44 +124,28 @@ class RMTPP(BasicModel):
 
 
     @torch.no_grad()
-    def evaluate_procedure(self, events, time, mask, mean, var):
+    def evaluate_procedure(self, events, time, mask, mean, std):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
+
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
-
         '''
         Calculating MAE here.
         '''
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next_without_dummy, mean, var)
+        mae, f1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_next_without_dummy, mean, std)
                                                                                # [batch_size, seq_len] * 2
-
-        integral_time_next, intensity_time_next, mark_time_next, constant_time_next \
-                   = self.model(events_history, time_history, time_next, mean, var)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1] * 2, [batch_size, seq_length, num_events], and [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
-        integral_pred_time, intensity_pred_time, mark_pred_time, constant_pred_time \
-                   = self.model(events_history, time_history, pred_time, mean, var)
+        mae = mae.sum().item() / the_number_of_events
+        integral_time_next, intensity_time_next, mark_time_next, _ = self.model(events_history, time_history, time_next, mean, std)
                                                                                # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1] * 2, [batch_size, seq_length, num_events], and [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
         check_tensor(intensity_time_next)
         check_tensor(integral_time_next)
-        check_tensor(intensity_pred_time)
-        check_tensor(integral_pred_time)
         
         # NLL and event loss at time_next.
-        loss_time_next_without_dummy, time_loss_time_next_without_dummy, events_loss_time_next_without_dummy = \
+        _, time_loss_time_next_without_dummy, events_loss_time_next_without_dummy = \
                    self.loss_function(intensity_time_next, integral_time_next, mark_time_next, events_next_without_dummy, mask_next_without_dummy)
-        
-        '''
-        macro-F1 of evaluating event predictions.
-        '''
-        predicted_events = torch.argmax(mark_pred_time, dim = -1)[mask_next_without_dummy == 1]
-        events_true = events_next_without_dummy[mask_next_without_dummy == 1]
-        predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
-                                                                       # [batch_size, seq_len] * 2
-        f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
-
         # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         probability_survival = integral_time_next.gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
@@ -196,10 +182,114 @@ class RMTPP(BasicModel):
 
 
     @torch.no_grad()
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
-        mae, pred_time = self.mean_absolute_error(events_history, time_history, time_next, mask_next, mean, var)
-        _, _, mark, _ = self.model(events_history, time_history, pred_time, mean, var)
+    def sample(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
+        '''
+        number_of_total_samples: how many samples do we need to predict one next event.
+        step: we output "step" samples to reduce memory comsumption during inference.
+        sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
+        task: 'mt' for mark first time second, 'tm' for time first mark second.
+        '''
 
+        dict_sampling_apparoch = {
+            'its': self.sampling_by_its,
+            'thinning': self.sampling_by_thinning
+        }
+
+        return dict_sampling_apparoch[sampling_approach](task = task, *args, **kwargs)
+
+
+    def sampling_by_its(self, task, *args, **kwargs):
+        dict_apparoch_for_tasks = {
+            'mt': self.sampling_by_its_for_mt,
+            'tm': self.sampling_by_its_for_tm
+        }
+
+        return dict_apparoch_for_tasks[task](*args, **kwargs)
+    
+
+    def sampling_by_its_for_mt(self, *args, **kwargs):
+        raise Exception("Vanilla RMTPP does not support task MT as its intensity function is not mark-aware.")
+
+
+    def sampling_by_its_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std, autoregressive = False):
+        sample_rate_list = step_split(number_of_total_samples, step)
+
+        def bisect_target(taus, probability_threshold):
+            '''
+            MTPP loss function
+            '''
+            integral, _, _, _ = self.model(events_history, time_history, taus, mean, std)
+                                                                               # [sample_rate, batch_size, seq_len]
+            return integral + torch.log(1 - probability_threshold)             # [sample_rate, batch_size, seq_len]
+
+        tau_pred = []
+        for sub_sample_rate in sample_rate_list:
+            probability_threshold = torch.zeros((sub_sample_rate, *time_history.shape), device = self.device)
+                                                                               # [sample_rate, batch_size, seq_len]
+            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
+                                                                               # [sample_rate, batch_size, seq_len]
+            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
+                                              bisect_target, probability_threshold))
+                                                                               # [sample_rate, batch_size, seq_len]
+        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
+        
+        return tau_pred
+
+
+    def sampling_by_thinning(self, task, *args, **kwargs):
+        dict_apparoch_for_tasks = {
+            'mt': self.sampling_by_thinning_for_mt,
+            'tm': self.sampling_by_thinning_for_tm
+        }
+
+        return dict_apparoch_for_tasks[task](*args, **kwargs)
+
+
+    def sampling_by_thinning_for_mt(self, *args, **kwargs):
+        raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
+
+
+    def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std):
+        sample_rate_list = step_split(number_of_total_samples, step)
+        batch_size, seq_len = time_history.shape
+        maximum_thinning_loops = 500
+        max_sample_time_limit = mean + 10 * std
+
+        def get_intensity(tau, time_history, events_history):
+            _, intensity, _, _ = self.model(events_history, time_history, tau, mean, std)
+            return intensity
+
+        def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history):
+            intensity_values_at_left_side = get_intensity(interval_left, time_history, events_history)
+                                                                               # [sample_rate, batch_size, seq_len]
+            intensity_values_at_right_side = get_intensity(interval_right, time_history, events_history)
+                                                                               # [sample_rate, batch_size, seq_len]        
+            intensity_values_at_t_l_higher = (intensity_values_at_left_side > intensity_values_at_right_side).int()
+                                                                               # [sample_rate, batch_size, seq_len]
+            # We slightly lift the upper bound here to ensure this upper bound definitely higher than all intensity values in this interval.
+            intensity_values_for_thinning_upper_bound = (intensity_values_at_left_side * intensity_values_at_t_l_higher + intensity_values_at_right_side * (1 - intensity_values_at_t_l_higher)) * 1.05
+                                                                               # [sample_rate, batch_size, seq_len]
+            return intensity_values_for_thinning_upper_bound
+        
+        sampled_time = []
+        for each_step in sample_rate_list:
+            sampled_time.append(thinning_sampling(maximum_thinning_loops, max_sample_time_limit, (each_step, batch_size, seq_len), self.device, \
+                                                  get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history))
+                                                                               # [sample_rate, batch_size, seq_len]
+        sampled_time = torch.cat(sampled_time, dim = 0)
+        return sampled_time
+
+
+    @torch.no_grad()
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
+        pred_time = self.sample(sampling_approach = 'its', task = 'tm', 
+                                events_history = events_history, time_history = time_history,
+                                number_of_total_samples = self.sample_rate, step = self.sample_rate, mean = mean, std = std)
+                                                                               # [sample_rate, batch_size, seq_len]
+        pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
+        
+        mae = torch.abs(time_next - pred_time) * mask_next                     # [batch_size, seq_len]
+        _, _, mark, _ = self.model(events_history, time_history, pred_time, mean, std)
         predicted_events = torch.argmax(mark, dim = -1)[mask_next == 1]        # [batch_size, seq_len]
         events_true = events_next[mask_next == 1]                              # [batch_size, seq_len]
 
@@ -207,29 +297,6 @@ class RMTPP(BasicModel):
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
         return mae, f1
-
-
-    @torch.no_grad()
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_next, mean, var):
-        '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
-        '''
-        def bisect_target(taus, probability_threshold):
-            integral, _, _, _ = self.model(events_history, time_history, taus, mean, var)
-                                                                               # [sample_rate, batch_size, seq_len]
-            return integral + torch.log(1 - probability_threshold)
-        
-        probability_threshold = torch.zeros((self.sample_rate, *time_next.shape), device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len]
-        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sample_rate, batch_size, seq_len]
-        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len]
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
-        mae = torch.abs(tau_pred - time_next) * mask_next                      # [batch_size, seq_len]
-
-        return mae, tau_pred
 
 
     def plot(self, minibatch, opt):
@@ -245,11 +312,11 @@ class RMTPP(BasicModel):
 
     def extract_plot_data(self, minibatch):
         '''
-        This function extracts input_time, input_events, input_intensity, mask, mean, and var from the minibatch.
+        This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
 
         Args:
         * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, var)]
+                     data structure: [[input_time, input_events, score, mask], (mean, std)]
         
         Outputs:
         * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
@@ -261,14 +328,14 @@ class RMTPP(BasicModel):
         * mean          type: int shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
-        * var           type: int shape: N/A
+        * std           type: int shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
         '''
         input_time, input_events, _, mask, input_intensity = minibatch[0]
-        mean, var = minibatch[1]
+        mean, std = minibatch[1]
 
-        return input_time, input_events, input_intensity, mask, mean, var
+        return input_time, input_events, input_intensity, mask, mean, std
 
 
     @torch.no_grad()
@@ -282,7 +349,7 @@ class RMTPP(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -290,9 +357,8 @@ class RMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -320,7 +386,7 @@ class RMTPP(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -328,7 +394,7 @@ class RMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -357,7 +423,7 @@ class RMTPP(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -365,7 +431,7 @@ class RMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -394,18 +460,18 @@ class RMTPP(BasicModel):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, _, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, var)
+                                                    time_next, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, \
-                                                          time_next, opt.resolution, mean, var, mask_next)
+                                                          time_next, opt.resolution, mean, std, mask_next)
 
         '''
         Append additional info into the data dict.
@@ -426,14 +492,13 @@ class RMTPP(BasicModel):
     '''
     @torch.no_grad()
     def get_spearman_and_l1(self, input_data, opt):
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
+        events_history, _ = self.divide_history_and_next(input_events)         # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, var)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -456,10 +521,8 @@ class RMTPP(BasicModel):
             spearman_per_seq = \
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
-            l1_per_seq = L1_distance_between_two_funcs(
-                                        x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution
-                                        )
+            l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                                       timestamp = timestamp_per_seq, resolution = opt.resolution)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
@@ -472,29 +535,40 @@ class RMTPP(BasicModel):
 
     @torch.no_grad()
     def get_mae_and_f1(self, input_data, opt):
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, var)
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
 
         return mae, f1_1
 
 
+    @torch.no_grad()
     def get_mae_e_and_f1(self, input_data, opt):
-        raise NotImplemented("RMTPP is a TPP model, so MAE-E is not supported.")
+        raise NotImplemented("get_mae_e_and_f1() not implemented for vanilla RMTPP because it is a TPP model.")
+
+
+    @torch.no_grad()
+    def get_which_event_first(self, input_data, opt):
+        return NotImplemented('get_which_event_first() not implemented for vanilla RMTPP because it is a TPP model.')
+
+
+    @torch.no_grad()
+    def samples_from_et(self, input_data, opt):
+        return NotImplemented('samples_from_et() not implemented for vanilla RMTPP because it is a TPP model.')
+
 
 
     def train_step(model, minibatch, device):
         model.train()
 
-        [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
-        loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', events, time, mask, mean, var)
+        [time, events, score, mask], (mean, std) = minibatch                   # 4 * [batch_size, seq_len + 1]
+        loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', events, time, mask, mean, std)
 
         loss.backward()
 
@@ -508,9 +582,9 @@ class RMTPP(BasicModel):
     def evaluation_step(model, minibatch, device):
         model.eval()
 
-        [time, events, score, mask], (mean, var) = minibatch                   # 4 * [batch_size, seq_len + 1]
+        [time, events, score, mask], (mean, std) = minibatch                   # 4 * [batch_size, seq_len + 1]
         time_loss_time_next_without_dummy, time_loss_survival, events_loss_time_next_without_dummy, \
-        mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, var)
+        mae, f1, the_number_of_events = model('evaluate', events, time, mask, mean, std)
         
         time_loss_time_next_without_dummy = time_loss_time_next_without_dummy.item() / the_number_of_events
         time_loss_survival = time_loss_survival.item()
