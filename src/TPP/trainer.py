@@ -98,7 +98,7 @@ class TPPTrainer:
 
         self.model = torch.compile(self.model, \
                                    options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
-                                   disable = self.opt.compile)
+                                   disable = False)
 
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])

@@ -20,7 +20,7 @@ class ehdTrainerArguments(BasicArguments):
         self.parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
                                                                             agg_update_step * n_training_steps')
         self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
-                            help='The number of warmup steps. We won\\'t store any checkpoints during warmup.')
+                            help='The number of warmup steps. We won\'t store any checkpoints during warmup.')
         # wandb support
         self.parser.add_argument('--wandb', action='store_true', help='Use wandb to record and visualize the training procedure.')
 
@@ -46,7 +46,7 @@ class ehdTrainerArguments(BasicArguments):
         self.parser.add_argument('--op_name', type=str, default='AdamW', 
                             help='The name of optimizer. All optimizer hyperparameters are set as default.')
         self.parser.add_argument('--lr_sched', action='store_true', 
-                            help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\\'t come into effect.')
+                            help='Do you want to use learning rate scheduler? If scheduler is disabled, the warmup settings won\'t come into effect.')
         self.parser.add_argument('--lr', type=float, default=0.1, 
                             help='Input learning rate. The real learning rate could change due to the lr scheduler.')
         self.parser.add_argument('--n_cycles', type=float, default=0.5)
