@@ -96,9 +96,9 @@ class TPPTrainer:
         '''
         self.sched_optimizer = ScheduledOptim(opt, self.model)
 
-        self.model = torch.compile(self.model, \
-                                   options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
-                                   disable = False)
+        # self.model = torch.compile(self.model, \
+        #                            options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
+        #                            disable = True)
 
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])

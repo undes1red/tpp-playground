@@ -42,7 +42,7 @@ class IFIBC(nn.Module):
 
         try:
             self.his_encoder = getattr(nn, history_module)(input_size = d_history + 1, hidden_size = d_history, num_layers = history_module_layers,\
-                        batch_first = True, dropout = dropout, device = device)
+                                                           batch_first = True, dropout = dropout, device = device)
         except:
             raise Exception(f'Unknown history module {history_module}.')
 
