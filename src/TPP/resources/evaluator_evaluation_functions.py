@@ -52,7 +52,7 @@ def draw(model, minibatch, desc, batch_idx, opt):
          'mathtext.fontset': 'cm',
          # 'font.family': 'STIXGeneral',
          'font.family': 'Times New Roman',
-         'text.latex.preamble': r"\usepackage{amsmath}"})
+         'text.latex.preamble': r"\\usepackage{amsmath}"})
     
     for plot_name, figure_instructions in plots.items():
         # instruction['figure'] defines a figure.

@@ -155,7 +155,7 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
                    [seq_len * resolution, num_events]
     2. y:          function values
                    the number of points from [t_{i - 1}, t_i]
-    3. time:       \Delta t
+    3. time:       \\Delta t
                    the number of event types
     '''
 

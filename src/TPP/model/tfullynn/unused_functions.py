@@ -47,7 +47,7 @@ mae_per_event_next = self.mean_absolute_error_per_event(events_history, events_n
 
         Outputs:
         * gap             type: torch.tensor shape: [batch_size, seq_len]
-                          MAE-E = |\hat{t}_m - t|
+                          MAE-E = |\\hat{t}_m - t|
 
         \'''
         def evaluate_per_event(taus):

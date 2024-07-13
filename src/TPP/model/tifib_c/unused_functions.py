@@ -10,7 +10,7 @@
                 taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             taus.requires_grad = True
-            # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+            # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
             probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
     

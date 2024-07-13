@@ -111,13 +111,13 @@ class IFIBCModel(BasicModel):
         time_next.requires_grad = True
 
         '''
-        \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+        \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
         '''
         probability_integral_from_t_to_infinite = self.model('default_forward', events_history, time_history, time_next, mean = mean, std = std)
                                                                                # [batch_size, seq_len, num_events]
 
         '''
-        the value of probability distribution at t, or p(m, t|\mathcal{H})
+        the value of probability distribution at t, or p(m, t|\\mathcal{H})
         '''
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral_from_t_to_infinite,
@@ -150,12 +150,12 @@ class IFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         events_loss = events_loss_without_dummy.sum()
 
-        # Time loss: -log p(t) = \sum_{i = 1}^{N}{\lambda_{k}(t_i)} + \int_{t_0}^{t_N}{\sum_{k}\lambda_k^(\tau)d\tau}
+        # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
         time_loss_without_dummy = self.nll_loss(probability = probability_for_each_event, \
                                                 mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
         time_loss_survival = 0
         if self.survival_loss_during_training:
-            # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau} = -\log(1 - P(t)) = -log(IFIB-C(t)).
+            # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau} = -\\log(1 - P(t)) = -log(IFIB-C(t)).
             dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
             probability_survival = probability_integral_from_t_to_infinite.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
@@ -213,9 +213,9 @@ class IFIBCModel(BasicModel):
         events_loss = events_loss * mask_next_without_dummy                    # [batch_size, seq_len]
         events_loss = events_loss.sum()
 
-        # Time loss: -log p(t) = \sum_{i = 1}^{N}{\lambda_{k}(t_i)} + \int_{t_0}^{t_N}{\sum_{k}\lambda_k^(\tau)d\tau}
+        # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
         time_loss_wihtout_dummy = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
-        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau} = -\log(1 - P(t)) = -log(\sum_{m}{IFIB-C(m, t)}).
+        # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau} = -\\log(1 - P(t)) = -log(\\sum_{m}{IFIB-C(m, t)}).
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         probability_survival = probability_for_each_event_at_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
@@ -275,14 +275,14 @@ class IFIBCModel(BasicModel):
         sample_rate_list = step_split(number_of_total_samples, step)
 
         def bisect_target(taus, probability_threshold):
-            # \int_{tau}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+            # \\int_{tau}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
             if autoregressive:
                 probability_integral_from_t_to_infinite = self.model('sample', events_history, time_history, taus, mean = mean, std = std)
                                                                                # [sample_rate, num_events]
             else:
                 probability_integral_from_t_to_infinite = self.model('default_forward', events_history, time_history, taus, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            # \int_{0}^{tau}{p(m, \tau|\mathcal{H})d\tau}
+            # \\int_{0}^{tau}{p(m, \\tau|\\mathcal{H})d\\tau}
             p_mt = p_m - probability_integral_from_t_to_infinite               # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
             p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
@@ -327,7 +327,7 @@ class IFIBCModel(BasicModel):
             else:
                 probability_integral_from_t_to_inf = self.model('default_forward', events_history, time_history, taus, mean, std)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            # P_m(t) = \\int_{0}^{t}{p(t|m, \\mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
                                                                                # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
             probability_integral = torch.sum(probability_integral, dim = -1)   # [sample_rate, batch_size, seq_len] if not autoregressive else [sample_rate]
@@ -415,7 +415,7 @@ class IFIBCModel(BasicModel):
     def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, std, return_mean = True):
         '''
         Well...We will do something totally different by performing event-wise MAE.
-        First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
+        First, predict the event types by \\int_{t_i}^{+\\infty}{\\lambda^*_i(t)\\exp(-\\int_{t_0}^{\\tau}{\\lambda^*_i(t)dt})d\\tau}
         Next, given time predictions. (Expectation? or probability bigger than 0.5?)
         '''
         time_zero = torch.zeros_like(time_next)                                # [batch_size, seq_len]
@@ -531,8 +531,8 @@ class IFIBCModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \(t_s\) from p^*(t) = \sum{n \in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \(\lambda^*(m, t_s)\).
+        1. Sample a time \(t_s\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \(\\lambda^*(m, t_s)\).
         '''
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
@@ -588,7 +588,7 @@ class IFIBCModel(BasicModel):
         '''
         These two functions will sample a event sequence from the learned p^*(m, t) following the event-time prediction procedure.
         Steps:
-        1. Sample the mark \(m_p\) from p^*(m) = \int_{t_l}^{+\infty}{p^*(m, \tau)d\tau}.
+        1. Sample the mark \(m_p\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
         2. Sample when a new \(m_p\) event would happen in the future time by \(p^*(t|m_p)\).
         '''
         time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device = self.device)

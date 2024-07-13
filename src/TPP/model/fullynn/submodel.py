@@ -131,7 +131,7 @@ class FullyNN(nn.Module):
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
-        $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
+        $ \\lambda^*(m, t) $ and corresponding integral values $ \\Lambda^*(m, t) $ at given times.
 
         Args:
         * events_history  type: torch.tensor shape: [batch_size, seq_len]
@@ -229,7 +229,7 @@ class FullyNN(nn.Module):
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
-        $ \lambda^*(m, t) $ and corresponding integral values $ \Lambda^*(m, t) $ at given times.
+        $ \\lambda^*(m, t) $ and corresponding integral values $ \\Lambda^*(m, t) $ at given times.
 
         Args:
         * events_history  type: torch.tensor shape: [batch_size, seq_len]

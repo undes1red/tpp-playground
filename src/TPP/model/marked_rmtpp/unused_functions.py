@@ -173,7 +173,7 @@
         * mae             type: torch.tensor shape: [batch_size, seq_len]
                           MAE(Mean Absolute Error) between predicted time and ground truth.
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         \'''
         if self.original_mark_generation:
             raise Exception('The original RMTPP model is in fact a TPP model, not a native MTPP model. So MAE-E calculation is unavailable.')
@@ -202,7 +202,7 @@
             resolution = int(memory_ceiling // (seq_len * self.num_events))
 
         \'''
-        Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
+        Step 1: obtain p^*(m) = \\int_{t_l}^{+infty}{p(m, t)\\dt}
         \'''
         expand_integral_to_inf, expand_intensity_to_inf, time_interval \
                 = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution, mean, var)
@@ -306,7 +306,7 @@
                           The upper bound used in the bisect method.
         Outputs:
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         \'''
         def evaluate_all_event(taus):
             \'''

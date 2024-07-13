@@ -61,18 +61,18 @@ def plot_removed_events(data, opt):
 
     df_removed_event = pd.DataFrame.from_dict(
                 {'Time': time_of_removed_events, 'Point': np.ones_like(time_of_removed_events) * (-0.05) , \
-                 'Event': [f'Event {item}' for item in removed_events], 'filter': [r'$\in \mathcal{H}_{r,o,t_l}$'] * filter_for_removal.sum().int().item()}
+                 'Event': [f'Event {item}' for item in removed_events], 'filter': [r'$\\in \\mathcal{H}_{r,o,t_l}$'] * filter_for_removal.sum().int().item()}
         )
 
     df_left_event = pd.DataFrame.from_dict(
                 {'Time': time_of_left_events, 'Point': np.ones_like(time_of_left_events) * (-0.1), \
-                 'Event': [f'Event {item}' for item in left_events], 'filter': [r'$\in \mathcal{H}_{l,o,t_l}$'] * filter_for_left.sum().int().item()}
+                 'Event': [f'Event {item}' for item in left_events], 'filter': [r'$\\in \\mathcal{H}_{l,o,t_l}$'] * filter_for_left.sum().int().item()}
         )
 
     df_x = pd.DataFrame.from_dict(
                 {'Time': time_of_x, 'Point': np.ones_like(time_of_x) * (-0.075), \
                  'Event': [f'Event {item}' for item in events_future.squeeze()], \
-                 'filter': [r'$\in \mathbf{x}_{o}$'] * (opt.info_dict['length_of_x'] + 1)}
+                 'filter': [r'$\\in \\mathbf{x}_{o}$'] * (opt.info_dict['length_of_x'] + 1)}
         )
 
     df_event = pd.concat((df_left_event, df_removed_event, df_x), axis = 0, ignore_index = True)
@@ -88,7 +88,7 @@ def plot_removed_events(data, opt):
                 }
         )
     
-    annotation = fr'$dppl_r$ = {L_sp}, $dppl_{{rr}}$ = {L_sp_r}, $dppl_l$ = {L_rp}, $dppl_{{lr}}$ = {L_rp_r} with ${percentage_remained_events * 100}\%$ events left. len($\mathcal{{H}}_{{o,t_l}}$) = {opt.info_dict["length_of_h"]}, len($\mathbf{{x}}_{{o}}$) = {opt.info_dict["length_of_x"]}'
+    annotation = fr'$dppl_r$ = {L_sp}, $dppl_{{rr}}$ = {L_sp_r}, $dppl_l$ = {L_rp}, $dppl_{{lr}}$ = {L_rp_r} with ${percentage_remained_events * 100}\%$ events left. len($\\mathcal{{H}}_{{o,t_l}}$) = {opt.info_dict["length_of_h"]}, len($\\mathbf{{x}}_{{o}}$) = {opt.info_dict["length_of_x"]}'
     
     instruction = [
         {
@@ -158,7 +158,7 @@ def plot_debug(data, timestamp, opt):
     3. spearman, pearson, and L1 distance matrix.
     4. macro-f1: measure the event prediction performance without time prediction.
     5. top_k: measure the event prediction performance without time prediction.
-    6. probability_sum: the value of \int_{t_l}^{+infty}{p(m, \tau)d\tau}
+    6. probability_sum: the value of \\int_{t_l}^{+infty}{p(m, \\tau)d\\tau}
     7. tau_pred_all_event: The time prediction of all events, with p(m) known.
     8. mae_before_event: as known as MAE.
     9. maes_after_event_avg: contains mae_per_event_with_predict_index_avg and mae_per_event_with_event_next_avg
@@ -372,7 +372,7 @@ def plot_debug(data, timestamp, opt):
     
 
     '''
-    Part 6: the value of \sum_{m \in M}{p^*(m)} given different history.
+    Part 6: the value of \\sum_{m \\in M}{p^*(m)} given different history.
     '''
     probability_sum = data['probability_sum']                                  # [batch_size, seq_len]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]

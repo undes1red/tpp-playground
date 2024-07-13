@@ -127,9 +127,9 @@ class DSTPPWrapper(BasicModule):
         
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
+                                The sum of NLL loss: L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}}
+                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}}
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
@@ -157,9 +157,9 @@ class DSTPPWrapper(BasicModule):
 
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
+                                The sum of NLL loss: L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}} at each predicted time \(t_p\).
+                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} at each predicted time \(t_p\).
         * mae                   type: torch.tensor shape: [batch_size, seq_len]
                                 Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
         * f1                    type: int shape: N/A
@@ -225,7 +225,7 @@ class DSTPPWrapper(BasicModule):
 
         Args:
         * events_history        type: torch.tensor shape: [batch_size, seq_len]
-                                The event history \mathcal{H}_{t_l}. We use these history info and time history for \(\lambda^*(m, t)\) and \(\Lambda^*(m, t)\).
+                                The event history \\mathcal{H}_{t_l}. We use these history info and time history for \(\\lambda^*(m, t)\) and \(\\Lambda^*(m, t)\).
         * time_history          type: torch.tensor shape: [batch_size, seq_len]
 
         * events_next           type: torch.tensor shape: [batch_size, seq_len]
@@ -309,7 +309,7 @@ class DSTPPWrapper(BasicModule):
         * mae             type: torch.tensor shape: [batch_size, seq_len]
                           MAE(Mean Absolute Error) between predicted time and ground truth.
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         '''
         dist = torch.distributions.uniform.Uniform(torch.tensor(0.0), torch.tensor(1.0))
         probability_threshold = dist.sample((self.sample_rate, *time_next.shape))
@@ -318,11 +318,11 @@ class DSTPPWrapper(BasicModule):
 
         def get_sum_of_integral(taus):
             '''
-            Retrieve the sum of all $ \Lambda^*(m, t) $ over all $ m $ at $ \tau $.
+            Retrieve the sum of all $ \\Lambda^*(m, t) $ over all $ m $ at $ \\tau $.
 
             Outputs:
             * integral    type: torch.tensor shape: [batch_size, seq_len]
-                          $ \sum_{n \in M}{\Lambda^*(n, \tau)} $
+                          $ \\sum_{n \\in M}{\\Lambda^*(n, \\tau)} $
             '''
 
             taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
@@ -413,7 +413,7 @@ class DSTPPWrapper(BasicModule):
         * mae             type: torch.tensor shape: [batch_size, seq_len]
                           MAE(Mean Absolute Error) between predicted time and ground truth.
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         '''
 
         
@@ -451,7 +451,7 @@ class DSTPPWrapper(BasicModule):
         # resolution_inf = 2500
 
         '''
-        Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
+        Step 1: obtain p^*(m) = \\int_{t_l}^{+infty}{p(m, t)\\dt}
         '''
         expand_integral_to_inf, expand_intensity_to_inf, time_interval \
                 = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, var)
@@ -551,7 +551,7 @@ class DSTPPWrapper(BasicModule):
                           The upper bound used in the bisect method.
         Outputs:
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         '''
         # Preprocess
         batch_size, seq_len = time_history.shape
@@ -945,13 +945,13 @@ class DSTPPWrapper(BasicModule):
         
         if padded_filtered_time_next.requires_grad == False and padded_filtered_time_next.is_leaf == True:
             padded_filtered_time_next.requires_grad = True
-        # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+        # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
         padded_filtered_intensity_integral_from_t_o_to_t = self.model(padded_filtered_events_embeddings_history, \
                                                                       padded_filtered_time_history, \
                                                                       padded_filtered_time_next, mean = mean, var = var, \
                                                                       custom_events_history = True)
                                                                                # [batch_size, filtered_seq_len - 1, num_events]
-        # p(m, t|\mathcal{H})
+        # p(m, t|\\mathcal{H})
         intensity_for_each_event = torch.autograd.grad(
             outputs = padded_filtered_intensity_integral_from_t_o_to_t,
             inputs = padded_filtered_time_next,
@@ -968,7 +968,7 @@ class DSTPPWrapper(BasicModule):
         intensity = (intensity_for_each_event * event_mask).sum(dim = -1)      # [batch_size, filtered_seq_len - 1]
         log_probability = torch.log(intensity + self.epsilon) - padded_filtered_intensity_integral_from_t_o_to_t.sum(dim = -1)
                                                                                # [batch_size, filtered_seq_len - 1]
-        # \log p(\mathcal{H}, \mathbf{x}_o)
+        # \\log p(\\mathcal{H}, \\mathbf{x}_o)
         log_probability_sum = (log_probability * padded_filtered_mask_next_without_dummy).sum(dim = -1)
                                                                                # [batch_size]
         log_probability_mean = log_probability_sum / the_number_of_events      # [batch_size]

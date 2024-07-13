@@ -108,7 +108,7 @@ def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_outp
                                                                                # [sample_rate, batch_size, seq_len]
         intensity_values_for_thinning_upper_bound = find_maximum_intensity_values_in_one_interval(sampling_interval_left_side, sampling_interval_right_side, *args, **kwargs)
                                                                                # [sample_rate, batch_size, seq_len]
-        # Exponential distribution: F(x) = 1 - exp(-\lambda x) => x = ln(1 - F(x)) / (-\lambda)
+        # Exponential distribution: F(x) = 1 - exp(-\\lambda x) => x = ln(1 - F(x)) / (-\\lambda)
         probability_threshold_for_exp = torch.zeros_like(intensity_values_for_thinning_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len]
         torch.nn.init.uniform_(probability_threshold_for_exp)                  # [sample_rate, batch_size, seq_len]
@@ -209,17 +209,17 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_integral 
         einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
         width_of_rectangle = rearrange(width_of_rectangle, einop)              # [..., integration_sample_rate - 1, ...]
 
-    # \int_{a}{b}{f(x)dx} \approx \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+    # \\int_{a}{b}{f(x)dx} \\approx \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)i}{N - 1}) * \\frac{(b - a)}{N - 1}}
     integral_of_all_events_1 = (expanded_func_value_1 * width_of_rectangle).cumsum(dim = dim)
                                                                                # [..., integration_sample_rate - 1, ...]
-    # \int_{a}{b}{f(x)dx} \approx \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+    # \\int_{a}{b}{f(x)dx} \\approx \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)(i + 1)}{N - 1}) * \\frac{(b - a)}{N - 1}}
     integral_of_all_events_2 = (expanded_func_value_2 * width_of_rectangle).cumsum(dim = dim)
                                                                                # [..., integration_sample_rate - 1, ...]
     # Effectively increase the precision.
     integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
                                                                                # [..., integration_sample_rate - 1, ...]
     
-    # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+    # Prepend 0 to integral_of_all_events because \\int_{t_l}^{t_l}{\\lambda^*(\\tau)d\\tau} = 0
     # We have to check the shape.
     integral_start_from_zero = torch.zeros(
         ( *(integral_of_all_events.shape[:dim]), 1, *(integral_of_all_events.shape[dim + 1:] if dim != -1 else []) ), 
@@ -307,7 +307,7 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
                    [seq_len * resolution, num_events]
     2. y:          function values
                    the number of points from [t_{i - 1}, t_i]
-    3. time:       \Delta t
+    3. time:       \\Delta t
                    the number of event types
     '''
 

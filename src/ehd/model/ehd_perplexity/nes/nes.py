@@ -92,8 +92,8 @@ class NES(nn.Module):
 
     def filter(self, discrete_inputs, continuous_inputs, filter_mask, evaluate = False, pick_essential_events = False):
         '''
-        Now, filter() should provide \mathcal{H}_{s,o,t_l} and \mathcal{H}_{r,o,t_l} when evaluate = True.
-        filter still only provides \mathcal{H}_{r,o,t_l} when evaluate = False.
+        Now, filter() should provide \\mathcal{H}_{s,o,t_l} and \\mathcal{H}_{r,o,t_l} when evaluate = True.
+        filter still only provides \\mathcal{H}_{r,o,t_l} when evaluate = False.
         '''
         '''
         Please be careful: the mean and var should come from the training dataset!

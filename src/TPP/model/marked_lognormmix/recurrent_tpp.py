@@ -139,7 +139,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
 
         this log_p already contains the probability from the last event to proposed end
         These values are removed by masks.
@@ -196,7 +196,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
 
         this log_p already contains the probability from the last event to proposed end
         These values are removed by masks.
@@ -241,7 +241,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
         '''
         expanded_context = self.get_context(features)                          # [batch_size, seq_len + 1, context_size]
         expanded_context = expanded_context.unsqueeze(dim = -2)                # [batch_size, seq_len + 1, 1, context_size]
@@ -291,7 +291,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
         '''
         context = self.get_context(features)                                   # [batch_size, seq_len, mark_embedding_size + 1]
         inter_time_dist = self.get_inter_time_dist(context)
@@ -330,7 +330,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
         '''
         context = self.get_context(features)                                   # [batch_size, seq_len, mark_embedding_size + 1]
         inter_time_dist = self.get_inter_time_dist(context)
@@ -369,7 +369,7 @@ class RecurrentTPP(nn.Module):
         RNN is employed to generate context vector. self.get_inter_time_dist will generate the history embedding,
         metadata and sequence embedding from the context representation. These embeddings are the backbone of the
         distribution.
-        inter_time_dist is the p(\tau | w, \mu, s) defined in Equation 2.
+        inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
 
         this log_p already contains the probability from the last event to proposed end
         These values are removed by masks.

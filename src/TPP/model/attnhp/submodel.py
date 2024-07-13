@@ -378,17 +378,17 @@ class ATTNHP(nn.Module):
         expanded_intensity_value_2 = expanded_intensity_value[..., 1:, :]      # [..., integration_sample_rate - 1, num_events]
         timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
 
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+        # \\int_{a}{b}{f(x)dx} = \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)i}{N - 1}) * \\frac{(b - a)}{N - 1}}
         integral_of_all_events_1 = (expanded_intensity_value_1 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
                                                                                # [..., integration_sample_rate - 1, num_events]
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+        # \\int_{a}{b}{f(x)dx} = \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)(i + 1)}{N - 1}) * \\frac{(b - a)}{N - 1}}
         integral_of_all_events_2 = (expanded_intensity_value_2 * timestamp_for_integral.unsqueeze(dim = -1)).cumsum(dim = -2)
                                                                                # [..., integration_sample_rate - 1, num_events]
         # Effectively increase the precision.
         integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
                                                                                # [..., integration_sample_rate - 1, num_events]
         
-        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+        # Prepend 0 to integral_of_all_events because \\int_{t_l}^{t_l}{\\lambda^*(\\tau)d\\tau} = 0
         # We have to check the shape.
         if len(integral_of_all_events.shape) == 5:
             integral_of_all_events, integral_of_all_events_ps = pack(
@@ -411,17 +411,17 @@ class ATTNHP(nn.Module):
         expanded_probability_value_2 = expanded_probability_value[..., 1:]     # [..., integration_sample_rate - 1]
         timestamp_for_integral = expanded_time.diff(dim = -1)                  # [..., integration_sample_rate - 1]
 
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)i}{N - 1}) * \frac{(b - a)}{N - 1}}
+        # \\int_{a}{b}{f(x)dx} = \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)i}{N - 1}) * \\frac{(b - a)}{N - 1}}
         integral_of_all_events_1 = (expanded_probability_value_1 * timestamp_for_integral).cumsum(dim = -1)
                                                                                # [..., integration_sample_rate - 1]
-        # \int_{a}{b}{f(x)dx} = \sum_{i = 0}^{N - 2}{f(\frac{(b - a)(i + 1)}{N - 1}) * \frac{(b - a)}{N - 1}}
+        # \\int_{a}{b}{f(x)dx} = \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)(i + 1)}{N - 1}) * \\frac{(b - a)}{N - 1}}
         integral_of_all_events_2 = (expanded_probability_value_2 * timestamp_for_integral).cumsum(dim = -1)
                                                                                # [..., integration_sample_rate - 1]
         # Effectively increase the precision.
         integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
                                                                                # [..., integration_sample_rate - 1]
         
-        # Prepend 0 to integral_of_all_events because \int_{t_l}^{t_l}{\lambda^*(\tau)d\tau} = 0
+        # Prepend 0 to integral_of_all_events because \\int_{t_l}^{t_l}{\\lambda^*(\\tau)d\\tau} = 0
         # We have to check the shape.
         integral_of_all_events, integral_of_all_events_ps = pack(
             (torch.zeros(*(integral_of_all_events).shape[:-1], 1, device = self.device), integral_of_all_events), 'b s ne *'

@@ -119,7 +119,7 @@ class THPWrapper(BasicModel):
 
         integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
                                                                                # [batch_size, seq_len, num_events]
-        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.negative_log_likelihood_and_event_loss(
              intensity_all_events = intensity_all_events, integral_all_events = integral_all_events,\
              events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
@@ -127,7 +127,7 @@ class THPWrapper(BasicModel):
 
         loss_survival = 0
         if self.survival_loss_during_training:
-            # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+            # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
             dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
             integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                    # [batch_size, 1]
@@ -170,13 +170,13 @@ class THPWrapper(BasicModel):
         integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
-        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.negative_log_likelihood_and_event_loss(
              intensity_all_events = intensity_all_events_time_next, integral_all_events = integral_all_events_time_next,\
              events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
         )
 
-        # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         integral_survival = integral_all_events_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]

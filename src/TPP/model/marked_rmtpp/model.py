@@ -105,14 +105,14 @@ class MRMTPP(BasicModel):
         check_tensor(integral)
 
         # loss_without_dummy = time_loss_without_dummy + events_loss_without_dummy
-        # time_loss_without_dummy = \sum_{t_i}{\lambda^*(t_i)} + \int_{t_0}^{t_n}{\lambda^*(\tau)d\tau}
-        # event_loss_without_dummy = \sum{x_i}{CrossEntropyLoss(\hat{x_i}, x_i)} for all real-world events.
+        # time_loss_without_dummy = \\sum_{t_i}{\\lambda^*(t_i)} + \\int_{t_0}^{t_n}{\\lambda^*(\\tau)d\\tau}
+        # event_loss_without_dummy = \\sum{x_i}{CrossEntropyLoss(\\hat{x_i}, x_i)} for all real-world events.
         time_loss_without_dummy, events_loss_without_dummy = \
                    self.loss_function(intensity, integral, events_next_without_dummy, mask_next_without_dummy)
         
         probability_survival = 0
         if self.survival_loss_during_training:
-            # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
+            # survival loss: \\int_{t_n}^{T}{\\lambda^*(\\tau)d\\tau}
             dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
             probability_survival = integral.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1).sum()
 
@@ -144,7 +144,7 @@ class MRMTPP(BasicModel):
         # NLL and event loss at time_next.
         time_loss_time_next_without_dummy, events_loss_time_next_without_dummy = \
                    self.loss_function(intensity_time_next, integral_time_next, events_next_without_dummy, mask_next_without_dummy)
-        # survival loss: \int_{t_n}^{T}{\lambda^*(\tau)d\tau}
+        # survival loss: \\int_{t_n}^{T}{\\lambda^*(\\tau)d\\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         time_loss_survival = integral_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1).mean()
 

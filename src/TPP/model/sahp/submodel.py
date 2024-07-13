@@ -19,7 +19,7 @@ class SAHP(nn.Module):
 
         # The original paper makes people believe SAHP is a RMTPP-like model.
         # However, this model in fact decays the hidden embedding so it is akin to CTLSTM.
-        # The following three layers find the \eta_{u, i+1}, \mu_{u, i+1}, and \gamma_{u i+1}
+        # The following three layers find the \\eta_{u, i+1}, \\mu_{u, i+1}, and \\gamma_{u i+1}
         self.gelu = nn.GELU()
 
         self.start_layer = nn.Sequential(

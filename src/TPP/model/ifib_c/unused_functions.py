@@ -10,7 +10,7 @@
                 taus = repeat(taus, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
             taus.requires_grad = True
-            # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+            # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
             probability_integral_from_t_to_infinite = self.model(events_history, time_history, taus, mean = mean, var = var)
                                                                                # [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
     
@@ -77,7 +77,7 @@
                                                                                # [...,batch_size, num_events]
             probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
                                                                                # [..., number_of_sampled_sequences, batch_size, num_events]
-            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            # P_m(t) = \\int_{0}^{t}{p(t|m, \\mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
                                                                                # [number_of_sampled_sequences, batch_size, num_events]
             probability_integral = probability_integral / integral_from_zero_to_inf
@@ -130,7 +130,7 @@
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
                                                                                # [number_of_sampled_sequences, 1, num_events]
-            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            # P_m(t) = \\int_{0}^{t}{p(t|m, \\mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')

@@ -284,7 +284,7 @@ def plot_debug(data, timestamp, opt):
     3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
     4. macro-f1: measure the event prediction performance without time prediction.
     5. top_k: measure the event prediction performance without time prediction.
-    6. probability_sum: the value of \int_{t_l}^{+infty}{p(m, \tau)d\tau}
+    6. probability_sum: the value of \\int_{t_l}^{+infty}{p(m, \\tau)d\\tau}
     7. tau_pred_all_event: The time prediction of all events, with p(m) known.
     8. mae_before_event: as known as MAE.
     9. maes_after_event_avg: contains mae_per_event_with_predict_index_avg and mae_per_event_with_event_next_avg

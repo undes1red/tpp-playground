@@ -142,7 +142,7 @@ class LLMTPPModel(BasicModel):
                                                                                # [batch_size, seq_len]
         events_loss_without_dummy = events_loss_without_dummy.sum()
 
-        # Time loss: -log p(t) = \sum_{i = 1}^{N}{\lambda_{k}(t_i)} + \int_{t_0}^{t_N}{\sum_{k}\lambda_k^(\tau)d\tau}
+        # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
         time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = padded_time_next, mask_next = padded_mask_next_without_dummy)
         time_loss_without_dummy = self.lambda_t * time_loss_without_dummy
         events_loss_without_dummy = self.lambda_e * events_loss_without_dummy
@@ -255,8 +255,8 @@ class LLMTPPModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \(t_s\) from p^*(t) = \sum{n \in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \(\lambda^*(m, t_s)\).
+        1. Sample a time \(t_s\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \(\\lambda^*(m, t_s)\).
         '''
 
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
@@ -303,7 +303,7 @@ class LLMTPPModel(BasicModel):
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
                                                                                # [number_of_sampled_sequences, 1, num_events]
-            # P_m(t) = \int_{0}^{t}{p(t|m, \mathcal{H})}
+            # P_m(t) = \\int_{0}^{t}{p(t|m, \\mathcal{H})}
             probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf_for_sample
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral = reduce(probability_integral, '... ne -> ...', 'sum')

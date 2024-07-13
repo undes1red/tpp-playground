@@ -117,7 +117,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
              integral_all_events = integral_all_events, intensity_all_events = intensity_all_events, \
              events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
@@ -125,7 +125,7 @@ class CTLSTMWrapper(BasicModel):
 
         loss_survival = 0
         if self.survival_loss_during_training:
-            # survival_loss = \int_{t_n}^{T}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+            # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
             dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
             integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
@@ -168,12 +168,12 @@ class CTLSTMWrapper(BasicModel):
             = self.model(time_history, time_next, events_history)              # 2 * [batch_size, seq_len, num_events]
 
         # NLL loss and event loss at time_next
-        # L = \sum_{i}{\lambda^_k*(t_i)} + \int_{t_0}^{t_n}{\sum_{k}{\lambda^*_k(\tau)}d\tau}
+        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.loss_function(
              integral_all_events = integral_all_events_time_next, intensity_all_events = intensity_all_events_time_next, \
              events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
         )
-        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+        # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         integral_survival = integral_all_events_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]

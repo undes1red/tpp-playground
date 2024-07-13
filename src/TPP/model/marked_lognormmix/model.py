@@ -266,7 +266,7 @@ class MarkedLogNormMixWrapper(BasicModel):
     def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, std, return_mean = True):
         '''
         Well...We will do something totally different by performing event-wise MAE.
-        First, predict the event types by \int_{t_i}^{+\infty}{\lambda^*_i(t)\exp(-\int_{t_0}^{\tau}{\lambda^*_i(t)dt})d\tau}
+        First, predict the event types by \\int_{t_i}^{+\\infty}{\\lambda^*_i(t)\\exp(-\\int_{t_0}^{\\tau}{\\lambda^*_i(t)dt})d\\tau}
         Next, given time predictions. (Expectation? or probability bigger than 0.5?)
         '''
         probability_distribution_of_mark = self.model.mark_distribution(input_events, input_time, input_mask, mean, std)

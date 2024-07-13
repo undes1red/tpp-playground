@@ -278,8 +278,8 @@ class EHD(BasicModule):
 
     def filter(self, input_time, input_events, events_embeddings, input_mask, filter_mask, evaluate = False, output_removed_events = False):
         '''
-        Now, filter() should provide \mathcal{H}_{s,o,t_l} and \mathcal{H}_{r,o,t_l} when evaluate = True.
-        filter still only provide \mathcal{H}_{r,o,t_l} when evaluate = False.
+        Now, filter() should provide \\mathcal{H}_{s,o,t_l} and \\mathcal{H}_{r,o,t_l} when evaluate = True.
+        filter still only provide \\mathcal{H}_{r,o,t_l} when evaluate = False.
         '''
         '''
         Please be careful: the mean and var should come from the training dataset!

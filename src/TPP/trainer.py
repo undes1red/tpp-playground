@@ -95,6 +95,11 @@ class TPPTrainer:
         If you want to use another learning rate scheduler, plz modify it in src.optim.
         '''
         self.sched_optimizer = ScheduledOptim(opt, self.model)
+
+        self.model = torch.compile(self.model, \
+                                   options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
+                                   disable = self.opt.compile)
+
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
 
@@ -191,6 +196,9 @@ class TPPTrainer:
 
                 if key == 'Best':
                     log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
+                else:
+                    log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
+ 
                 logger.info(f'Logs of {key} process are stored in {log_filepath}.')
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)

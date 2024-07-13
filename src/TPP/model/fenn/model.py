@@ -12,7 +12,7 @@ from src.TPP.model.fenn.plot import *
 
 class FENNModel(BasicModel):
     '''
-    The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \lambda^*(m, t).
+    The FENN(Fully Event Neural Network), an intuitive solution to computation graph overlap which prevents FullyNN learning \\lambda^*(m, t).
 
     However, as FENN also learns a unnormalized probability distribution, the mark and time prediction performance might not be 
     better than FullyNN.
@@ -132,9 +132,9 @@ class FENNModel(BasicModel):
         
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
+                                The sum of NLL loss: L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}}
+                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}}
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
@@ -182,13 +182,13 @@ class FENNModel(BasicModel):
 
         '''
         Calculate the NLL loss of p^*(m, t) from t_0 to t_{n}
-        L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
+        L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t)
         '''
         time_loss_without_dummy = self.nll_loss(intensity = intensity_for_each_event, events_next = events_next_without_dummy, \
                                                 intensity_integral = integral_for_each_event, mask_next = mask_next_without_dummy)
         loss_survival = 0
         if self.survival_loss_during_training:
-            # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+            # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
             dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
             integral_survival = integral_for_each_event.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
@@ -205,9 +205,9 @@ class FENNModel(BasicModel):
 
         Outputs:
         * time_loss             type: torch.tensor shape: [1]
-                                The sum of NLL loss: L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t) at each happened event.
+                                The sum of NLL loss: L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The sum of the event loss: L = -log \frac{\lambda^*(m, t)}{\sum_{n \in M}{\lambda^*(n, t)}} at each predicted time \(t_p\).
+                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} at each predicted time \(t_p\).
         * mae                   type: torch.tensor shape: [batch_size, seq_len]
                                 Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
         * f1                    type: int shape: N/A
@@ -265,11 +265,11 @@ class FENNModel(BasicModel):
 
         '''
         Calculate the NLL loss of p^*(m, t) from t_0 to t_{n}
-        L = -log \frac{\partial \Lambda^*(m, t)}{\partial t} + \Lambda^*(m, t)
+        L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t)
         '''
         time_loss = self.nll_loss(intensity = intensity_for_each_event_from_tl_to_time_next, events_next = events_next_without_dummy, \
                                   intensity_integral = integral_for_each_event_from_tl_to_time_next, mask_next = mask_next_without_dummy)
-        # Survival probability: \int_{t_N}^{T}{\sum_{k}\lambda_k^(\tau)d\tau}
+        # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         integral_survival = integral_for_each_event_from_tl_to_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
@@ -396,11 +396,11 @@ class FENNModel(BasicModel):
 
         def bisect_target(taus, probability_threshold):
             '''
-            Retrieve the sum of all $ \Lambda^*(m, t) $ over all $ m $ at $ \tau $.
+            Retrieve the sum of all $ \\Lambda^*(m, t) $ over all $ m $ at $ \\tau $.
 
             Outputs:
             * integral    type: torch.tensor shape: [batch_size, seq_len]
-                          $ \sum_{n \in M}{\Lambda^*(n, \tau)} $
+                          $ \\sum_{n \\in M}{\\Lambda^*(n, \\tau)} $
             '''
             taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
             integral = self.model(events_history, time_history, taus, mean, std)
@@ -446,7 +446,7 @@ class FENNModel(BasicModel):
 
         Args:
         * events_history        type: torch.tensor shape: [batch_size, seq_len]
-                                The event history \mathcal{H}_{t_l}. We use these history info and time history for \(\lambda^*(m, t)\) and \(\Lambda^*(m, t)\).
+                                The event history \\mathcal{H}_{t_l}. We use these history info and time history for \(\\lambda^*(m, t)\) and \(\\Lambda^*(m, t)\).
         * time_history          type: torch.tensor shape: [batch_size, seq_len]
 
         * events_next           type: torch.tensor shape: [batch_size, seq_len]
@@ -533,7 +533,7 @@ class FENNModel(BasicModel):
         * mae             type: torch.tensor shape: [batch_size, seq_len]
                           MAE(Mean Absolute Error) between predicted time and ground truth.
         * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
-                          Time predicted by the sum of all intensity functions $ \lambda^*(m, t) $ over $ m $.
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
         '''
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -544,7 +544,7 @@ class FENNModel(BasicModel):
         time_next_inf = torch.ones_like(time_history) * inf_val                # [batch_size, seq_len]
 
         '''
-        Step 1: obtain p^*(m) = \int_{t_l}^{+infty}{p(m, t)\dt}
+        Step 1: obtain p^*(m) = \\int_{t_l}^{+infty}{p(m, t)\\dt}
         '''
         expand_integral_to_inf, expand_intensity_to_inf, time_interval \
                 = self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, std)
@@ -985,13 +985,13 @@ class FENNModel(BasicModel):
         
         if padded_filtered_time_next.requires_grad == False and padded_filtered_time_next.is_leaf == True:
             padded_filtered_time_next.requires_grad = True
-        # \int_{t}^{+\inf}{p(m, \tau|\mathcal{H})d\tau}
+        # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
         padded_filtered_intensity_integral_from_t_o_to_t = self.model(padded_filtered_events_embeddings_history, \
                                                                       padded_filtered_time_history, \
                                                                       padded_filtered_time_next, mean = mean, std = std, \
                                                                       custom_events_history = True)
                                                                                # [batch_size, filtered_seq_len - 1, num_events]
-        # p(m, t|\mathcal{H})
+        # p(m, t|\\mathcal{H})
         intensity_for_each_event = torch.autograd.grad(
             outputs = padded_filtered_intensity_integral_from_t_o_to_t,
             inputs = padded_filtered_time_next,
@@ -1011,7 +1011,7 @@ class FENNModel(BasicModel):
         
         log_probability_x = pick_log_probability(log_probability, the_number_of_events_per_sequence, seq_len_x)
                                                                                # [batch_size, seq_len_x]
-        # -\frac{1}{N} \log p(\mathbf{x}_o|\mathcal{H})
+        # -\\frac{1}{N} \\log p(\\mathbf{x}_o|\\mathcal{H})
         log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
 
         return log_perplexity
