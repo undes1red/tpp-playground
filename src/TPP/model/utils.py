@@ -75,7 +75,7 @@ def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probab
         v = bisect_func(c, probability_threshold, *args, **kwargs)
         l = torch.where(v < 0, c, l)
         r = torch.where(v >= 0, c, r)
-        if (l - r).abs().max() < bisect_early_stop_threshold:
+        if torch.allclose(r, l, rtol = 0, atol = bisect_early_stop_threshold):
             break
     
     return (l + r)/2
@@ -182,6 +182,7 @@ def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceilin
 '''
 Approximate an integral based on its definition.
 dim refers to the dimension index of expanded_func_value where the integration should be performed.
+This implementation is now deprecated and replaced by a wrapper of torch.trapezoid and torch.cumsum_trapezoid() which is much faster.
 '''
 def approximate_integration_old(expanded_func_value, expanded_x, dim, only_integral = False, func_val_x_having_same_shape = False):
     # tensor check
