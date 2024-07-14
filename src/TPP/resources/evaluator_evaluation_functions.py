@@ -172,7 +172,7 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
 
     mean_mae_e = np.mean(flatten(mae_e))
     f1 = np.mean(f1)
-    mean_probability_sum = np.mean(sum_of_pm)
+    mean_probability_sum = np.mean(flatten(sum_of_pm))
 
     '''
     Report the average of mae-e and f1.
