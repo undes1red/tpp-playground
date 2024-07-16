@@ -4,25 +4,24 @@ from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
-from src.TPP.model.thp.plot import *
-from src.TPP.model.thp.submodel import THP
+from src.TPP.model.mhp.plot import *
+from src.TPP.model.mhp.submodel import MHP
 from src.TPP.model.utils import *
-from src.TPP.model.thp.utils import *
+from src.TPP.model.mhp.utils import *
 from src.TPP.utils import pack_one_value_to_dict
 
 
-class THPWrapper(BasicModel):
-    def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
-                 n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, beta = 0, sample_rate = 32,
-                 integration_sample_rate = 100, epsilon = 1e-20, history_time_offset = 1.0, mae_step = 32, mae_e_step = 32,
+class MHPWrapper(BasicModel):
+    def __init__(self, info_dict, device, mode = 'pure_mamba', d_input = 64, d_mamba = 64, n_layers = 3,
+                 dropout = 0.1, beta = 0, kernel_size = 5, expand = 2, sample_rate = 32, 
+                 integration_sample_rate = 100, epsilon = 1e-20, mae_step = 32, mae_e_step = 32,
                  survival_loss_during_training = True):
-        super(THPWrapper, self).__init__()
+        super(MHPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
         self.epsilon = epsilon
-        self.history_time_offset = history_time_offset
         self.survival_loss_during_training = survival_loss_during_training
         self.integration_sample_rate = integration_sample_rate
         self.sample_rate = sample_rate
@@ -30,11 +29,13 @@ class THPWrapper(BasicModel):
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
+        self.mode = mode
+        assert self.mode in ['pure_mamba', 'mamba_block', 'time_mamba']
 
-        self.model = THP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \
-                         n_layers = n_layers, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, \
-                         beta = beta, integration_sample_rate = integration_sample_rate, device = device, \
-                         history_time_offset = history_time_offset)
+        self.model = MHP(num_events = self.num_events, d_input = d_input, d_mamba = d_mamba, \
+                         n_layers = n_layers, dropout = dropout, beta = beta, kernel_size = kernel_size, expand = expand, \
+                         mode = self.mode, \
+                         integration_sample_rate = integration_sample_rate, device = device)
 
 
     def divide_history_and_next(self, input):
@@ -117,7 +118,7 @@ class THPWrapper(BasicModel):
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
+        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mean, std)
                                                                                # [batch_size, seq_len, num_events]
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.negative_log_likelihood_and_event_loss(
@@ -167,7 +168,7 @@ class THPWrapper(BasicModel):
                                                        mask_history, mask_next_without_dummy, mean, std)
         mae = mae.sum().item() / the_number_of_events
 
-        integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mask_history)
+        integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mean, std)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
@@ -250,7 +251,7 @@ class THPWrapper(BasicModel):
 
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution)
+                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, mean, std)
                                                                                # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
@@ -298,7 +299,7 @@ class THPWrapper(BasicModel):
             '''
             MTPP loss function
             '''
-            integral_all_events, _ = self.model(time_history, taus, events_history, mask_history)
+            integral_all_events, _ = self.model(time_history, taus, events_history, mean, std)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             gap = integral_all_events.sum(dim = -1) + torch.log(1 - probability_threshold)
                                                                                # [sample_rate, batch_size, seq_len]
@@ -338,13 +339,13 @@ class THPWrapper(BasicModel):
         maximum_thinning_loops = 500
         max_sample_time_limit = mean + 10 * std
 
-        def get_intensity(tau, time_history, events_history, mask_history):
-            return self.model(time_history, tau, events_history, mask_history)[-1].sum(dim = -1)
+        def get_intensity(tau, time_history, events_history, mean, std):
+            return self.model(time_history, tau, events_history, mean, std)[-1].sum(dim = -1)
         
-        def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history, mask_history):
-            intensity_values_at_left_side = get_intensity(interval_left, time_history, events_history, mask_history)
+        def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history, mean, std):
+            intensity_values_at_left_side = get_intensity(interval_left, time_history, events_history, mean, std)
                                                                                # [sample_rate, batch_size, seq_len]
-            intensity_values_at_right_side = get_intensity(interval_right, time_history, events_history, mask_history)
+            intensity_values_at_right_side = get_intensity(interval_right, time_history, events_history, mean, std)
                                                                                # [sample_rate, batch_size, seq_len]        
             intensity_values_at_t_l_higher = (intensity_values_at_left_side > intensity_values_at_right_side).int()
                                                                                # [sample_rate, batch_size, seq_len]
@@ -356,7 +357,7 @@ class THPWrapper(BasicModel):
         sampled_time = []
         for each_step in sample_rate_list:
             sampled_time.append(thinning_sampling(maximum_thinning_loops, max_sample_time_limit, (each_step, batch_size, seq_len), self.device, \
-                                                  get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history, mask_history))
+                                                  get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history, mean, std))
                                                                                # [sample_rate, batch_size, seq_len]
         
         sampled_time = torch.cat(sampled_time, dim = 0)
@@ -387,7 +388,7 @@ class THPWrapper(BasicModel):
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(time_next - pred_time) * mask_next                     # [batch_size, seq_len]
         
-        _, intensity_all_events_pred = self.model(time_history, pred_time, events_history, mask_history)
+        _, intensity_all_events_pred = self.model(time_history, pred_time, events_history, mean, std)
                                                                                # 2 * [batch_size, seq_len, num_events]
         f1_pred = self.evaluate_f1(intensity_all_events_pred, events_next, mask_next)
         
@@ -405,7 +406,7 @@ class THPWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, std)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -521,7 +522,7 @@ class THPWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -553,8 +554,6 @@ class THPWrapper(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -563,7 +562,7 @@ class THPWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -594,8 +593,6 @@ class THPWrapper(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -604,7 +601,7 @@ class THPWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -635,8 +632,6 @@ class THPWrapper(BasicModel):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -648,7 +643,7 @@ class THPWrapper(BasicModel):
                                                     time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next,
-                                                          mask_history, mask_next, opt.resolution)
+                                                          mask_next, opt.resolution, mean, std)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
 
@@ -684,7 +679,7 @@ class THPWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
 
@@ -773,7 +768,7 @@ class THPWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, std)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -800,6 +795,7 @@ class THPWrapper(BasicModel):
         return maes, f1
 
 
+    @torch.no_grad()
     def samples_from_et(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -819,7 +815,7 @@ class THPWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, std)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
