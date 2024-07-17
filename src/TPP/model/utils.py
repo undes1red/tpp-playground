@@ -247,7 +247,7 @@ def approximate_integration(expanded_func_value, expanded_x, dim, only_integral 
         the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
         einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
         expanded_x = rearrange(expanded_x, einop)                              # [..., integration_sample_rate - 1, ...]
-
+    
     if only_integral:
         integral_of_all_events = torch.trapezoid(y = expanded_func_value, x = expanded_x, dim = dim)
                                                                                # [...]

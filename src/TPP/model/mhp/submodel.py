@@ -138,18 +138,51 @@ class MHP(nn.Module):
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate, mean, std):
         assert len(time_next.shape) == 2, "Wrong input time tensor shape."
 
-        output_state = self.mamba_encoder(events_history, time_history, mean, std)
+        if self.mode == 'pure_mamba':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            input_vecs = events_vec + time_embedding                           # [batch_size, seq_len, d_input]
+    
+            for mamba_layer in self.mamba_encoder:
+                output_state = mamba_layer(input_vecs)                         # [batch_size, seq_len, d_input]
+                output_state = self.dropout(output_state)                      # [batch_size, seq_len, d_input]
+        elif self.mode == 'mamba_block':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            output_state = events_vec + time_embedding                         # [batch_size, seq_len, d_input]
+
+            residual = None
+            for layer in self.mamba_encoder:
+                output_state, residual = layer(output_state, residual)         # [batch_size, seq_len, d_input]
+            # Set prenorm = False here since we don't need the residual
+            output_state = layer_norm_fn(
+                output_state,
+                self.norm_f.weight,
+                self.norm_f.bias,
+                eps = self.norm_f.eps,
+                residual = residual,
+                prenorm = False,
+                residual_in_fp32 = False,
+                is_rms_norm = isinstance(self.norm_f, RMSNorm)
+            )                                                                  # [batch_size, seq_len, d_input]
+        else:
+            output_state = self.mamba_encoder(events_history, time_history, mean, std)
                                                                                # [batch_size, seq_len, d_input]
         output_state = repeat(output_state, 'b s di -> b s 1 di')              # [batch_size, seq_len, 1, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
+        original_expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier
+                                                                               # [batch_size, seq_len, integration_sample_rate]
 
-        expanded_time = expanded_time.unsqueeze(dim = -1)     # [batch_size, seq_len, integration_sample_rate, 1]
+        expanded_time = original_expanded_time.unsqueeze(dim = -1)             # [batch_size, seq_len, integration_sample_rate, 1]
         expanded_intensity_all_events = softplus_ext(self.linear(output_state) + self.alpha * expanded_time, beta = F.softplus(self.beta))
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
         expanded_integral_all_events \
-            = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
+            = approximate_integration(expanded_intensity_all_events, original_expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
 
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
@@ -157,7 +190,39 @@ class MHP(nn.Module):
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate, mean, std):
         assert len(time_next.shape) == 3, "Wrong input time tensor shape."
-        output_state = self.mamba_encoder(events_history, time_history, mean, std)
+        if self.mode == 'pure_mamba':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            input_vecs = events_vec + time_embedding                           # [batch_size, seq_len, d_input]
+    
+            for mamba_layer in self.mamba_encoder:
+                output_state = mamba_layer(input_vecs)                         # [batch_size, seq_len, d_input]
+                output_state = self.dropout(output_state)                      # [batch_size, seq_len, d_input]
+        elif self.mode == 'mamba_block':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            output_state = events_vec + time_embedding                         # [batch_size, seq_len, d_input]
+
+            residual = None
+            for layer in self.mamba_encoder:
+                output_state, residual = layer(output_state, residual)         # [batch_size, seq_len, d_input]
+            # Set prenorm = False here since we don't need the residual
+            output_state = layer_norm_fn(
+                output_state,
+                self.norm_f.weight,
+                self.norm_f.bias,
+                eps = self.norm_f.eps,
+                residual = residual,
+                prenorm = False,
+                residual_in_fp32 = False,
+                is_rms_norm = isinstance(self.norm_f, RMSNorm)
+            )                                                                  # [batch_size, seq_len, d_input]
+        else:
+            output_state = self.mamba_encoder(events_history, time_history, mean, std)
                                                                                # [batch_size, seq_len, d_input]
         # Intensity and integral estimation
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
@@ -182,7 +247,39 @@ class MHP(nn.Module):
     
 
     def model_probe_function(self, events_history, time_history, time_next, mask_next, integration_sample_rate, mean, std):
-        output_state = self.mamba_encoder(events_history, time_history, mean, std)
+        if self.mode == 'pure_mamba':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            input_vecs = events_vec + time_embedding                           # [batch_size, seq_len, d_input]
+    
+            for mamba_layer in self.mamba_encoder:
+                output_state = mamba_layer(input_vecs)                         # [batch_size, seq_len, d_input]
+                output_state = self.dropout(output_state)                      # [batch_size, seq_len, d_input]
+        elif self.mode == 'mamba_block':
+            events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]
+            time_history = (time_history - mean) / std
+            time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
+                                                                               # [batch_size, seq_len, d_input]
+            output_state = events_vec + time_embedding                         # [batch_size, seq_len, d_input]
+
+            residual = None
+            for layer in self.mamba_encoder:
+                output_state, residual = layer(output_state, residual)         # [batch_size, seq_len, d_input]
+            # Set prenorm = False here since we don't need the residual
+            output_state = layer_norm_fn(
+                output_state,
+                self.norm_f.weight,
+                self.norm_f.bias,
+                eps = self.norm_f.eps,
+                residual = residual,
+                prenorm = False,
+                residual_in_fp32 = False,
+                is_rms_norm = isinstance(self.norm_f, RMSNorm)
+            )                                                                  # [batch_size, seq_len, d_input]
+        else:
+            output_state = self.mamba_encoder(events_history, time_history, mean, std)
                                                                                # [batch_size, seq_len, d_input]
         output_state = repeat(output_state, 'b s di -> b s 1 di')              # [batch_size, seq_len, 1, d_input]
 
