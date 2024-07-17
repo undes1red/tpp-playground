@@ -185,7 +185,7 @@ class MHP(nn.Module):
             = approximate_integration(expanded_intensity_all_events, original_expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
 
-        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
+        return expanded_integral_all_events, expanded_intensity_all_events, original_expanded_time
         
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate, mean, std):
