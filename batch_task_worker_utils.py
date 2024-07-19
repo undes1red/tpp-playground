@@ -1,5 +1,16 @@
-import itertools, math
+import itertools, math, subprocess, time, os
+from src.taskhost import get_logger
 
+
+logger = get_logger(__name__)
+
+monitor_frequency = 10
+def monitor_and_automatic_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir):        
+    if use_gpu:
+        return monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
+    else:
+        return monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
+    
 
 def extract_single_multiple_arguments_from_the_list(hyperparameter_list):
     single_parameters = {}
@@ -193,3 +204,114 @@ def task_generator_worker(hyperparameter_list, iterate_style):
                     )
         
     return generated_hyperparameter_list, len(generated_hyperparameter_list)
+
+
+def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir):
+    number_of_tasks = len(tasks)
+
+    def run_task(task, task_id):
+        task_list = task.split(' ')
+
+        # Replace this command with your actual task command
+        logger.warning(f'----> Task {task_id}/{number_of_tasks} started. <----')
+        logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
+        f_log = open(os.path.join(stdout_dir, f'stdout_log_{task_id}.txt'), 'w')
+        process = subprocess.Popen(task_list, stdout = f_log, stderr = f_log, universal_newlines = True)
+
+        return process, f_log
+
+    task_id = 1
+    running_tasks = []
+    number_of_running_tasks = 0
+    completed_tasks = set()
+    all_task_executed = False
+    failed_tasks = {}
+
+    while True:
+        if task_id > number_of_tasks:
+            all_task_executed = True
+
+        if number_of_running_tasks < num_task_parallel and not all_task_executed:
+            process, log_file = run_task(tasks[task_id - 1], task_id)
+            running_tasks.append({'task_id': task_id, 'process': process, 'stdout': log_file})
+            task_id += 1
+            number_of_running_tasks += 1
+
+        # Check if one task has finished. If so, do some housekeeping 
+        # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
+        for task in running_tasks:
+            if task["task_id"] not in completed_tasks and task['process'].poll() is not None:
+                if task['process'].poll() != 0:
+                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
+                    failed_tasks[task["task_id"]] = tasks[task["task_id"] - 1]
+                else:
+                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
+                
+                completed_tasks.add(task['task_id'])
+                task['stdout'].close()
+                number_of_running_tasks -= 1
+        
+        # If the task id is bigger than the the number of tasks, quit the loop.
+        if all_task_executed and len(completed_tasks) == number_of_tasks:
+            break
+
+        time.sleep(1/monitor_frequency)
+
+    return failed_tasks
+
+
+def monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir):        
+    gpu_pool = set(available_gpus)
+    number_of_gpus = len(gpu_pool)
+    number_of_tasks = len(tasks)
+
+    def run_task(task, task_id, gpu_id):
+        task_list = task.split(' ') + ['--cuda', '--cuda_device', f'{gpu_id}']
+
+        logger.warning(f'----> Task {task_id}/{number_of_tasks} started. <----')
+        logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
+        f_log = open(os.path.join(stdout_dir, f'stdout_log_{task_id}.txt'), 'w')
+        process = subprocess.Popen(task_list, stdout = f_log, stderr = f_log, universal_newlines = True)
+
+        return process, f_log
+
+    task_id = 1
+    running_tasks = {}
+    number_of_running_tasks = 0
+    all_task_executed = False
+    completed_tasks = set()
+    failed_tasks = {}
+
+    while True:
+        if task_id > number_of_tasks:
+            all_task_executed = True
+
+        if len(gpu_pool) != 0 and number_of_running_tasks < num_task_parallel and not all_task_executed:
+            available_gpu = gpu_pool.pop()
+            process, log_file = run_task(tasks[task_id - 1], task_id, available_gpu)
+            running_tasks[available_gpu] = {'task_id': task_id, 'process': process, 'stdout': log_file}
+            task_id += 1
+            number_of_running_tasks += 1
+
+        # Check if one task has finished. If so, do some housekeeping 
+        # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
+        for gpu_id, task in running_tasks.items():
+            if task["task_id"] not in completed_tasks and task['process'].poll() is not None:
+                if task['process'].poll() != 0:
+                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
+                    failed_tasks[task["task_id"]] = tasks[task["task_id"] - 1]
+                else:
+                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
+                
+                completed_tasks.add(task["task_id"])
+                task['stdout'].close()
+                gpu_pool.add(gpu_id)
+                number_of_running_tasks -= 1
+        
+        # If all GPUs are free again and the task id is bigger than the the number of tasks, quit the loop.
+        if len(gpu_pool) == number_of_gpus and all_task_executed:
+            break
+
+        time.sleep(1/monitor_frequency)
+    
+    return failed_tasks

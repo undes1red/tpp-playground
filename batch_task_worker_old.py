@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import subprocess, os, argparse, importlib
-from batch_task_worker_utils import task_generator_worker, remove_empty_str, monitor_and_automatic_run_tasks
+from batch_task_worker_utils import task_generator_worker, remove_empty_str
 from src.taskhost import get_logger
 
 
@@ -19,32 +19,15 @@ parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate',
                                              last_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_last_failed_tasks.txt and execute these tasks one by one.')
 parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
                                      help = 'You need this argument to select the proper parameter set.')
-parser.add_argument('--GPU', nargs='+', default = None, help='How many GPU you want to use? Set it to a positive number to use all GPUs, \
-                                                              or set it to a negative number or None to go CPU-only.')
+parser.add_argument('--GPU', type = int, default = None, help='How many GPU you want to use? Set it to a positive number to use all GPUs, \
+                                                               or set it to a negative number or None to go CPU-only.')
 parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
 parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
-parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The number of tasks we should run in parallel. In GPU mode this number should not bigger than the number of available GPUs. This argument is useful when executing tasks on CPU.')
 
-# Preprocess
 opt = parser.parse_args()
 use_gpu = False
-if opt.GPU is not None:
-    gpu_pool = [int(gpu_id) for gpu_id in opt.GPU]
-    if len([gpu_id for gpu_id in gpu_pool if gpu_id < 0]) == 0:
-        assert opt.num_task_parallel <= len(gpu_pool)
-        use_gpu = True
-        if opt.num_task_parallel == -1:
-            opt.num_task_parallel = len(gpu_pool)
-
-if not use_gpu:
-    gpu_pool = []
-
-
-# stdout dir
-# where we store printed logs of each task.
-stdout_dir = os.path.join(root_path, 'stdout', opt.procedure_name, opt.script_type, opt.dataset, opt.model)
-if not os.path.exists(stdout_dir):
-    os.makedirs(stdout_dir)
+if opt.GPU is not None and opt.GPU >= 0:
+    use_gpu = True
 
 
 def task_generator(hyperparameter_list):
@@ -102,11 +85,32 @@ else:
     generated_hyperparameter_list, the_number_of_task = task_generator(parameter_retriver(opt))
     for hp_list in generated_hyperparameter_list:
         # Assemble the command list into a string.
+        if use_gpu:
+            hp_list.append('--cuda')
+            hp_list.extend(['--cuda_device', f'{opt.GPU}'])
         task = ['python3'] + hp_list
-        generated_tasks.append(' '.join(task))
+        task_string = " ".join(task)
+        generated_tasks.append(task_string)
 
+'''
+run all planned tasks via a loop.
+'''
+task_count = 0
+failed_tasks = {}
+for task in generated_tasks:
+    task = task.rstrip()
+    task_count += 1
 
-failed_tasks = monitor_and_automatic_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir)
+    logger.warning(f'----> Task {task_count}/{the_number_of_task} started. <----')
+    logger.info(f'Command of task {task_count}/{the_number_of_task}: {task}')
+
+    # Create and run the task.
+    try:
+        subprocess.run(task, shell = True, check = True, stderr = subprocess.PIPE)
+        logger.warning(f'----> Task {task_count}/{the_number_of_task} completed. <----')
+    except subprocess.CalledProcessError as e:
+        failed_tasks[task_count] = e
+        logger.warning(f'----> Task {task_count}/{the_number_of_task} Failed!. <----')
 
 # Report the execution sumamry:
 logger.warning('==========================================')
@@ -116,11 +120,13 @@ failed_commands = []
 if len(failed_tasks) == 0:
     logger.info(f'All {the_number_of_task} tasks have successfully completed.')
 else:
-    logger.warning(f'{len(failed_tasks)} tasks have failed. Please check what is wrong according to logs in directory stdout/ and fix them!')
-    for index, command in failed_tasks.items():
+    logger.warning(f'{len(failed_tasks)} tasks have failed. Please check what is wrong and fix them!')
+    for index, error_info in failed_tasks.items():
         logger.warning(f'----> Task {index} has failed. <----')
-        logger.warning(f'Task Command: {command}.')
-        failed_commands.append(command + '\n')
+        logger.warning(f'Return Code: {error_info.returncode}.')
+        logger.warning(f'Task Command: {error_info.cmd}.')
+        logger.warning(f'Exception: {error_info.stderr.decode("UTF-8")}.')
+        failed_commands.append(error_info.cmd + '\n')
 
 '''
 Only in last_failed_tasks mode we can rewrite the last_failed_tasks.txt.

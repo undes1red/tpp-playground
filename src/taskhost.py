@@ -1,4 +1,4 @@
-import sys, torch, importlib, random, os
+import sys, torch, importlib, random, os, time
 import numpy as np
 
 from src.taskhost_utils import get_logger, version_check
@@ -24,6 +24,7 @@ class TaskHost:
 
         self.procedure = importlib.import_module('src.' + self.opt.procedure)
         self.opt = getattr(self.procedure, f'{self.opt.task_category}_postprocess')(self.opt, self.root_path)
+        time.sleep(self.opt.sleep)
         self.pytorch_warning_dict = getattr(self.procedure, 'pytorch_version_warnings')
     
 

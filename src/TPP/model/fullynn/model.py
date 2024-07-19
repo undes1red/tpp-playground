@@ -226,9 +226,7 @@ class FullyNNModel(BasicModel):
                                                                                # 2 * [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_events
 
-        pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
         time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
-
         '''
         preparing for multi-event training when needed
 

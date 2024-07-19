@@ -122,6 +122,7 @@ wandb/
 deprecated/
 *.pkl
 archive/
+stdout/
 
 # The test scripts
 scripts*/
