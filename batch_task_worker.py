@@ -12,18 +12,20 @@ logger.info(f'project root is {root_path}.')
 logger.info(f'Please ensure the root_path is correct!')
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate', 'last_failed_tasks'], default = 'train',\
+parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate', 'previous_failed_tasks'], default = 'train',\
                                      help = 'Use this argument to select worker mode.\n \
                                              train: training mode. Execute training tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              evaluate: evaluation mode. Execute Evaluation tasks defined in parameter_set/{procedure_name} one by one.\n \
-                                             last_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_last_failed_tasks.txt and execute these tasks one by one.')
+                                             previous_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_previous_failed_tasks.txt and execute these tasks one by one.')
 parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
-                                     help = 'You need this argument to select the proper parameter set.')
-parser.add_argument('--GPU', nargs='+', default = None, help='How many GPU you want to use? Set it to a positive number to use all GPUs, \
+                                        help = 'You need this argument to select the proper parameter set.')
+parser.add_argument('--GPU', nargs='+', default = None, help='How many GPU you want to use? Tell us the ID of available GPUs, \
                                                               or set it to a negative number or None to go CPU-only.')
-parser.add_argument('--dataset', type = str, help = 'The dataset name to select correct parameter collection from the parameter dict.')
-parser.add_argument('--model', type = str, help = 'The model name to select correct parameter collection from the parameter dict.')
-parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The number of tasks we should run in parallel. In GPU mode this number should not bigger than the number of available GPUs. This argument is useful when executing tasks on CPU.')
+parser.add_argument('--dataset', type = str, help = 'We use this dataset name to select correct parameter collection from the parameter dict.')
+parser.add_argument('--model', type = str, help = 'We use this model name to select correct parameter collection from the parameter dict.')
+parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The number of tasks we should run in parallel. In GPU mode this number should not bigger than the number of available GPUs. \
+                                                                             The default value, -1, will automatically use all GPUs, one GPU for one task. \
+                                                                             This argument is mandatory when executing tasks on CPU.')
 
 # Preprocess
 opt = parser.parse_args()
@@ -88,16 +90,16 @@ def task_generator(hyperparameter_list):
 
 generated_tasks = []
 the_number_of_task = 0
-if opt.script_type == 'last_failed_tasks':
-    logger.info(f'We are in last_failed_tasks mode. We will read in and rerun failed commands recorded in {opt.model}_last_failed_tasks.txt.')
+if opt.script_type == 'previous_failed_tasks':
+    logger.info(f'We are in previous_failed_tasks mode. We will read in and rerun failed commands recorded in {opt.model}_previous_failed_tasks.txt.')
     try:
-        f_last_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_last_failed_tasks.txt'), 'r')
+        f_previous_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'r')
     except FileNotFoundError as e:
-        logger.exception(f"File {os.path.join('parameter_set', opt.procedure_name, f'{opt.model}_last_failed_tasks.txt')} not found!")
+        logger.exception(f"File {os.path.join('parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt')} not found!")
     except Exception as e:
         raise e
     
-    generated_tasks = f_last_failed_tasks.readlines()
+    generated_tasks = f_previous_failed_tasks.readlines()
     the_number_of_task = len(generated_tasks)
 else:
     parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
@@ -126,10 +128,10 @@ else:
         failed_commands.append(command + '\n')
 
 '''
-Only in last_failed_tasks mode we can rewrite the last_failed_tasks.txt.
+Only in previous_failed_tasks mode we can rewrite the previous_failed_tasks.txt.
 By this we can avoid missing failed tasks in the previous task sets if the execution script calls batch_task_worker.py multiple times.
 '''
-f_last_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_last_failed_tasks.txt'), \
-                          'w' if opt.script_type == 'last_failed_tasks' else 'a')
-f_last_failed_tasks.writelines(failed_commands)
-f_last_failed_tasks.close()
+f_previous_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), \
+                          'w' if opt.script_type == 'previous_failed_tasks' else 'a')
+f_previous_failed_tasks.writelines(failed_commands)
+f_previous_failed_tasks.close()

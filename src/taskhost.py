@@ -64,6 +64,12 @@ class TaskHost:
         torch.backends.cudnn.benchmark = False
 
         '''
+        Limit the number of executing thread when running code on CPU.
+        '''
+        if not self.opt.cuda:
+            torch.set_num_threads(14)
+
+        '''
         Please read documentations and check if you have used any operations which don't have a deterministic implementation before
         set it to True.
         '''
@@ -123,7 +129,6 @@ class TaskHost:
         '''
         logger.debug(f'Root path: {self.root_path}.')
         logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
-        self.global_pytorch_settings()
         
         '''
         Show and check PyTorch version.
@@ -131,6 +136,7 @@ class TaskHost:
         logger.info(f'PyTorch Version: {torch.__version__}.')
         self.pytorch_warning(torch.__version__)
         self.cuda()
+        self.global_pytorch_settings()
 
         '''
         start the task.
