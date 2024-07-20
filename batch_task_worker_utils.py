@@ -179,10 +179,10 @@ def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
 
         if number_of_running_tasks < num_task_parallel and not all_task_executed:
             command = tasks[task_id - 1]
+            process, log_file = run_task(command, task_id)
             running_tasks.append({'task_id': task_id, 'command': command, 'process': process, 'stdout': log_file})
             task_id += 1
             number_of_running_tasks += 1
-            process, log_file = run_task(command, task_id)
 
         # Check if one task has finished. If so, do some housekeeping 
         # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
@@ -236,9 +236,9 @@ def monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_paral
             available_gpu = gpu_pool.pop()
             ticket = ticket_pool.pop()
             command = tasks[unique_task_id - 1]
+            process, log_file = run_task(command, unique_task_id, available_gpu)
             running_tasks[ticket] = {'task_id': unique_task_id, 'gpu_id': available_gpu, 'command': command, 'process': process, 'stdout': log_file}
             unique_task_id += 1
-            process, log_file = run_task(command, unique_task_id, available_gpu)
 
         # Check if one task has finished. If so, get the result and do some housekeeping 
         # Add the allocated gpu_id and ticket back to the gpu_pool and ticket pool, saying we can start a new task if the GPU resources are sufficient.
