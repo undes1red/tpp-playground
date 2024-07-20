@@ -178,10 +178,11 @@ def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
             all_task_executed = True
 
         if number_of_running_tasks < num_task_parallel and not all_task_executed:
-            process, log_file = run_task(tasks[task_id - 1], task_id)
-            running_tasks.append({'task_id': task_id, 'process': process, 'stdout': log_file})
+            command = tasks[task_id - 1]
+            running_tasks.append({'task_id': task_id, 'command': command, 'process': process, 'stdout': log_file})
             task_id += 1
             number_of_running_tasks += 1
+            process, log_file = run_task(command, task_id)
 
         # Check if one task has finished. If so, do some housekeeping 
         # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
@@ -189,7 +190,7 @@ def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
             if task["task_id"] not in completed_tasks and task['process'].poll() is not None:
                 if task['process'].poll() != 0:
                     logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
-                    failed_tasks[task["task_id"]] = tasks[task["task_id"] - 1]
+                    failed_tasks[task["task_id"]] = task["command"]
                 else:
                     logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
                 
@@ -208,6 +209,7 @@ def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
 
 def monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir):        
     gpu_pool = set(available_gpus)
+    ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
     number_of_tasks = len(tasks)
 
@@ -221,39 +223,38 @@ def monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_paral
 
         return process, f_log
 
-    task_id = 1
+    unique_task_id = 1
     running_tasks = {}
-    number_of_running_tasks = 0
     all_task_executed = False
-    completed_tasks = set()
     failed_tasks = {}
 
     while True:
-        if task_id > number_of_tasks:
+        if unique_task_id > number_of_tasks:
             all_task_executed = True
 
-        if len(gpu_pool) != 0 and number_of_running_tasks < num_task_parallel and not all_task_executed:
+        if len(gpu_pool) != 0 and len(ticket_pool) != 0 and not all_task_executed:
             available_gpu = gpu_pool.pop()
-            process, log_file = run_task(tasks[task_id - 1], task_id, available_gpu)
-            running_tasks[available_gpu] = {'task_id': task_id, 'process': process, 'stdout': log_file}
-            task_id += 1
-            number_of_running_tasks += 1
+            ticket = ticket_pool.pop()
+            command = tasks[unique_task_id - 1]
+            running_tasks[ticket] = {'task_id': unique_task_id, 'gpu_id': available_gpu, 'command': command, 'process': process, 'stdout': log_file}
+            unique_task_id += 1
+            process, log_file = run_task(command, unique_task_id, available_gpu)
 
-        # Check if one task has finished. If so, do some housekeeping 
-        # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
-        for gpu_id, task in running_tasks.items():
-            if task["task_id"] not in completed_tasks and task['process'].poll() is not None:
+        # Check if one task has finished. If so, get the result and do some housekeeping 
+        # Add the allocated gpu_id and ticket back to the gpu_pool and ticket pool, saying we can start a new task if the GPU resources are sufficient.
+        for ticket, task in running_tasks.items():
+            if task != {} and task['process'].poll() is not None:
                 if task['process'].poll() != 0:
                     logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
-                    failed_tasks[task["task_id"]] = tasks[task["task_id"] - 1]
+                    failed_tasks[task["task_id"]] = task['command']
                 else:
                     logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
                 
-                completed_tasks.add(task["task_id"])
                 task['stdout'].close()
-                gpu_pool.add(gpu_id)
-                number_of_running_tasks -= 1
-        
+                gpu_pool.add(task["gpu_id"])
+                ticket_pool.add(ticket)
+                running_tasks[ticket] = {}
+                
         # If all GPUs are free again and the task id is bigger than the the number of tasks, quit the loop.
         if len(gpu_pool) == number_of_gpus and all_task_executed:
             break
