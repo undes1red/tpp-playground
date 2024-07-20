@@ -1,8 +1,9 @@
-import itertools, math, subprocess, time, os
+import copy, math, subprocess, time, os
 from src.taskhost import get_logger
 
 
 logger = get_logger(__name__)
+
 
 monitor_frequency = 10
 def monitor_and_automatic_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir):        
@@ -10,200 +11,145 @@ def monitor_and_automatic_run_tasks(tasks, use_gpu, available_gpus, num_task_par
         return monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
     else:
         return monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
-    
-
-def extract_single_multiple_arguments_from_the_list(hyperparameter_list):
-    single_parameters = {}
-    multiple_parameters = {}
-
-    last_parameter = ''
-    for items in hyperparameter_list:
-        if last_parameter == '':
-            '''
-            new arguments:
-            '''
-            last_parameter = items
-        elif last_parameter.startswith('-') and type(items) == list:
-            '''
-            arguments with multiple choices
-            '''
-            multiple_parameters[last_parameter] = items
-            last_parameter = ''
-        elif last_parameter.startswith('-') and items.startswith('--'):
-            '''
-            store_true arguments
-            '''
-            single_parameters[last_parameter] = ''
-            last_parameter = items
-        elif last_parameter.startswith('-') and not items.startswith('--'):
-            '''
-            arguments with single choice
-            '''
-            single_parameters[last_parameter] = items
-            last_parameter = ''
-    if last_parameter != '':
-        single_parameters[last_parameter] = ''
-
-    return single_parameters, multiple_parameters
-
-
-def task_index_generator(hyperparameter_list):
-    if hyperparameter_list is None:
-        return [[''],]
-
-    # head = os.path.join(root_path, hyperparameter_list[0])
-    single_parameters, multiple_parameters = extract_single_multiple_arguments_from_the_list(hyperparameter_list)
-
-    # Now, map all fixed argument into a list.
-    # fixed_arguments_part = [head] + [opt.procedure_name + '_' + opt.script_type] \
-    fixed_arguments_part = list(itertools.chain.from_iterable(single_parameters.items()))
-    
-    count_of_each_multiple_hp = len(multiple_parameters)
-
-    if count_of_each_multiple_hp == 0:
-        '''
-        No multi_hps, just return the fixed parameter set.
-        '''
-        return [fixed_arguments_part]
-    
-    '''
-    Affirm that all hyperparameter lists have the same length.
-    '''
-    number_of_parameters = len(list(multiple_parameters.values())[0])
-    for hyperparameter in multiple_parameters.values():
-        assert len(hyperparameter) == number_of_parameters, "Index mode requires all parameter list must have the same length!"
-
-    # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
-    # generation loop.
-    final_hyperparameter_list = []
-    for index in range(number_of_parameters):
-        choosed_value = {key: item[index] for (key, item) in multiple_parameters.items()}
-        choosed_value_to_list = list(itertools.chain.from_iterable(choosed_value.items()))
-        final_list = fixed_arguments_part + choosed_value_to_list
-        final_hyperparameter_list.append(final_list)
-        
-    return final_hyperparameter_list
-        
-
-def task_counting_generator(hyperparameter_list):
-    if hyperparameter_list is None:
-        return [[''],]
-
-    # head = os.path.join(root_path, hyperparameter_list[0])
-    single_parameters, multiple_parameters = extract_single_multiple_arguments_from_the_list(hyperparameter_list)
-    
-    # Now, map all fixed argument into a list.
-    # fixed_arguments_part = [head] + [opt.procedure_name + '_' + opt.script_type] \
-    fixed_arguments_part = list(itertools.chain.from_iterable(single_parameters.items()))
-
-    # set iterators, the first iterator is always the single directed iterator. We use it to decide when we quit the argument
-    # generation loop.
-    multi_hp_count = len(multiple_parameters.values())
-    count_of_each_multiple_hp = [len(item) for item in multiple_parameters.values()]
-    current_index_of_each_list = [0] * multi_hp_count
-    the_number_of_task = math.prod(count_of_each_multiple_hp)
-
-    if count_of_each_multiple_hp == []:
-        # No multiple hp is present.
-        return [fixed_arguments_part]
-    else:
-        final_hyperparameter_list = []
-        for _ in range(the_number_of_task):
-            choosed_value = {key: item[index] for (key, item), index in zip(multiple_parameters.items(), current_index_of_each_list)}
-            choosed_value_to_list = list(itertools.chain.from_iterable(choosed_value.items()))
-            final_list = fixed_arguments_part + choosed_value_to_list
-            final_hyperparameter_list.append(final_list)
-
-            current_index_of_each_list[-1] += 1
-            add_mark = False
-            for idx, (current_index, max_unreachable_index) in enumerate(zip(current_index_of_each_list[::-1], count_of_each_multiple_hp[::-1])):
-                if add_mark:
-                    current_index_of_each_list[multi_hp_count - idx - 1] += 1
-                    if current_index_of_each_list[multi_hp_count - idx - 1]  >= max_unreachable_index:
-                        current_index_of_each_list[multi_hp_count - idx - 1] = 0
-                        add_mark = True
-                    else:
-                        add_mark = False
-                if current_index >= max_unreachable_index:
-                    current_index_of_each_list[multi_hp_count - idx - 1] = 0
-                    add_mark = True
-        
-        return final_hyperparameter_list
-
-
-def remove_empty_str(x):
-    try:
-        while 1:
-            x.remove('')
-    except:
-        return x
-
-
-hyperparameter_parser = {
-    'index': task_index_generator,
-    'counting': task_counting_generator
-}
 
 
 def task_generator_worker(hyperparameter_list, iterate_style):
     '''
     [
         (other single hyperparameters),
-        "counting": 
-        [
+        "counting_style": 
+        {
             (hyperparameter lists)
-        ],
-        "index":
-        [
+        },
+        "zip_style":
+        {
             (hyperparameter lists)
-        ]
+        }
     ]
     '''
-    if hyperparameter_list is None:
-        return [['']], 0
+    if hyperparameter_list == {}:
+        return [{}], 0
 
+    static_hyperparameters = hyperparameter_list.get('static', {})
+    tasks_hyperparameters = hyperparameter_list.get('tasks', {})
+    zip_style_hyperparameters = hyperparameter_list.get('zip_style', {})
+    counting_style_hyperparameters = hyperparameter_list.get('counting_style', {})
 
-    single_hyperparameters = hyperparameter_list.get('single')
-    multiple_hyperparameters = hyperparameter_list.get('multiple')
-    index_hyperparameters = hyperparameter_list.get('index')
-    counting_hyperparameters = hyperparameter_list.get('counting')
-
-    single_hyperparameters = single_hyperparameters if single_hyperparameters is not None else ['']
-    multiple_hyperparameters = hyperparameter_parser[iterate_style](multiple_hyperparameters)
-    multiple_the_number_of_task = len(multiple_hyperparameters) if multiple_hyperparameters != [[''],] else 0
-    index_hyperparameters_list, index_the_number_of_task = task_generator_worker(index_hyperparameters, iterate_style = 'index')
-    counting_hyperparameters_list, counting_the_number_of_task = task_generator_worker(counting_hyperparameters, iterate_style = 'counting')
+    tasks_hyperparameters = hyperparameter_parser[iterate_style](tasks_hyperparameters)
+    number_of_tasks = len(tasks_hyperparameters)
+    zip_style_hyperparameters_list, zip_style_the_number_of_task \
+        = task_generator_worker(zip_style_hyperparameters, iterate_style = 'zip_style')
+    counting_style_hyperparameters_list, counting_style_the_number_of_task \
+        = task_generator_worker(counting_style_hyperparameters, iterate_style = 'counting_style')
     
-    # specifically used when iterate_style == 'index'
+    '''
+    Ensure that all hyperparameter lists ready for index enumeration have the same length.
+    Specifically used when iterate_style == 'index'
+    '''
     tmp_length = 0
-    if iterate_style == 'index':
-        '''
-        Ensure that all hyperparameter lists ready for index enumeration have the same length.
-        '''
-        tmp_length = max(multiple_the_number_of_task, index_the_number_of_task, counting_the_number_of_task)
-        multiple_the_number_of_task_for_comp = multiple_the_number_of_task if multiple_the_number_of_task > 0 else tmp_length
-        index_the_number_of_task_for_comp = index_the_number_of_task if index_the_number_of_task > 0 else tmp_length
-        counting_the_number_of_task_for_comp = counting_the_number_of_task if counting_the_number_of_task > 0 else tmp_length
-        assert multiple_the_number_of_task_for_comp == index_the_number_of_task_for_comp == counting_the_number_of_task_for_comp
+    if iterate_style == 'zip_style':
+        tmp_length = max(number_of_tasks, zip_style_the_number_of_task, counting_style_the_number_of_task)
+        number_of_tasks_for_comp = number_of_tasks if number_of_tasks > 0 else tmp_length
+        zip_style_the_number_of_task_for_comp = zip_style_the_number_of_task if zip_style_the_number_of_task > 0 else tmp_length
+        counting_style_the_number_of_task_for_comp = counting_style_the_number_of_task if counting_style_the_number_of_task > 0 else tmp_length
+        assert number_of_tasks_for_comp == zip_style_the_number_of_task_for_comp == counting_style_the_number_of_task_for_comp
 
-    generated_hyperparameter_list = []
-    if iterate_style == 'index':
-        packed_data = zip(multiple_hyperparameters if multiple_the_number_of_task > 0 else [['']] * tmp_length,
-                          index_hyperparameters_list if index_the_number_of_task > 0 else [['']] * tmp_length, 
-                          counting_hyperparameters_list if counting_the_number_of_task > 0 else [['']] * tmp_length)
-        for mh, ih, ch in packed_data:
-            generated_hyperparameter_list.append(
-                single_hyperparameters + mh + ih + ch
-            )
+    generated_hyperparameters = []
+    if iterate_style == 'zip_style':
+        packed_data = zip(tasks_hyperparameters if number_of_tasks > 0 else [{} for _ in range(tmp_length)],
+                          zip_style_hyperparameters_list if zip_style_the_number_of_task > 0 else [{} for _ in range(tmp_length)], 
+                          counting_style_hyperparameters_list if counting_style_the_number_of_task > 0 else [{} for _ in range(tmp_length)])
+        for packed_parameter_dicts in packed_data:
+            parameter_buffer = copy.deepcopy(static_hyperparameters)
+            for parameter_dict in packed_parameter_dicts:
+                parameter_buffer.update(parameter_dict)
+            generated_hyperparameters.append(parameter_buffer)
+    elif iterate_style == 'counting_style':
+        for tasks_hyperparameter in tasks_hyperparameters:
+            for zip_style_hyperparameter in zip_style_hyperparameters_list:
+                for counting_style_hyperparameter in counting_style_hyperparameters_list:
+                    parameter_buffer = copy.deepcopy(static_hyperparameters)
+                    parameter_buffer.update(tasks_hyperparameter)
+                    parameter_buffer.update(zip_style_hyperparameter)
+                    parameter_buffer.update(counting_style_hyperparameter)
+
+                    generated_hyperparameters.append(parameter_buffer)
     else:
-        for multiple_hyperparameter_list in multiple_hyperparameters:
-            for index_hyperparameter_list in index_hyperparameters_list:
-                for counting_hyperparameter_list in counting_hyperparameters_list:
-                    generated_hyperparameter_list.append(
-                        single_hyperparameters + multiple_hyperparameter_list + index_hyperparameter_list + counting_hyperparameter_list
-                    )
+        raise KeyError('Unknown iterate style.')
         
-    return generated_hyperparameter_list, len(generated_hyperparameter_list)
+    return generated_hyperparameters, len(generated_hyperparameters)
+
+
+def task_zip_style_generator(hyperparameter_list):
+    '''
+    Affirm that all hyperparameter lists have the same length.
+    '''
+    expected_task_num = len(next(iter(hyperparameter_list.values())))
+    for hyperparameters in hyperparameter_list.values():
+        assert len(hyperparameters) == expected_task_num, "Zip style requires that all parameter lists must have the same length!"
+    
+    '''
+    Generate the hyperparameter list.
+    '''
+    generated_hyperparameter_combinations = []
+    for index in range(expected_task_num):
+        generated_hyperparameter_combination = {key: item[index] for (key, item) in hyperparameter_list.items()}
+        generated_hyperparameter_combinations.append(generated_hyperparameter_combination)
+        
+    return generated_hyperparameter_combinations
+        
+
+def task_counting_style_generator(hyperparameter_list):
+    number_of_digits = len(hyperparameter_list.values())
+    max_val_for_each_digit = [len(item) for item in hyperparameter_list.values()]
+    current_index_of_each_list = [0] * number_of_digits
+    number_of_combinations = math.prod(max_val_for_each_digit)
+
+    '''
+    No tasks defined
+    '''
+    if max_val_for_each_digit == []:
+        return [{}]
+    else:
+        generated_hyperparameter_combinations = []
+        for _ in range(number_of_combinations):
+            generated_hyperparameter_combination \
+                = {key: item[index] for (key, item), index in zip(hyperparameter_list.items(), current_index_of_each_list)}
+            generated_hyperparameter_combinations.append(generated_hyperparameter_combination)
+
+            current_index_of_each_list[0] += 1
+            add_mark = False
+            for idx, (current_index, max_unreachable_index) in enumerate(zip(current_index_of_each_list, max_val_for_each_digit)):
+                if add_mark:
+                    current_index_of_each_list[idx] += 1
+                    if current_index_of_each_list[idx]  >= max_unreachable_index:
+                        current_index_of_each_list[idx] = 0
+                        add_mark = True
+                    else:
+                        add_mark = False
+                if current_index >= max_unreachable_index:
+                    current_index_of_each_list[idx] = 0
+                    add_mark = True
+        
+        return generated_hyperparameter_combinations
+
+
+hyperparameter_parser = {
+    'zip_style': task_zip_style_generator,
+    'counting_style': task_counting_style_generator
+}
+
+
+def translate_dict_to_arguments(input_dict):
+    output_arguments = []
+    for key, value in input_dict.items():
+        if isinstance(value, bool):
+            if value:
+                output_arguments.append('--' + str(key))
+        else:
+            output_arguments.extend(['--' + str(key), str(value)])
+    
+    return output_arguments
 
 
 def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir):

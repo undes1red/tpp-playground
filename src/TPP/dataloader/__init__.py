@@ -9,20 +9,15 @@ from src.TPP.utils import read_yaml
 logger = get_logger(__name__)
 
 
-def dataloader_zoo(opt):
-    module = importlib.import_module('.' + opt.dataloader_name, package = f'src.{opt.procedure}.dataloader')
-    return module.get_dataloader()
-
-
 def find_dataset(opt):
     try:
-        dataloader_combo = dataloader_zoo(opt)
-    except Exception as e:
-        logger.exception(f'{e}.')
+        module = importlib.import_module('.' + opt.dataloader_name, package = f'src.{opt.procedure}.dataloader')
+    except ImportError as e:
         logger.exception(f"Dataloader named {opt.dataloader_name} is not found! Please try again.")
+        logger.exception(repr(e))
     
     logger.info(f"Dataloader name: {opt.dataloader_name}")
-    return dataloader_combo
+    return module.get_dataloader()
 
 
 def prepare_dataloaders(opt):

@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import subprocess, os, argparse, importlib
-from batch_task_worker_utils import task_generator_worker, remove_empty_str
+from batch_task_worker_utils_old import task_generator_worker, remove_empty_str
 from src.taskhost import get_logger
 
 

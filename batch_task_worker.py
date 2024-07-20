@@ -1,8 +1,8 @@
 # You can use this file if you are too lazy to create and modify script files.
 # Just pack numerous tasks and run them one by one automatically.
 
-import subprocess, os, argparse, importlib
-from batch_task_worker_utils import task_generator_worker, remove_empty_str, monitor_and_automatic_run_tasks
+import os, argparse, importlib, copy
+from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automatic_run_tasks
 from src.taskhost import get_logger
 
 
@@ -51,11 +51,11 @@ def task_generator(hyperparameter_list):
     '''
     [
         (other single hyperparameters),
-        "counting": 
+        "counting_style": 
         [
             (hyperparameter lists)
         ],
-        "index":
+        "zip_style":
         [
             (hyperparameter lists)
         ]
@@ -64,19 +64,22 @@ def task_generator(hyperparameter_list):
     file_name = os.path.join(root_path, hyperparameter_list['file_name'])
     argparser = opt.procedure_name + '_' + opt.script_type
 
-    single_hyperparameters = hyperparameter_list.get('single')
-    single_hyperparameters = single_hyperparameters if single_hyperparameters is not None else ['']
-    index_hyperparameters = hyperparameter_list.get('index')
-    counting_hyperparameters = hyperparameter_list.get('counting')
+    static_hyperparameters = hyperparameter_list.get('static', {})
+    zip_style_hyperparameters = hyperparameter_list.get('zip_style', {})
+    counting_style_hyperparameters = hyperparameter_list.get('counting_style', {})
 
-    index_hyperparameters_list, _ = task_generator_worker(index_hyperparameters, 'index')
-    counting_hyperparameters_list, _ = task_generator_worker(counting_hyperparameters, 'counting')
+    generated_zip_style_hyperparameters, _ = task_generator_worker(zip_style_hyperparameters, 'zip_style')
+    generated_counting_style_hyperparameters, _ = task_generator_worker(counting_style_hyperparameters, 'counting_style')
     
     generated_hyperparameter_list = []
-    for index_hyperparameter_list in index_hyperparameters_list:
-        for counting_hyperparameter_list in counting_hyperparameters_list:
+    for zip_style_hyperparameter in generated_zip_style_hyperparameters:
+        for counting_hyperparameter in generated_counting_style_hyperparameters:
+            parameter_buffer = copy.deepcopy(static_hyperparameters)
+            parameter_buffer.update(zip_style_hyperparameter)
+            parameter_buffer.update(counting_hyperparameter)
             generated_hyperparameter_list.append(
-                remove_empty_str([file_name] + [argparser] + single_hyperparameters + index_hyperparameter_list + counting_hyperparameter_list)
+                [file_name, argparser] + \
+                translate_dict_to_arguments(parameter_buffer)
             )
 
     logger.info(f'We have planned {len(generated_hyperparameter_list)} tasks!')
@@ -104,7 +107,7 @@ else:
         # Assemble the command list into a string.
         task = ['python3'] + hp_list
         generated_tasks.append(' '.join(task))
-
+    
 
 failed_tasks = monitor_and_automatic_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir)
 

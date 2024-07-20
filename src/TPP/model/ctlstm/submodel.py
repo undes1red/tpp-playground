@@ -46,13 +46,9 @@ class CTLSTM(nn.Module):
         self.events_embedding = nn.Embedding(num_events + 1, d_mark_embedding, padding_idx = num_events, device = device)
 
         # History encoder.
-        try:
-            self.history_encoder = getattr(nn, history_module_name)(device = self.device, \
-                                           input_size = d_mark_embedding + 1, hidden_size = d_hidden, \
-                                           dropout = dropout, num_layers = history_encoder_layers, batch_first = True)
-        except Exception as e:
-            print(e)
-            raise Exception("Unrecognized history module name!")
+        self.history_encoder = getattr(nn, history_module_name)(device = self.device, \
+                                       input_size = d_mark_embedding + 1, hidden_size = d_hidden, \
+                                       dropout = dropout, num_layers = history_encoder_layers, batch_first = True)
         
         self.history_mapper = nn.Linear(d_hidden, d_input, device = self.device)
 
