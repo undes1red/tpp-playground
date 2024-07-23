@@ -6,17 +6,16 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from src.TPP.model.utils import approximate_integration, L1_distance_across_events, move_from_tensor_to_ndarray
-from src.TPP.model.mhp.utils import softplus_ext
-from src.TPP.model.mhp.mamba import mamba
-from mamba_ssm import Mamba
+from src.TPP.model.m2hp.utils import softplus_ext
+from mamba_ssm import Mamba2
 from mamba_ssm.models.mixer_seq_simple import create_block
 from mamba_ssm.ops.triton.layer_norm import layer_norm_fn, RMSNorm
 
 
-class MHP(nn.Module):
+class M2HP(nn.Module):
     def __init__(self, device, num_events, d_input, d_mamba, n_layers,
                  dropout, kernel_size, expand, beta, mode, integration_sample_rate):
-        super(MHP, self).__init__()
+        super(M2HP, self).__init__()
         self.device = device
         self.num_events = num_events
         self.integration_sample_rate = integration_sample_rate
@@ -43,11 +42,10 @@ class MHP(nn.Module):
         if mode == 'pure_mamba':
             self.mamba_encoder = nn.ModuleList(
                 [
-                    Mamba(d_model = d_input, d_state = d_mamba, d_conv = kernel_size, \
-                          expand = expand, device = self.device, layer_idx = layer_idx) for layer_idx in range(n_layers)
+                    Mamba2(d_model = d_input, d_state = d_mamba, d_conv = kernel_size, \
+                           expand = expand, device = self.device, layer_idx = layer_idx) for layer_idx in range(n_layers)
                 ]
             )
-            self.act = nn.ReLU()
             self.dropout = nn.Dropout(dropout)
         elif mode == 'mamba_block':
             self.mamba_encoder = nn.ModuleList(
@@ -61,7 +59,9 @@ class MHP(nn.Module):
         else:
             # This is what the paper has claimed, however it does not work properly.
             # One possible reason is the delta time is too big for mamba to handle.
-            self.mamba_encoder = mamba(num_events, d_input, d_mamba, kernel_size, n_layers, dropout, expand, device = self.device)
+            # Mamba2 with time does not exist yet.
+            raise KeyError('Mamba 2 + replacing dummy timestmap with real timestamps does not exist yet.')
+            
 
 
     def extract_history_embeddings(self, time, events, mask):
@@ -86,11 +86,10 @@ class MHP(nn.Module):
             time_history = (time_history - mean) / std
             time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t
                                                                                # [batch_size, seq_len, d_input]
-            output_state = events_vec + time_embedding                         # [batch_size, seq_len, d_input]
+            input_vecs = events_vec + time_embedding                           # [batch_size, seq_len, d_input]
     
             for mamba_layer in self.mamba_encoder:
-                output_state = mamba_layer(output_state)                       # [batch_size, seq_len, d_input]
-                output_state = self.act(output_state)                          # [batch_size, seq_len, d_input]
+                output_state = mamba_layer(input_vecs)                         # [batch_size, seq_len, d_input]
                 output_state = self.dropout(output_state)                      # [batch_size, seq_len, d_input]
         elif self.mode == 'mamba_block':
             events_vec = self.event_embedding(events_history)                  # [batch_size, seq_len, d_input]

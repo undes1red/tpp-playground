@@ -6,11 +6,11 @@ logger = get_logger(__name__)
 
 
 monitor_frequency = 10
-def monitor_and_automatic_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir):        
+def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir):        
     if use_gpu:
-        return monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
+        return monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
     else:
-        return monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
+        return monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
 
 
 def task_generator_worker(hyperparameter_list, iterate_style):
@@ -152,7 +152,7 @@ def translate_dict_to_arguments(input_dict):
     return output_arguments
 
 
-def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir):
+def monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir):
     number_of_tasks = len(tasks)
 
     def run_task(task, task_id):
@@ -207,7 +207,7 @@ def monitor_and_automatic_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
     return failed_tasks
 
 
-def monitor_and_automatic_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir):        
+def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir):        
     gpu_pool = set(available_gpus)
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)

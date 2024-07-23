@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import os, argparse, importlib, copy
-from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automatic_run_tasks
+from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks
 from src.taskhost import get_logger
 
 
@@ -111,7 +111,7 @@ else:
         generated_tasks.append(' '.join(task))
     
 
-failed_tasks = monitor_and_automatic_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir)
+failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir)
 
 # Report the execution sumamry:
 logger.warning('==========================================')

@@ -157,3 +157,12 @@ src/ehd/*
 
 # data serialization files
 *.yml
+
+# bundle and unboundle script to ease the environment transfer.
+bundle.sh
+unbundle.sh
+
+# bundle file.
+bundle.tar.gz
+bundle.tar.bz2
+bundle.tar.zst
