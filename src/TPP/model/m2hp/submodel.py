@@ -38,12 +38,20 @@ class M2HP(nn.Module):
         self.event_embedding = nn.Embedding(num_embeddings = num_events + 1, embedding_dim = d_input,\
                                             padding_idx = num_events, device = self.device)
         self.weight_for_t = nn.Parameter(torch.zeros((1, d_input), device = self.device, requires_grad = True))
+
+        assert d_input * expand % 8 == 0, "Refers to https://github.com/state-spaces/mamba/issues/351#issuecomment-2167091940 to see why d_input * expand should be divisible by 8."
+        self.headdim = int(d_input * expand / 8)
         
         if mode == 'pure_mamba':
+            '''
+            Why headdim = d_input * expand / 8 ?
+            
+            '''
             self.mamba_encoder = nn.ModuleList(
                 [
                     Mamba2(d_model = d_input, d_state = d_mamba, d_conv = kernel_size, \
-                           expand = expand, device = self.device, layer_idx = layer_idx) for layer_idx in range(n_layers)
+                           expand = expand, device = self.device, layer_idx = layer_idx, \
+                           headdim = self.headdim, use_mem_eff_path = False) for layer_idx in range(n_layers)
                 ]
             )
             self.dropout = nn.Dropout(dropout)
@@ -51,7 +59,11 @@ class M2HP(nn.Module):
             self.mamba_encoder = nn.ModuleList(
                 [
                     create_block(d_model = d_input, d_intermediate = d_input, 
-                                 ssm_cfg = {'layer': 'Mamba1', 'd_state': d_mamba, 'd_conv': kernel_size, 'expand': expand},
+                                 ssm_cfg = 
+                                 {
+                                     'layer': 'Mamba2', 'd_state': d_mamba, 'd_conv': kernel_size, \
+                                     'expand': expand, 'use_mem_eff_path': False, 'headdim': self.headdim
+                                 },
                                  device = self.device, layer_idx = layer_idx) for layer_idx in range(n_layers)
                 ]
             )
