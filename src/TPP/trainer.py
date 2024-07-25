@@ -96,12 +96,12 @@ class TPPTrainer:
         '''
         self.sched_optimizer = ScheduledOptim(opt, self.model)
 
-        # self.model = torch.compile(self.model, \
-        #                            options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
-        #                            disable = True)
-
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
+
+        self.model = torch.compile(self.model, \
+                                   options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
+                                   disable = not self.opt.compile)
 
         self.task()
     
@@ -163,10 +163,15 @@ class TPPTrainer:
         for current_step in tqdm(step_range, desc = desc, leave = False):
             data = next(training_iter)
 
-            with FlopCounterMode(display = False) as counter:
+            if self.opt.counter:
+                with FlopCounterMode(display = False) as counter:
+                    step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
+                
+                self.training_flop += sum(counter.flop_counts['Global'].values())
+            else:
                 step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
-            
-            self.training_flop += sum(counter.flop_counts['Global'].values())
+                
+                self.training_flop += 0
 
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:

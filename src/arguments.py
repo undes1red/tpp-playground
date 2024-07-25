@@ -12,9 +12,11 @@ class BasicArguments:
                             help="Select which CUDA device you want to use. Default number is 0. This argument does nothing if --cuda is not set.")
         self.parser.add_argument('--replace', action='store_true', 
                             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
+        self.parser.add_argument('--fpcounter', action='store_true', 
+                            help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: Do not enable FlopCounterMode.")
 
         # The number of Dataloader worker
-        self.parser.add_argument('--n_worker', default=8, type=int,
+        self.parser.add_argument('--n_worker', default=4, type=int,
                   help='The number of dataloader workers. For most datasets, multiprocessing might speed up the training procedure. But you should set it to lower value, even 0 \
                       if you meet \'received 0 items of ancdata\' exception.')
         self.parser.add_argument('--sleep', default=0, type=int,

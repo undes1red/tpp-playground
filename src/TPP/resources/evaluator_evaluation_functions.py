@@ -253,8 +253,23 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True):
     elapsed_time = 0
     list_output_results = None
 
-    with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
-        with FlopCounterMode(display = False) as counter:
+    if opt.fpcounter:
+        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
+            with FlopCounterMode(display = False) as counter:
+                for minibatch in progress_bar:
+                    results_per_minibatch = model(task_name, minibatch, opt)
+                    
+                    if list_output_results is None:
+                        result_length = len(results_per_minibatch)
+                        list_output_results = [[] for _ in range(result_length)]
+                    
+                    [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
+    
+            flops = sum(counter.flop_counts['Global'].values())
+            elapsed_time = progress_bar.format_dict['elapsed']
+            data_size = progress_bar.format_dict['total']
+    else:
+        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
             for minibatch in progress_bar:
                 results_per_minibatch = model(task_name, minibatch, opt)
                 
@@ -263,11 +278,11 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True):
                     list_output_results = [[] for _ in range(result_length)]
                 
                 [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-
-        flops = sum(counter.flop_counts['Global'].values())
-        elapsed_time = progress_bar.format_dict['elapsed']
-        data_size = progress_bar.format_dict['total']
     
+            flops = 0
+            elapsed_time = progress_bar.format_dict['elapsed']
+            data_size = progress_bar.format_dict['total']
+
     if early_offload:
         # How to remove a model and free its memory immediately?
         free_model_from_gpu(model)
