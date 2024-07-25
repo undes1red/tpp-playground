@@ -163,7 +163,7 @@ class TPPTrainer:
         for current_step in tqdm(step_range, desc = desc, leave = False):
             data = next(training_iter)
 
-            if self.opt.counter:
+            if self.opt.fpcounter:
                 with FlopCounterMode(display = False) as counter:
                     step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
                 
