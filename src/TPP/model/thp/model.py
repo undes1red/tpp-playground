@@ -7,7 +7,6 @@ from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_
 from src.TPP.model.thp.plot import *
 from src.TPP.model.thp.submodel import THP
 from src.TPP.model.utils import *
-from src.TPP.model.thp.utils import *
 from src.TPP.utils import pack_one_value_to_dict
 
 

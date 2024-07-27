@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-from src.TPP.model.tifib_c.selfattn import SelfAttn
+from src.toolbox.transformer.selfattn import SelfAttn
 
 
 class TransformerLayer(nn.Module):
@@ -15,15 +15,15 @@ class TransformerLayer(nn.Module):
         self.ffn = FFN(d_input = d_input, d_hidden = d_hidden, device = self.device, dropout = dropout)
 
 
-    def forward(self, q, k, v, self_attn_mask, non_pad_mask):
+    def forward(self, x, self_attn_mask, non_pad_mask):
         '''
         Args:
-        1. q, k, v: input tensor.                                  shape: [batch_size, seq_len, d_input]
-        2. self_attn_mask: mask tensor for used by self attention. shape: [batch_size, seq_len, seq_len]
-        3. non_pad_mask: mask out pad items' output values.        shape: [batch_size, seq_len]
+        1. x: input tensor. shape: [batch_size, seq_len, d_input]
+        2. self_attn_mask: mask tensor for used by self attention. shape: [seq_len, seq_len]
+        3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
         Outputs:
         '''
-        output, attn = self.attn(q, k, v, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+        output, attn = self.attn(x, x, x, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
         output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
 
         output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
@@ -33,7 +33,7 @@ class TransformerLayer(nn.Module):
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, n_head, d_input, d_qk, d_v, device, dropout = 0.1, ):
+    def __init__(self, n_head, d_input, d_qk, d_v, device, dropout = 0.1):
         '''
         Template self-attention module with multihead-attention type 2: this module concatenates original outputs and
         compress high-dimensional vectors into d_output
@@ -48,8 +48,6 @@ class MultiheadAttention(nn.Module):
         self.d_k = d_qk
         self.d_v = d_v
         self.dropout = dropout
-
-        assert self.n_head > 0
 
         # Linear: d_input -> d_q, d_k, or d_v
         self.w_q = nn.Linear(d_input, self.d_q * self.n_head, bias = False, device = self.device)
@@ -66,7 +64,7 @@ class MultiheadAttention(nn.Module):
         self.dropout = nn.Dropout(self.dropout)
 
         # layer normalization
-        self.layer_norm = nn.LayerNorm(self.d_output, eps = 1e-6, device = self.device)
+        self.layer_norm = nn.LayerNorm(self.d_input, eps = 1e-6, device = self.device)
 
 
     def forward(self, q, k, v, mask = None):
@@ -85,15 +83,16 @@ class MultiheadAttention(nn.Module):
         q = self.layer_norm(q)                                                 # [batch_size, seq_len, n_head, d_qk]
         
         # preparing for q, k, and v.
-        q = rearrange(self.w_q(q), 'b s (n_h d_q) -> b s n_h d_q', n_h = self.n_head)
+        q = rearrange(self.w_q(q), 'b s (nh dq) -> b s nh dq', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_qk]
-        k = rearrange(self.w_k(k), 'b s (n_h d_k) -> b s n_h d_k', n_h = self.n_head)
+        k = rearrange(self.w_k(k), 'b s (nh dk) -> b s nh dk', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_qk]
-        v = rearrange(self.w_v(v), 'b s (n_h d_v) -> b s n_h d_v', n_h = self.n_head)
+        v = rearrange(self.w_v(v), 'b s (nh dv) -> b s nh dv', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_v]
 
         output, attn = self.self_attn(q, k, v, mask = mask)                    # [batch_size, seq_len, n_head, d_v] & [batch_size, n_head, seq_len, seq_len]
-        output = rearrange(output, 'b s n_h d_v -> b s (n_h d_v)')             # [batch_size, seq_len, n_head * d_v]
+        output = rearrange(output, 'b s nh dv -> b s (nh dv)', nh = self.n_head)
+                                                                               # [batch_size, seq_len, n_head * d_v]
         output = self.dropout(self.fc_attn_output(output))                     # [batch_size, seq_len, d_output]
         output += residual
 
@@ -116,7 +115,6 @@ class FFN(nn.Module):
 
         self.norm = nn.LayerNorm(d_input, eps = 1e-6, device = self.device)
 
-
     def forward(self, x):
         '''
         Args:
@@ -130,7 +128,6 @@ class FFN(nn.Module):
         x = self.dropout(F.gelu(self.w_1(x)))                                  # [..., d_hidden]
         x = self.dropout(self.w_2(x))                                          # [..., d_input]
         x += residual
-
         x = self.norm(x)                                                       # [..., d_input]
 
         return x

@@ -6,7 +6,7 @@ import numpy as np
 from scipy.stats import spearmanr
 
 from src.TPP.model.utils import approximate_integration, L1_distance_across_events, move_from_tensor_to_ndarray
-from src.TPP.model.thp.utils import softplus_ext
+from src.toolbox.activations import softplus_ext
 from src.TPP.model.thp.transformers import TransformerTPP
 
 

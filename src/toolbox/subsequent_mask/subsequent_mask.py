@@ -1,6 +1,5 @@
 import torch
 
-
 def get_subsequent_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
 

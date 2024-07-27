@@ -2,17 +2,16 @@ import torch
 import torch.nn as nn
 from einops import repeat
 
-from src.TPP.model.sahp.layers import TransformerLayer
-from src.TPP.model.sahp.utils import *
-from src.TPP.model.sahp.position import BiasedPositionalEmbedding
+from src.toolbox.transformer import TransformerLayer
+from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
 class TransformerEncoder(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
 
-    def __init__(
-            self, num_types, device, d_input, d_rnn, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout):
+    def __init__(self, num_types, device, d_input, d_rnn, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout):
         super(TransformerEncoder, self).__init__()
         self.device = device
         self.num_types = num_types if num_types > 0 else 1

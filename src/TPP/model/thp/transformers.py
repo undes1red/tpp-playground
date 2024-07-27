@@ -2,26 +2,25 @@ import math, torch
 import torch.nn as nn
 from einops import repeat
 
-from src.TPP.model.thp.layers import TransformerLayer
-from src.TPP.model.thp.utils import *
+from src.toolbox.transformer import TransformerLayer
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
+from src.toolbox.subsequent_mask import get_subsequent_mask
 
 
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
-    def __init__(
-            self,
-            num_types, d_input, d_hidden,
-            n_layers, n_head, d_qk, d_v, dropout, 
-            device):
+    def __init__(self,
+                 num_types, d_input, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout, 
+                 device):
         super(Encoder, self).__init__()
         self.device = device
         self.d_input = d_input
         self.num_types = num_types
 
         # position vector, used for temporal encoding
-        self.position_vec = torch.tensor(
-            [math.pow(10000.0, 2.0 * (i // 2) / d_input) for i in range(d_input)],
-            device=self.device)
+        # FIXME: set max_len during runtime, current max_len = 4096
+        self.position_emb = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
 
         # event type embedding
         self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx = num_types, device = self.device)
@@ -30,18 +29,6 @@ class Encoder(nn.Module):
             TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
                              d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
             for _ in range(n_layers)])
-
-
-    def temporal_enc(self, time, non_pad_mask):
-        """
-        Input: batch*seq_len.
-        Output: batch*seq_len*d_input.
-        """
-
-        result = time.unsqueeze(-1) / self.position_vec
-        result[:, :, 0::2] = torch.sin(result[:, :, 0::2])
-        result[:, :, 1::2] = torch.cos(result[:, :, 1::2])
-        return result * non_pad_mask.unsqueeze(-1)
 
 
     def forward(self, event_type, event_time, non_pad_mask):
@@ -63,20 +50,21 @@ class Encoder(nn.Module):
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
-        time_emb = self.temporal_enc(event_time, non_pad_mask)                 # [batch_size, seq_len, d_input]
+        # Time Embedding
+        time_emb = self.position_emb(event_type, event_time)                   # [batch_size, seq_len, d_input]
 
         if event_type != None:
             events_emb = self.event_emb(event_type)                            # [batch_size, seq_len, d_input]
         else:
             events_emb = torch.zeros_like(time_emb, device = self.device)      # [batch_size, seq_len, d_input]
 
+        output = time_emb + events_emb                                         # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
-            time_emb += events_emb                                             # [batch_size, seq_len, d_input]
-            time_emb, _ = enc_layer(
-                time_emb,
+            output, _ = enc_layer(
+                output,
                 non_pad_mask = non_pad_mask,
                 self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
-        return time_emb
+        return output
 
 
 class RNN_layers(nn.Module):
@@ -134,6 +122,6 @@ class TransformerTPP(nn.Module):
         """
 
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
-        # enc_output = self.rnn(enc_output)                                    # [batch_size, seq_len, d_input]
+        enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
 
         return enc_output
