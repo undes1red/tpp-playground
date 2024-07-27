@@ -75,7 +75,7 @@ def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probab
         v = bisect_func(c, probability_threshold, *args, **kwargs)
         l = torch.where(v < 0, c, l)
         r = torch.where(v >= 0, c, r)
-        if torch.allclose(r, l, rtol = 0, atol = bisect_early_stop_threshold):
+        if torch.allclose(r, l, atol = bisect_early_stop_threshold):
             break
     
     return (l + r)/2

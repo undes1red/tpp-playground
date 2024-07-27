@@ -4,7 +4,7 @@ import numpy as np
 
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
-from src.TPP.model.fenn.nonneg import NonNegLinear
+from src.toolbox.nonneg_mlp import NonNegLinear
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 
 

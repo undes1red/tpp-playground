@@ -1,4 +1,4 @@
-import math, torch
+import torch
 import torch.nn as nn
 from einops import repeat
 

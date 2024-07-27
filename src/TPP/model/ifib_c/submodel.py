@@ -5,7 +5,7 @@ import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
-from src.TPP.model.ifib_c.nonneg import NonNegLinear
+from src.toolbox.nonneg_mlp import NonNegLinear
 
 
 class new_tanh(nn.Module):
