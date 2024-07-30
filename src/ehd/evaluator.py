@@ -1,7 +1,7 @@
 import os, torch
 from torch.nn import DataParallel as DP
 
-from src.taskhost_utils import get_logger
+from src.toolbox.misc import get_logger
 from src.ehd.utils import read_yaml, print_args
 from src.ehd.evaluator_evaluation_functions import draw, spearman_and_l1, mae_and_f1, mae_e_and_f1, label_of_all_events
 from src.ehd.model import get_model

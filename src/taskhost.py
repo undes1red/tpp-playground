@@ -1,7 +1,7 @@
 import sys, torch, importlib, random, os, time
 import numpy as np
 
-from src.taskhost_utils import get_logger, version_check
+from src.toolbox.misc import get_logger, version_check
 
 '''
 The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.

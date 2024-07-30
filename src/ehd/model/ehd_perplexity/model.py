@@ -9,7 +9,7 @@ from src.ehd.model.utils import BasicModule, check_tensor, move_from_tensor_to_n
 from src.ehd.model.ehd_perplexity.plot import * 
 from src.ehd.model.ehd_perplexity.nes.nes import NES
 from src.ehd.utils import suffix
-from src.taskhost_utils import get_logger
+from src.toolbox.misc import get_logger
 
 logger = get_logger(__name__)
 

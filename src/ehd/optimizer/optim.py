@@ -1,7 +1,7 @@
 '''A wrapper for a scheduled optimizer '''
 
 import math
-from src.taskhost_utils import get_logger
+from src.toolbox.misc import get_logger
 from src.ehd.utils import mean, read_yaml
 import torch.optim as optim
 

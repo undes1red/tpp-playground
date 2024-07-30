@@ -13,7 +13,7 @@ class BasicArguments:
         self.parser.add_argument('--replace', action='store_true', 
                             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
         self.parser.add_argument('--fpcounter', action='store_true', 
-                            help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: Do not enable FlopCounterMode.")
+                            help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.")
 
         # The number of Dataloader worker
         self.parser.add_argument('--n_worker', default=4, type=int,

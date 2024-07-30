@@ -1,7 +1,8 @@
 import os, torch
 from torch.nn import DataParallel as DP
 
-from src.taskhost_utils import get_logger
+from src.toolbox.misc import get_logger
+
 from src.TPP.utils import read_yaml, print_args, suffix, load_checkpoint
 from src.TPP.resources.evaluator_evaluation_functions import *
 from src.TPP.model import get_model

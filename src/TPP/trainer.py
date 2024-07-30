@@ -5,11 +5,12 @@ from itertools import cycle
 from torch.nn import DataParallel as DP
 from torch.utils.flop_counter import FlopCounterMode
 
-from src.taskhost_utils import get_logger, mkdir_if_not_exist
+from src.toolbox.misc import get_logger, mkdir_if_not_exist
+from src.toolbox.optimizer import ScheduledOptim
+
 from src.TPP.utils import print_performances, suffix, lst_add_lst, read_yaml, only_keep_data, \
                           lst_divide, get_evaluation_results, Metric, print_args, pack_one_value_to_dict
 from src.TPP.model import get_model
-from src.TPP.optimizer.optim import ScheduledOptim
 from src.TPP.dataloader import prepare_dataloaders
 
 
@@ -101,7 +102,7 @@ class TPPTrainer:
 
         self.model = torch.compile(self.model, \
                                    options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
-                                   disable = not self.opt.compile)
+                                   disable = True)
 
         self.task()
     

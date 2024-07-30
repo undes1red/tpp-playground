@@ -2,6 +2,8 @@ import torch, copy
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+
 from src.TPP.model.utils import *
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
 from src.TPP.model.marked_rmtpp.plot import *

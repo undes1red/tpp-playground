@@ -11,10 +11,12 @@ class NonNegLinear(nn.Linear):
         self.device = device
         self.positivify_weights()
 
+
     def positivify_weights(self):
         mask = (self.weight < 0).float() * - 1
         mask = mask + (self.weight >= 0).float()
         self.weight.data = self.weight.data * mask
+
 
     def forward(self, inputs):
         weight = self.weight > 0

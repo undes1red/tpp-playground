@@ -3,6 +3,8 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.tifib_c.submodel import TIFIBC
 from src.TPP.utils import pack_one_value_to_dict

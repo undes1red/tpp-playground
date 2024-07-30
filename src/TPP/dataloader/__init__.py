@@ -1,7 +1,7 @@
 import torch, os, importlib, glob
 
 from torch.utils.data import DataLoader
-from src.taskhost_utils import get_logger
+from src.toolbox.misc import get_logger
 from src.TPP.dataloader.utils import seed_worker, check_exist
 from src.TPP.utils import read_yaml
 

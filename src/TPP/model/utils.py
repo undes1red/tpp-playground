@@ -2,49 +2,9 @@ from einops import rearrange, reduce, repeat
 import torch
 import numpy as np
 
+from src.toolbox.misc import move_from_tensor_to_ndarray
+
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
-
-
-def move_from_tensor_to_ndarray(*kwargs):
-    '''
-    This function converts an arbitrary number of torch.tensor to np.array.
-    This function can automaticly move cuda tensor to cpu.
-    '''
-    def move_tensor(x):
-        if torch.is_tensor(x):
-            return x.detach().cpu().numpy()
-        else:
-            return x
-
-    if len(kwargs) == 1:
-        tmp_results = move_tensor(kwargs[0])
-    else:
-        tmp_results = []
-        for object in kwargs:
-            tmp_results.append(move_tensor(object))
-
-    return tmp_results
-
-
-def check_tensor(x, positive = True, inf = True, nan = True):
-    '''
-    Ensure that the input tensor does not contain: negative numbers, inf, and nan.
-    
-    Args:
-    * x  type: torch.tensor shape: any shape
-         the input tensor.
-
-    Outputs:
-      No outputs available.
-    '''
-    if positive:
-        assert (x < 0).any() == False, 'Negative numbers detected!'
-
-    if inf:
-        assert torch.isfinite(x).all() == True, 'inf detected in input!'
-
-    if nan:
-        assert torch.isnan(x).any() == False, 'Nan detected in input!'
 
 
 '''
@@ -353,16 +313,6 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
         L1 = 0
 
     return L1
-
-def stable_palette(labels):
-    # Predefined palette.
-    colors = ['#4974a5', '#ffa500', '#5d782e', '#545454', '#d7b4ae', '#00ff00', '#00ffff', '#6fa287', \
-              '#ee30a7', '#9e482f', '#8b02e7', '#141387', '#eccb00', '#ff0000', '#ff9664', '#b73e64', \
-              '#0000ff', '#969696', '#969600', '#ffe600', '#ff6400', '#1f1e33']
-    
-    assert len(labels) < 23, 'Too many labels.'
-
-    return {label: color for (label, color) in zip(labels, colors)}
 
 
 def figure_instruction_generator(*args, figure_kwargs = {}):

@@ -3,7 +3,9 @@ import pandas as pd
 from scipy.stats import spearmanr
 from einops import rearrange
 
-from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs, stable_palette, figure_instruction_generator
+from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, figure_instruction_generator
+from src.toolbox.metrics import L1_distance_between_two_funcs
+
 from src.TPP.resources.syn_tpp_utils import expand_true_probability
 
 large_graph_length = 18

@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 from scipy.stats import spearmanr
-
 from einops import rearrange, reduce, repeat
-from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
+
+from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.metrics import L1_distance_across_events
 
 
 class MRMTPPModule(nn.Module):

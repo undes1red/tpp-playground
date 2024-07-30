@@ -4,18 +4,10 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
+from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.nonneg_mlp import NonNegLinear
-
-
-class new_tanh(nn.Module):
-    def __init__(self, parameter = 1, device = None):
-        super(new_tanh, self).__init__()
-        self.device = device
-        self.parameter = parameter
-    
-    def forward(self, x):
-        return self.parameter * nn.functional.tanh(x)
+from src.toolbox.activations import scaled_tanh
 
 
 class IFIBC(nn.Module):
@@ -28,7 +20,6 @@ class IFIBC(nn.Module):
 
     Following Babylon's paper, we would check the performance of FullyNN with integral offsets.
     '''
-
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, removes_tail, tanh_parameter, epsilon, device):
         super(IFIBC, self).__init__()
@@ -59,7 +50,7 @@ class IFIBC(nn.Module):
         ])
 
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
-        self.layer_activation = new_tanh(self.tanh_parameter, device = self.device)
+        self.layer_activation = scaled_tanh(self.tanh_parameter, device = self.device)
 
         self.nonneg_activation = nn.Softplus()
         self.nonneg_factor = nn.ReLU()

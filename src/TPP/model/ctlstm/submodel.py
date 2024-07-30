@@ -5,7 +5,10 @@ from einops import rearrange, repeat, reduce, pack
 import numpy as np
 from scipy.stats import spearmanr
 
-from src.TPP.model.utils import approximate_integration, L1_distance_across_events, move_from_tensor_to_ndarray
+from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.metrics import L1_distance_across_events
+
+from src.TPP.model.utils import approximate_integration
 
 
 class CTLSTM(nn.Module):
