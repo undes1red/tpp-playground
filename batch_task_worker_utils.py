@@ -159,7 +159,7 @@ def monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_di
         task_list = task.split(' ')
 
         # Replace this command with your actual task command
-        logger.warning(f'----> Task {task_id}/{number_of_tasks} started. <----')
+        logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
         f_log = open(os.path.join(stdout_dir, f'stdout_log_{task_id}.txt'), 'w')
         process = subprocess.Popen(task_list, stdout = f_log, stderr = f_log, universal_newlines = True)
@@ -189,10 +189,10 @@ def monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_di
         for task in running_tasks:
             if task["task_id"] not in completed_tasks and task['process'].poll() is not None:
                 if task['process'].poll() != 0:
-                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} failed!. <----')
                     failed_tasks[task["task_id"]] = task["command"]
                 else:
-                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} completed!. <----')
                 
                 completed_tasks.add(task['task_id'])
                 task['stdout'].close()
@@ -216,7 +216,7 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
     def run_task(task, task_id, gpu_id):
         task_list = task.split(' ') + ['--cuda', '--cuda_device', f'{gpu_id}']
 
-        logger.warning(f'----> Task {task_id}/{number_of_tasks} started. <----')
+        logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
         f_log = open(os.path.join(stdout_dir, f'stdout_log_{task_id}.txt'), 'w')
         process = subprocess.Popen(task_list, stdout = f_log, stderr = f_log, universal_newlines = True)
@@ -245,10 +245,10 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
         for ticket, task in running_tasks.items():
             if task != {} and task['process'].poll() is not None:
                 if task['process'].poll() != 0:
-                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} failed!. <----')
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} failed!. <----')
                     failed_tasks[task["task_id"]] = task['command']
                 else:
-                    logger.warning(f'----> Task {task["task_id"]}/{number_of_tasks} completed!. <----')
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} completed!. <----')
                 
                 task['stdout'].close()
                 gpu_pool.add(task["gpu_id"])

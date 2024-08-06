@@ -1,5 +1,5 @@
-from src.TPP.model.attnhp.model import ATTNHPWrapper
+from src.TPP.model.attnhp.model import AttNHPWrapper
 
 
 def get_model():
-    return ATTNHPWrapper
+    return AttNHPWrapper

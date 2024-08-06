@@ -1,120 +1,139 @@
-# Transformer Components Implementation Adapted from Annotated Transformer:
-# https://nlp.seas.harvard.edu/2018/04/03/attention.html
-import math
-
 import torch
-from torch import nn
+import torch.nn as nn
+from einops import repeat
+
+from src.toolbox.transformer import TransformerLayer
+from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
-def attention(query, key, value, mask=None, dropout=None):
-    d_k = query.size(-1)
-    scores = torch.matmul(query, key.transpose(-2, -1)) \
-             / math.sqrt(d_k)
-    if mask is not None:
-        # small change here -- we use "1" for masked element
-        scores = scores.masked_fill(mask > 0, -1e9)
-    p_attn = torch.softmax(scores, dim=-1)
-    if dropout is not None:
-        p_attn = dropout(p_attn)
-    return torch.matmul(p_attn, value), p_attn
+class TransformerEncoder(nn.Module):
+    """ A sequence to sequence model with attention mechanism. """
 
-
-class MultiHeadAttention(nn.Module):
-    def __init__(self, n_head, d_input, d_model, dropout = 0.1, output_linear = False, device = None):
-        super(MultiHeadAttention, self).__init__()
-        assert d_model % n_head == 0
+    def __init__(self, num_types, device, d_input, d_rnn, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout):
+        super(TransformerEncoder, self).__init__()
         self.device = device
-        self.n_head = n_head
-        self.d_k = d_model // n_head
-        self.d_v = self.d_k
-        self.d_model = d_model
-        self.output_linear = output_linear
+        self.num_types = num_types if num_types > 0 else 1
 
-        if output_linear:
-            self.linears = nn.ModuleList([nn.Linear(d_input, d_model, device = self.device) for _ in range(3)] + [nn.Linear(d_model, d_model, device = self.device), ])
-        else:
-            self.linears = nn.ModuleList([nn.Linear(d_input, d_model, device = self.device) for _ in range(3)])
-        #for i in range(len(self.linears)):
-            #nn.init.xavier_uniform_(self.linears[i].weight)
-        self.dropout = nn.Dropout(p = dropout)
+        self.encoder = Encoder(
+            num_types = self.num_types,
+            d_input = d_input,
+            d_hidden = d_hidden,
+            n_layers = n_layers,
+            n_head = n_head,
+            d_qk = d_qk,
+            d_v = d_v,
+            dropout = dropout,
+            device = self.device
+        )
 
-    def forward(self, query, key, value, mask):
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
-
-        query, key, value = [
-            l(x).view(nbatches, -1, self.n_head, self.d_k).transpose(1, 2)
-            for l, x in zip(self.linears, (query, key, value))
-        ]
-        x, attn_weight = attention(query, key, value, mask=mask, dropout=self.dropout)
-
-        x = x.transpose(1, 2).contiguous() \
-            .view(nbatches, -1, self.n_head * self.d_k)
-
-        if self.output_linear:
-            return self.linears[-1](x)
-        else:
-            return x
+        # OPTIONAL recurrent layer, this sometimes helps
+        self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
 
 
-class SublayerConnection(nn.Module):
-    # used for residual connnection
-    def __init__(self, d_model, dropout, device):
-        super(SublayerConnection, self).__init__()
+    def forward(self, time_history, events_history, non_pad_mask, custom_events_history = False):
+        """
+        Return intensity functions' values for all events and time and events, if possible, predictions.
+        Args:
+        1. event_time: the length of all time intervals between two adjacent events. shape: [batch_size, seq_len]
+        2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
+        3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
+        """
+
+        enc_output = self.encoder(time_history, events_history, non_pad_mask, custom_events_history)
+                                                                               # [batch_size, seq_len, d_input]
+        enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
+
+        return enc_output
+
+
+    def get_event_embedding(self, input_event):
+        return self.encoder.get_event_embedding(input_event)                   # [batch_size, seq_len, d_input]
+
+
+class Encoder(nn.Module):
+    """ A encoder model with self attention mechanism. """
+    def __init__(self, num_types, d_input, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout, device):
+        super(Encoder, self).__init__()
         self.device = device
-        self.norm = nn.LayerNorm(d_model, device = self.device)
-        self.dropout = nn.Dropout(dropout)
+        self.d_input = d_input
+        self.num_types = num_types
 
-    def forward(self, x, sublayer):
-        return x + self.dropout(sublayer(self.norm(x)))
+        # position vector, used for temporal encoding
+        # FIXME: set max_len during runtime, current max_len = 4096
+        self.position_emb = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
 
+        # event type embedding
+        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx = num_types, device = self.device)
 
-class PositionwiseFeedForward(nn.Module):
-    "Implements FFN equation."
-
-    def __init__(self, d_model, d_ff, dropout=0.1):
-        super(PositionwiseFeedForward, self).__init__()
-        self.w_1 = nn.Linear(d_model, d_ff)
-        self.w_2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        return self.w_2(self.dropout(self.relu(self.w_1(x))))
+        self.layer_stack = nn.ModuleList([
+            TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
+                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
+            for _ in range(n_layers)])
 
 
-class EncoderLayer(nn.Module):
-    def __init__(self, device, d_model, self_attn, feed_forward=None, use_residual=False, dropout=0.1):
-        super(EncoderLayer, self).__init__()
-        self.device = device
-        self.self_attn = self_attn
-        self.feed_forward = feed_forward
-        self.use_residual = use_residual
-        if use_residual:
-            self.sublayer = nn.ModuleList([SublayerConnection(d_model, dropout, device = self.device) for _ in range(2)])
-        self.d_model = d_model
+    def forward(self, time_history, events_history, non_pad_mask, custom_events_history):
+        """
+        Encode event sequences via masked self-attention.
+        Args:
+        1. event_type: 
+        2. event_time: input time intervals. shape: [batch_size, seq_len]
+        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
+        """
 
-    def forward(self, x, mask):
-        if self.use_residual:
-            x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
-            if self.feed_forward is not None:
-                return self.sublayer[1](x, self.feed_forward)
+        # prepare attention masks
+        # self_attn_mask is where we cannot look, i.e., the future and the padding
+        _, seq_len = events_history.shape[:2]
+        self_attn_mask_subseq = get_subsequent_mask(time_history)
+        self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
+                                                                               # [batch_size, seq_len]
+        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s_1 s', s_1 = seq_len)
+                                                                               # [batch_size, seq_len, seq_len]
+        self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
+
+        # Time Embedding
+        time_emb = self.position_emb(events_history, time_history)             # [batch_size, seq_len, d_input]
+
+        # Event Embedding
+        if events_history != None:
+            if custom_events_history:
+                events_emb = events_history
             else:
-                return x
+                events_emb = self.event_emb(events_history)                    # [batch_size, seq_len, d_input]
         else:
-            return self.self_attn(x, x, x, mask)
+            events_emb = torch.zeros_like(time_emb, device = self.device)      # [batch_size, seq_len, d_input]
+        mingled_emb = time_emb + events_emb                                    # [batch_size, seq_len, d_input]
 
-class XFMREncoder(nn.Module):
-    def __init__(self, d_model, num_layers, self_attn, feed_forward, use_residual=False, dropout=0.1):
-        super(XFMREncoder, self).__init__()
-        self.layers = nn.ModuleList(
-            [EncoderLayer(d_model, self_attn, feed_forward, use_residual, dropout)
-             for _ in range(num_layers)
-             ])
-        self.norm = nn.LayerNorm(d_model)
+        for enc_layer in self.layer_stack:
+            mingled_emb, _ = enc_layer(
+                mingled_emb,
+                non_pad_mask = non_pad_mask,
+                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
 
-    def forward(self, x, mask):
-        for layer in self.layers:
-            x = layer(x, mask)
-        return self.norm(x)
+        return mingled_emb
+    
+
+    def get_event_embedding(self, input_event):
+        return self.event_emb(input_event)                                     # [batch_size, seq_len, d_input]
+
+
+class RNN_layers(nn.Module):
+    """
+    Optional recurrent layers. This is inspired by the fact that adding
+    recurrent layers on top of the Transformer helps language modeling.
+    """
+
+    def __init__(self, d_model, d_rnn, device):
+        super(RNN_layers, self).__init__()
+        self.device = device
+
+        self.rnn = nn.LSTM(d_model, d_rnn, num_layers=1, batch_first=True, device = self.device)
+        self.projection = nn.Linear(d_rnn, d_model, device = self.device)
+
+    def forward(self, data):
+        out = self.rnn(data)[0]                                                # [batch_size, seq_len, d_rnn]
+
+        out = self.projection(out)                                             # [batch_size, seq_len, d_model]
+        return out

@@ -6,17 +6,16 @@ from sklearn.metrics import f1_score
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
-from src.TPP.model.ctlstm.plot import *
+from src.TPP.model.naive.plot import *
 from src.TPP.utils import pack_one_value_to_dict
-from src.TPP.model.ctlstm.submodel import CTLSTM
+from src.TPP.model.naive.submodel import NaiveModule
 from src.TPP.model.utils import *
 
 
-class CTLSTMWrapper(BasicModel):
-    def __init__(self, info_dict, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
-                 d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
+class NaiveMTPPWrapper(BasicModel):
+    def __init__(self, info_dict, device, process_name = 'Poisson', epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
                  integration_sample_rate = 100, survival_loss_during_training = True):
-        super(CTLSTMWrapper, self).__init__()
+        super(NaiveMTPPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
@@ -24,16 +23,13 @@ class CTLSTMWrapper(BasicModel):
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_time_rate = 32
+        self.sample_rate = 32
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
 
-        self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
-                            d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
-                            history_encoder_layers = history_encoder_layers, dropout = dropout, \
-                            integration_sample_rate = integration_sample_rate)
+        self.model = NaiveModule(device = device, num_events = self.num_events, process_name = process_name)
     
 
     def divide_history_and_next(self, input):
@@ -217,7 +213,7 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.no_grad()
-    def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
+    def sample(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
         '''
         number_of_total_samples: how many samples do we need to predict one next event.
         step: we output "step" samples to reduce memory comsumption during inference.
@@ -249,7 +245,7 @@ class CTLSTMWrapper(BasicModel):
 
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, num_dimension_prior_batch = 1)
+                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution)
                                                                                # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
@@ -299,8 +295,7 @@ class CTLSTMWrapper(BasicModel):
             2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
             3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
             '''
-            expanded_integral_all_events, _, = \
-                self.model(time_history, taus, events_history, num_dimension_prior_batch = 1)
+            expanded_integral_all_events, _, = self.model(time_history, taus, events_history)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
 
@@ -366,9 +361,9 @@ class CTLSTMWrapper(BasicModel):
     
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+        pred_time = self.sample(sampling_approach = 'its', task = 'tm',
                                 events_history = events_history, time_history = time_history,
-                                number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
+                                number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
@@ -410,9 +405,9 @@ class CTLSTMWrapper(BasicModel):
 
         f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_to_inf, mask_next, self.num_events)
 
-        tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
+        tau_pred_all_event = self.sample(sampling_approach = 'its', task = 'mt', 
                                          events_history = events_history, time_history = time_history,
-                                         p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_time_rate, step = self.mae_e_step, inf_val = inf_val, 
+                                         p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_rate, step = self.mae_e_step, inf_val = inf_val, 
                                          mean = mean, std = std)               # [sample_rate, batch_size, seq_len, num_events]
         tau_pred_all_event = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
  

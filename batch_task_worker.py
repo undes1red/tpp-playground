@@ -123,7 +123,7 @@ if len(failed_tasks) == 0:
 else:
     logger.warning(f'{len(failed_tasks)} tasks have failed. Please check what is wrong according to logs in directory stdout/ and fix them!')
     for index, command in failed_tasks.items():
-        logger.warning(f'----> Task {index} has failed. <----')
+        logger.warning(f'----> Task No.{index} has failed. <----')
         logger.warning(f'Task Command: {command}.')
         failed_commands.append(command + '\n')
 
