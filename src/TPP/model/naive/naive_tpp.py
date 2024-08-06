@@ -69,7 +69,7 @@ class Hawkes(nn.Module):
         self.base_intensity = nn.Parameter(torch.zeros(num_events, device = self.device))
 
         # \\alpha matrix
-        # \\alpha_{ij} is the effect of event i to event j.
+        # \\alpha_{ij}, or self.transition_matrix[i][j] is the effect of event i in history to the predicted event marked j.
         self.transition_matrix = nn.Parameter(torch.ones(num_events, num_events, device = self.device))
 
         # \\beta
@@ -88,7 +88,8 @@ class Hawkes(nn.Module):
         Forward function of the hawkes process.
         '''
         base_intensity = F.softplus(self.base_intensity)
-        transition_matrix = F.softplus(self.transition_matrix).T
+        transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
+                                                                               # [..., num_events + 1, num_events + 1]
         time_scaling_factors = F.softplus(self.time_scaling_factors)
 
         # calculating t_i - t_j.
@@ -114,21 +115,14 @@ class Hawkes(nn.Module):
         time_interval_matrix = time_interval_matrix.clamp(min = -1)            # [..., batch_size, seq_len, 1, seq_len]
         time_interval_matrix_from_t_l_to_t_i = time_interval_matrix_from_t_l_to_t_i.clamp(min = -1)
                                                                                # [..., batch_size, seq_len, 1, seq_len]
-
-
-        event_history_without_dummy_start = events_history[..., 1:]            # [batch_size, seq_len - 1]
-        if event_history_without_dummy_start.numel() == 0:
+        if events_history[..., 1:].numel() == 0:
             return self.base_intensity * time_next.unsqueeze(dim = -1), self.base_intensity * torch.ones_like(time_next.unsqueeze(dim = -1))
                                                                                # [..., batch_size, seq_len, num_events] * 2
-
         # gathering \\alpha_{m_i, m}
-        gather_index = repeat(event_history_without_dummy_start, 'b s -> b ne s', ne = self.num_events)
-                                                                               # [batch_size, num_events, seq_len - 1]
-        alpha = torch.gather(repeat(transition_matrix, '... -> b ...', b = batch_size), -1, gather_index)
-                                                                               # [batch_size, num_events, seq_len - 1]
-        
-        alpha = torch.concat([torch.zeros(*alpha.shape[:-1], 1, device = self.device), alpha], dim = -1).unsqueeze(dim = -3)
-                                                                               # [batch_size, 1, num_events, seq_len]
+        gather_index = repeat(events_history, 'b s -> b ne s', ne = self.num_events)
+                                                                               # [batch_size, num_events, seq_len]
+        alpha = torch.gather(repeat(transition_matrix, '... -> b ...', b = batch_size), -1, gather_index).unsqueeze(dim = -3)
+                                                                               # [batch_size, num_events, seq_len]
         # exp(-b_m(t_i - t_j))
         exp_b_m_t = torch.exp(-time_scaling_factors.unsqueeze(dim = -1) * time_interval_matrix)
                                                                                # [..., batch_size, seq_len, num_events, seq_len]
@@ -173,7 +167,8 @@ class Hawkes(nn.Module):
         Forward function of the hawkes process.
         '''
         base_intensity = F.softplus(self.base_intensity)
-        transition_matrix = F.softplus(self.transition_matrix).T
+        transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
+                                                                               # [..., num_events + 1, num_events + 1]
         time_scaling_factors = F.softplus(self.time_scaling_factors)
 
         # calculating t_i - t_j.
@@ -190,17 +185,13 @@ class Hawkes(nn.Module):
         # This action is safe because these negative values are t_i - t_j with i < j, while intensity and integral calculation only counts t_i - t_j with i >= j.
         time_interval_matrix = time_interval_matrix.clamp(min = -1)            # [batch_size, seq_len, integration_sample_rate, 1, seq_len]
 
-        event_history_without_dummy_start = events_history[..., 1:]            # [batch_size, seq_len - 1]
-        if event_history_without_dummy_start.numel() == 0:
+        if events_history[..., 1:].numel() == 0:
             return self.base_intensity * time_next.unsqueeze(dim = -1), self.base_intensity * torch.ones_like(time_next.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events] * 2
-
         # gathering \\alpha_{m_i, m}
-        gather_index = repeat(event_history_without_dummy_start, 'b s -> b ne s', ne = self.num_events)
-                                                                               # [batch_size, num_events, seq_len - 1]
+        gather_index = repeat(events_history, 'b s -> b ne s', ne = self.num_events)
+                                                                               # [batch_size, num_events, seq_len]
         alpha = torch.gather(repeat(transition_matrix, '... -> b ...', b = batch_size), -1, gather_index)
-                                                                               # [batch_size, num_events, seq_len - 1]
-        alpha = torch.concat([torch.zeros(*alpha.shape[:-1], 1, device = self.device), alpha], dim = -1)
                                                                                # [batch_size, num_events, seq_len]
         alpha = rearrange(alpha, 'b ne sl -> b () () ne sl')                   # [batch_size, 1, 1, num_events, seq_len]
         # exp(-b_m(t_i - t_j))
@@ -246,7 +237,8 @@ class Hawkes(nn.Module):
         Forward function of the hawkes process.
         '''
         base_intensity = F.softplus(self.base_intensity)
-        transition_matrix = F.softplus(self.transition_matrix).T
+        transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
+                                                                               # [..., num_events + 1, num_events + 1]
         time_scaling_factors = F.softplus(self.time_scaling_factors)
 
         # calculating t_i - t_j.
@@ -263,17 +255,13 @@ class Hawkes(nn.Module):
         # This action is safe because these negative values are t_i - t_j with i < j, while intensity and integral calculation only counts t_i - t_j with i >= j.
         time_interval_matrix = time_interval_matrix.clamp(min = -1)            # [batch_size, seq_len, num_events, integration_sample_rate, 1, seq_len]
 
-        event_history_without_dummy_start = events_history[..., 1:]            # [batch_size, seq_len - 1]
-        if event_history_without_dummy_start.numel() == 0:
+        if events_history[..., 1:].numel() == 0:
             return self.base_intensity * time_next.unsqueeze(dim = -1), self.base_intensity * torch.ones_like(time_next.unsqueeze(dim = -1))
                                                                                # [batch_size, seq_len, num_events, integration_sample_rate, num_events] * 2
-
         # gathering \\alpha_{m_i, m}
-        gather_index = repeat(event_history_without_dummy_start, 'b s -> b ne s', ne = self.num_events)
-                                                                               # [batch_size, num_events, seq_len - 1]
+        gather_index = repeat(events_history, 'b s -> b ne s', ne = self.num_events)
+                                                                               # [batch_size, num_events, seq_len]
         alpha = torch.gather(repeat(transition_matrix, '... -> b ...', b = batch_size), -1, gather_index)
-                                                                               # [batch_size, num_events, seq_len - 1]
-        alpha = torch.concat([torch.zeros(*alpha.shape[:-1], 1, device = self.device), alpha], dim = -1)
                                                                                # [batch_size, num_events, seq_len]
         alpha = rearrange(alpha, 'b ne sl -> b () () () ne sl')                # [batch_size, 1, 1, num_events, seq_len]
         # exp(-b_m(t_i - t_j))
