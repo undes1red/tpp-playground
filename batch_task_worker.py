@@ -99,7 +99,8 @@ if opt.script_type == 'previous_failed_tasks':
     except Exception as e:
         raise e
     
-    generated_tasks = f_previous_failed_tasks.readlines()
+    for command in f_previous_failed_tasks:
+        generated_tasks.append(command.strip())
     the_number_of_task = len(generated_tasks)
 else:
     parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')

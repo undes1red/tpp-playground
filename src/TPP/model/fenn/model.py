@@ -360,7 +360,7 @@ class FENNModel(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, resolution, num_events]
 
             p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-            probability = approximate_integration(p_dist, time_interval.cumsum(dim = -2), dim = -2, only_integral = True, func_val_x_having_same_shape = True)
+            probability = approximate_integration(p_dist, time_interval, dim = -2, only_integral = True, func_val_x_having_same_shape = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
 
@@ -556,7 +556,7 @@ class FENNModel(BasicModel):
         '''        
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        p_m = approximate_integration(expand_probability_per_event, time_interval.cumsum(dim = -1), dim = -2, only_integral = True)
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = reduce(p_m, 'b s ne -> b s', 'sum')         # [batch_size, seq_len]
         predict_index = torch.argmax(p_m, dim = -1)                            # [batch_size, seq_len]
@@ -910,7 +910,7 @@ class FENNModel(BasicModel):
                                                                                # [batch_size, seq_len, resolution, num_events]
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        p_m = approximate_integration(expand_probability_per_event, time_interval.cumsum(dim = -1), dim = -2, only_integral = True)
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', \
@@ -950,7 +950,7 @@ class FENNModel(BasicModel):
                                                                                # [batch_size, seq_len, resolution, num_events]
         expand_probability_per_event = expand_intensity_to_inf * torch.exp(-expand_integral_to_inf.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-        p_m = approximate_integration(expand_probability_per_event, time_interval.cumsum(dim = -1), dim = -2, only_integral = True)
+        p_m = approximate_integration(expand_probability_per_event, time_interval, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]  
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', \

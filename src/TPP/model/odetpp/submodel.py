@@ -6,7 +6,7 @@ import numpy as np
 from scipy.stats import spearmanr
 import math
 
-from src.TPP.model.utils import approximate_integration
+from src.toolbox.integration import approximate_integration
 from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
 from src.TPP.model.odetpp.model_factory import build_ode_model
 

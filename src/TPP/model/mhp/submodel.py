@@ -9,7 +9,7 @@ from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.activations import softplus_ext
 
-from src.TPP.model.utils import approximate_integration
+from src.toolbox.integration import approximate_integration
 from src.TPP.model.mhp.mamba import mamba
 from mamba_ssm import Mamba
 from mamba_ssm.models.mixer_seq_simple import create_block

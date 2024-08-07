@@ -1,4 +1,6 @@
 from einops import rearrange, repeat, reduce
+from src.toolbox.integration import approximate_integration
+
 import numpy as np
 
 
@@ -44,10 +46,8 @@ def L1_distance_between_two_funcs(x, y, timestamp, resolution):
                    the number of event types
     '''
 
-    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [batch_size * seq_len, resolution - 1]
-    timestamp = timestamp.reshape(-1, resolution)[:, 1:]                       # [batch_size * seq_len, resolution - 1]
-
-    L1 = (function_interval * timestamp).sum()
+    function_interval = np.abs(x - y).reshape(-1, resolution)          # [batch_size * seq_len, resolution]
+    L1 = approximate_integration(function_interval, timestamp, dim = -1, only_integral = True)
 
     # round up the value smaller than 1e-6
     if L1 < 1e-6:

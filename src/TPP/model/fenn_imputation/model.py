@@ -3,6 +3,9 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
+from src.toolbox.misc import check_tensor
+from src.toolbox.integration import approximate_integration
+
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.fenn_imputation.submodel import FENN
 from src.TPP.utils import pack_one_value_to_dict

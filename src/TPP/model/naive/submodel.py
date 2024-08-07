@@ -9,7 +9,6 @@ from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 
 import src.TPP.model.naive.naive_tpp as naive_tpp
-from src.TPP.model.utils import approximate_integration
 
 
 class NaiveModule(nn.Module):
@@ -42,7 +41,7 @@ class NaiveModule(nn.Module):
                                                                                # [batch_size, seq_len, integration_sample_rate]
         # Obtain timestamp
         timestamp = torch.concat(
-            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time.diff(dim = -1)], dim = -1
+            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time], dim = -1
         )                                                                      # [batch_size, seq_len, integration_sample_rate]
 
         return expanded_integral_all_events, expanded_intensity_all_events, timestamp
@@ -57,7 +56,7 @@ class NaiveModule(nn.Module):
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
         # Obtain timestamp
         timestamp = torch.concat(
-            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time.diff(dim = -1)], dim = -1
+            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time], dim = -1
         )                                                                      # [..., batch_size, seq_len, num_events, integration_sample_rate]
 
         return expanded_integral_all_events, expanded_intensity_all_events, timestamp
@@ -68,12 +67,12 @@ class NaiveModule(nn.Module):
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
 
         expanded_integral_all_events, expanded_intensity_all_events = \
-            self.naive_tpp.forward_time_next_2d(events_history, expanded_time, integration_sample_rate)
+            self.naive_tpp.forward_time_next_2d(events_history, time_history, expanded_time, integration_sample_rate)
                                                                                # [batch_size, seq_len, integration_sample_rate]
 
         # Obtain timestamp
         timestamp = torch.concat(
-            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time.diff(dim = -1)], dim = -1
+            [torch.zeros_like(time_next).unsqueeze(dim = -1), expanded_time], dim = -1
         )                                                                      # [batch_size, seq_len, integration_sample_rate]
         
         # construct the plot dict

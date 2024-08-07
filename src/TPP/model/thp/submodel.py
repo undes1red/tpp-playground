@@ -9,7 +9,7 @@ from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.activations import softplus_ext
 from src.toolbox.metrics import L1_distance_across_events
 
-from src.TPP.model.utils import approximate_integration
+from src.toolbox.integration import approximate_integration
 from src.TPP.model.thp.transformers import TransformerTPP
 
 

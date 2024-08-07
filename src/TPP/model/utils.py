@@ -3,6 +3,7 @@ import torch
 import numpy as np
 
 from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.integration import approximate_integration
 
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 
@@ -140,92 +141,6 @@ def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceilin
 
 
 '''
-Approximate an integral based on its definition.
-dim refers to the dimension index of expanded_func_value where the integration should be performed.
-This implementation is now deprecated and replaced by a wrapper of torch.trapezoid and torch.cumsum_trapezoid() which is much faster.
-'''
-def approximate_integration_old(expanded_func_value, expanded_x, dim, only_integral = False, func_val_x_having_same_shape = False):
-    # tensor check
-    func_val_number_of_dim = len(expanded_func_value.shape)
-    integration_sample_rate = expanded_func_value.shape[dim]
-
-    if func_val_x_having_same_shape:
-        assert expanded_x.shape == expanded_func_value.shape
-        dim_expanded_x = dim
-    else:
-        dim_expanded_x = -1
-
-    assert expanded_func_value.device == expanded_x.device
-    assert expanded_x.shape[dim_expanded_x] == integration_sample_rate
-    device = expanded_func_value.device
-    
-    expanded_func_value_1 = expanded_func_value.index_select(dim, torch.arange(integration_sample_rate - 1, device = device))
-                                                                               # [..., integration_sample_rate - 1, ...]
-    expanded_func_value_2 = expanded_func_value.index_select(dim, torch.arange(1, integration_sample_rate, device = device))
-                                                                               # [..., integration_sample_rate - 1, ...]
-    width_of_rectangle = expanded_x.diff(dim = dim_expanded_x)                 # [..., integration_sample_rate - 1, ...]
-
-    if not func_val_x_having_same_shape:
-        the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
-        einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
-        width_of_rectangle = rearrange(width_of_rectangle, einop)              # [..., integration_sample_rate - 1, ...]
-
-    # \\int_{a}{b}{f(x)dx} \\approx \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)i}{N - 1}) * \\frac{(b - a)}{N - 1}}
-    integral_of_all_events_1 = (expanded_func_value_1 * width_of_rectangle).cumsum(dim = dim)
-                                                                               # [..., integration_sample_rate - 1, ...]
-    # \\int_{a}{b}{f(x)dx} \\approx \\sum_{i = 0}^{N - 2}{f(\\frac{(b - a)(i + 1)}{N - 1}) * \\frac{(b - a)}{N - 1}}
-    integral_of_all_events_2 = (expanded_func_value_2 * width_of_rectangle).cumsum(dim = dim)
-                                                                               # [..., integration_sample_rate - 1, ...]
-    # Effectively increase the precision.
-    integral_of_all_events = (integral_of_all_events_1 + integral_of_all_events_2) / 2
-                                                                               # [..., integration_sample_rate - 1, ...]
-    
-    # Prepend 0 to integral_of_all_events because \\int_{t_l}^{t_l}{\\lambda^*(\\tau)d\\tau} = 0
-    # We have to check the shape.
-    integral_start_from_zero = torch.zeros(
-        ( *(integral_of_all_events.shape[:dim]), 1, *(integral_of_all_events.shape[dim + 1:] if dim != -1 else []) ), 
-        device = device)                                                       # [..., 1, ...]
-    integral_of_all_events = torch.concat((integral_start_from_zero, integral_of_all_events), dim = dim)
-                                                                               # [..., integration_sample_rate, ...]
-    
-    if only_integral:
-        integral_of_all_events = torch.select(integral_of_all_events, dim, -1) # [...]
-
-    return integral_of_all_events
-
-
-'''
-Approximate an integral based on its definition.
-dim refers to the dimension index of expanded_func_value where the integration should be performed.
-'''
-def approximate_integration(expanded_func_value, expanded_x, dim, only_integral = False, func_val_x_having_same_shape = False):
-    # tensor check
-    func_val_number_of_dim = len(expanded_func_value.shape)
-    device = expanded_func_value.device
-
-    if not func_val_x_having_same_shape:
-        the_number_of_dimensions_after_integration_dim = abs(dim) - 1 if dim < 0 else func_val_number_of_dim - dim - 1
-        einop = f'... -> ... {"() " * the_number_of_dimensions_after_integration_dim}'
-        expanded_x = rearrange(expanded_x, einop)                              # [..., integration_sample_rate - 1, ...]
-    
-    if only_integral:
-        integral_of_all_events = torch.trapezoid(y = expanded_func_value, x = expanded_x, dim = dim)
-                                                                               # [...]
-    else:
-        integral_of_all_events = torch.cumulative_trapezoid(y = expanded_func_value, x = expanded_x, dim = dim)
-                                                                               # [..., integration_sample_rate, ...]
-        # Prepend 0 to integral_of_all_events because \\int_{t_l}^{t_l}{\\lambda^*(\\tau)d\\tau} = 0
-        # We have to check the shape.
-        integral_start_from_zero = torch.zeros(
-            ( *(integral_of_all_events.shape[:dim]), 1, *(integral_of_all_events.shape[dim + 1:] if dim != -1 else []) ), 
-            device = device)                                                   # [..., 1, ...]
-        integral_of_all_events = torch.concat((integral_start_from_zero, integral_of_all_events), dim = dim)
-                                                                               # [..., integration_sample_rate, ...]
-
-    return integral_of_all_events
-
-
-'''
 custom metrics
 '''
 def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
@@ -260,97 +175,6 @@ def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
     
     return f1, top_k_acc
 
-
-def L1_distance_across_events(input, resolution, num_events, time_next):
-    '''
-    This function calculates the L^1 distance between two functions in scattered form.
-    Input:
-    1. input:      function values
-                   [seq_len * resolution, num_events]
-    2. resolution: int
-                   the number of points from [t_{i - 1}, t_i]
-    3. num_events: int
-                   the number of event types
-    4. time_next:  [seq_len, num_events]
-                   the length of all intervals with interpolations.
-    '''
-
-    input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
-    intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
-
-    gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
-    gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
-
-    L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
-                                                                               # [num_events, num_events]
-    # round off the value smaller than 1e-6
-    L1[L1 < 1e-6] = 0
-
-    return L1
-
-
-def L1_distance_between_two_funcs(x, y, timestamp, resolution):
-    '''
-    This function calculates the L^1 distance between two functions.
-    Input:
-    1. x:          function values
-                   [seq_len * resolution, num_events]
-    2. y:          function values
-                   the number of points from [t_{i - 1}, t_i]
-    3. time:       \\Delta t
-                   the number of event types
-    '''
-
-    function_interval = np.abs(x - y).reshape(-1, resolution)[:, :-1]          # [batch_size * seq_len, resolution - 1]
-    timestamp = timestamp.reshape(-1, resolution)[:, 1:]                       # [batch_size * seq_len, resolution - 1]
-
-    L1 = (function_interval * timestamp).sum()
-
-    # round up the value smaller than 1e-6
-    if L1 < 1e-6:
-        L1 = 0
-
-    return L1
-
-
-def figure_instruction_generator(*args, figure_kwargs = {}):
-    packed_data = {}
-
-    # Packaging figure instructions.
-    if len(figure_kwargs) == 0:
-        figure_kwargs = {'layout': (1, 1)}
-    elif figure_kwargs.get('layout') is None:
-        figure_kwargs['layout'] = (1, 1)
-
-    packed_data['figure'] = figure_kwargs
-
-    # Packaging plot instructions 
-    packed_data['plots'] = []
-    found_preamble = False
-    for subplot in args:
-        plot_instruction = {'preamble': {}, 'commands': []}
-        for subplot_instruction in subplot:
-            '''
-            Preamble dict found.
-            '''
-            if subplot_instruction.get('plot_type') is None and not found_preamble:
-                found_preamble = True
-                plot_instruction['preamble'] = subplot_instruction
-                continue
-            
-            if subplot_instruction.get('plot_type') is None and found_preamble:
-                raise Exception('Multiple preambles found!')
-
-            '''
-            Only the instruction of the plot.
-            '''
-            plot_instruction['commands'].append(subplot_instruction)
-    
-        packed_data['plots'].append(plot_instruction)
-
-    return packed_data
 
 '''
 For EHD.
