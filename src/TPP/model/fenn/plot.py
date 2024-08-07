@@ -38,7 +38,7 @@ def plot_intensity(data, timestamp, opt):
         seq_len = mask_next_per_seq.sum()
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq, 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': time_next_per_seq.cumsum(dim = -1), 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -138,7 +138,7 @@ def plot_integral(data, timestamp, opt):
         seq_len = mask_next_per_seq.sum()
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq, 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': time_next_per_seq.cumsum(dim = -1), 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -205,7 +205,7 @@ def plot_probability(data, timestamp, opt):
         seq_len = mask_next_per_seq.sum()
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq, 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': time_next_per_seq.cumsum(dim = -1), 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -321,7 +321,7 @@ def plot_debug(data, timestamp, opt):
         seq_len = mask_next_per_seq.sum()
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq, 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': time_next_per_seq.cumsum(dim = -1), 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 

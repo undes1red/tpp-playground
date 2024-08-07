@@ -211,9 +211,8 @@ class FENN(nn.Module):
         '''
         batch_size, seq_len = events_history.shape
         dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
+        timestamp = torch.cat([dummy_inception, original_time_expand], dim = -1)
+                                                                               # [batch_size, seq_len, resolution]
 
         return expand_integral, expand_intensity, timestamp
 
@@ -386,9 +385,7 @@ class FENN(nn.Module):
         '''
         batch_size, seq_len = time_history.shape
         zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timstamp_ps = pack(
-            [zero_inception, original_time_expand],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
+        timestamp = torch.cat([zero_inception, original_time_expand],dim = -1) # [batch_size, seq_len, resolution]
         
         '''
         The data dict is defined here.
