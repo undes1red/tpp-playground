@@ -7,7 +7,6 @@ from scipy.stats import spearmanr
 
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
-
 from src.toolbox.integration import approximate_integration
 
 

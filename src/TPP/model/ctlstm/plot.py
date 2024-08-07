@@ -43,7 +43,7 @@ def plot_intensity(data, timestamp, opt):
 
         if true_intensity_per_seq is not None:
             df_intensity = pd.DataFrame.from_dict(
-                    {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
+                    {'Time': timestamp_per_seq.flatten(),
                      'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
                      'Truth': true_intensity_per_seq[:seq_len, :].flatten()}
             )
@@ -59,7 +59,7 @@ def plot_intensity(data, timestamp, opt):
             annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
         else:
             df_intensity = pd.DataFrame.from_dict(
-                    {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
+                    {'Time': timestamp_per_seq.flatten(),
                      'Intensity': expand_intensity_per_seq[:seq_len, :].flatten()})
             annotation = ''
 
@@ -141,7 +141,7 @@ def plot_integral(data, timestamp, opt):
         )
 
         df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
+                {'Time': timestamp_per_seq.flatten(),
                  'Integral': expand_integral_per_seq[:seq_len, :].flatten()}
         )
 
@@ -210,7 +210,7 @@ def plot_probability(data, timestamp, opt):
 
         if true_probability_per_seq is not None:
             df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
+                {'Time': timestamp_per_seq.flatten(),
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten(),
                  'Truth': true_probability_per_seq[:seq_len, :].flatten()}
             )
@@ -226,7 +226,7 @@ def plot_probability(data, timestamp, opt):
             annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
         else:
             df = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
+                {'Time': timestamp_per_seq.flatten(),
                  'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten()}
             )
             annotation = ''
@@ -327,12 +327,12 @@ def plot_debug(data, timestamp, opt):
         event_list = [f'Event {i}' for i in range(num_events)]
     
         df_intensity = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
+                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
                  'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(), 
                  'Mark': event_list * (seq_len * resolution)}
             )
         df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().cumsum(axis = -1).repeat(num_events), 
+                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
                  'Integral': expand_integral_per_seq[:seq_len, :, :].flatten(),
                  'Mark': event_list * (seq_len * resolution)}
             )
