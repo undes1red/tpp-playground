@@ -1,1 +1,1 @@
-from src.toolbox.nonneg_mlp import NonNegLinear
+from src.toolbox.nonneg_mlp.nonneg import NonNegLinear
