@@ -256,7 +256,7 @@ class TPPTrainer:
             self.transform_report_sum_into_recording_df(procedure = dataset_name, current_step = current_step, data = plain_evaluation_results)
             if self.opt.wandb:
                 import wandb
-                wandb.log({dataset_name: evaluation_results}, step = current_step)
+                wandb.log({dataset_name: plain_evaluation_results}, step = current_step)
         
         return plain_evaluation_results
 
