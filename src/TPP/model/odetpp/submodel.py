@@ -412,8 +412,7 @@ class ODETPP(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
-                                            resolution = integration_sample_rate, num_events = self.num_events,
-                                            time_next = time_next_per_seq[:seq_len])
+                                                          time_next = time_next_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)

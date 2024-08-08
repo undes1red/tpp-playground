@@ -190,8 +190,8 @@ class CTLSTM(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, expanded_time)):
             seq_len = mask_per_seq.sum()
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
             probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
@@ -211,8 +211,7 @@ class CTLSTM(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
-                                            resolution = integration_sample_rate, num_events = self.num_events,
-                                            time_next = time_next_per_seq[:seq_len])
+                                                          time_next = expanded_time_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)

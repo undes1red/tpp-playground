@@ -375,15 +375,14 @@ class FENN(nn.Module):
 
 
         expand_intensity = rearrange(expand_intensity, 'b s r ne -> b (s r) ne')
-                                                                           # [batch_size, seq_len * resolution, num_event]
-        expand_integral = rearrange(expand_integral, 'b s r ne -> b (s r) ne')
-                                                                           # [batch_size, seq_len * resolution, num_event]
+                                                                               # [batch_size, seq_len * resolution, num_event]
+        expand_integral = rearrange(expand_integral, 'b s r ne -> b (s r) ne') # [batch_size, seq_len * resolution, num_event]
         
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, original_time_expand_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, original_time_expand)):
             seq_len = mask_per_seq.sum()
 
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
@@ -404,8 +403,8 @@ class FENN(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
-                                                          resolution = resolution, num_events = self.num_events,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          resolution = resolution,
+                                                          time_next = original_time_expand_per_seq[:seq_len])
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)

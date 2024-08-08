@@ -1,32 +1,32 @@
 from einops import rearrange, repeat, reduce
 from src.toolbox.integration import approximate_integration
+from src.toolbox.misc import move_from_tensor_to_ndarray
 
 import numpy as np
 
 
-def L1_distance_across_events(input, resolution, num_events, time_next):
+def L1_distance_across_events(input, time_next, has_flatten = False):
     '''
     This function calculates the L^1 distance between two functions in scattered form.
     Input:
-    1. input:      function values
-                   [seq_len * resolution, num_events]
-    2. resolution: int
-                   the number of points from [t_{i - 1}, t_i]
-    3. num_events: int
-                   the number of event types
-    4. time_next:  [seq_len, num_events]
-                   the length of all intervals with interpolations.
+    1. input:       function values
+                    [seq_len, resolution, num_events] or [seq_len * resolution, num_events] if has_flatten is True.
+    2. time_next:   int
+                    [seq_len, resolution]
+    3. has_flatten: bool
+                    See the description of "input".
     '''
-
-    input = rearrange(input, '(s r) ne -> ne s r', r = resolution)             # [num_events, seq_len, resolution]
-    intensity_1 = repeat(input, 'ne s r -> ne new_d s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
-    intensity_2 = repeat(input, 'ne s r -> new_d ne s r', new_d = num_events)  # [num_events, num_events, seq_len, resolution]
+    resolution = time_next.shape[-1]
+    if has_flatten:
+        input = rearrange(input, '(s r) ne -> ne s r', r = resolution)         # [num_events, seq_len, resolution]
+    else:
+        input = rearrange(input, 's r ne -> ne s r')                           # [num_events, seq_len, resolution]
+    intensity_1 = rearrange(input, 'ne s r -> ne () s r')                      # [num_events, 1, seq_len, resolution]
+    intensity_2 = rearrange(input, 'ne s r -> () ne s r')                      # [1, num_events, seq_len, resolution]
     delta_intensity = np.abs(intensity_1 - intensity_2)                        # [num_events, num_events, seq_len, resolution]
 
-    gap = time_next.detach().cpu().numpy() / (resolution - 1)                  # [seq_len]
-    gap = rearrange(gap, 's -> 1 1 s 1')                                       # [num_events, num_events, seq_len, 1]
-
-    L1 = reduce((delta_intensity * gap)[:, :, :, :-1], 'ne1 ne2 s r -> ne1 ne2', 'sum')
+    timestamp = move_from_tensor_to_ndarray(time_next)                         # [seq_len, resolution]
+    L1 = approximate_integration(delta_intensity, timestamp, dim = -1, only_integral = True).sum(axis = -1)
                                                                                # [num_events, num_events]
     # round off the value smaller than 1e-6
     L1[L1 < 1e-6] = 0
@@ -34,23 +34,50 @@ def L1_distance_across_events(input, resolution, num_events, time_next):
     return L1
 
 
-def L1_distance_between_two_funcs(x, y, timestamp, resolution):
+def L1_distance_between_two_funcs(x, y, timestamp):
     '''
     This function calculates the L^1 distance between two functions.
     Input:
     1. x:          function values
-                   [seq_len * resolution, num_events]
+                   [seq_len, resolution]
     2. y:          function values
-                   the number of points from [t_{i - 1}, t_i]
-    3. time:       \\Delta t
-                   the number of event types
+                   [seq_len, resolution]
+    3. timestamp:  timestamp
+                   [seq_len, resolution]
     '''
 
-    function_interval = np.abs(x - y).reshape(-1, resolution)          # [batch_size * seq_len, resolution]
-    L1 = approximate_integration(function_interval, timestamp, dim = -1, only_integral = True)
-
+    function_interval = np.abs(x - y)                                          # [seq_len, resolution]
+    L1 = approximate_integration(function_interval, timestamp, dim = -1, only_integral = True).sum()
     # round up the value smaller than 1e-6
     if L1 < 1e-6:
         L1 = 0
 
     return L1
+
+
+if __name__ == '__main__':
+    resolution = 11
+    x = np.arange(0, resolution)
+    func1 = 2 * x
+    func2 = 3 * x
+    func3 = 4 * x
+
+    print(f'func1: {func1}')
+    print(f'func2: {func2}')
+    print(f'func3: {func3}')
+
+    L1 = L1_distance_between_two_funcs(func1, func2, x)
+    print(f'L1: {L1.item()}')
+    print('L1 should be 50.')
+
+    func = np.stack([func1, func2, func3], axis = -1)
+    l1_matrix = L1_distance_across_events(func, x, has_flatten = True)
+    print(l1_matrix)
+    print('The matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')
+
+
+    func = np.stack([func1, func2, func3], axis = -1)
+    func = np.expand_dims(func, axis = 0)
+    l1_matrix = L1_distance_across_events(func, x)
+    print(l1_matrix)
+    print('The matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')

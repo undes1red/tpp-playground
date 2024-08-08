@@ -874,10 +874,8 @@ class DSTPPWrapper(BasicModule):
             spearman_per_seq = \
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
-            l1_per_seq = L1_distance_between_two_funcs(
-                                        x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution
-                                        )
+            l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                                       timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 

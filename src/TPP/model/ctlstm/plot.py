@@ -35,9 +35,13 @@ def plot_intensity(data, timestamp, opt):
     for idx, (expand_intensity_per_seq, events_next_per_seq, time_next_per_seq, mask_next_per_seq, timestamp_per_seq, true_intensity_per_seq) \
         in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
+        start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
+        timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
+        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -54,7 +58,7 @@ def plot_intensity(data, timestamp, opt):
             r = np.corrcoef(x = true_intensity_per_seq[:seq_len, :].flatten(), y = expand_intensity_per_seq[:seq_len, :].flatten())[0, 1]
             # L1 distance
             L1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
-                                               timestamp = timestamp_per_seq, resolution = opt.resolution)
+                                               timestamp = timestamp_per_seq)
 
             annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
         else:
@@ -134,9 +138,13 @@ def plot_integral(data, timestamp, opt):
     for idx, (expand_integral_per_seq, events_next_per_seq, time_next_per_seq, mask_next_per_seq, timestamp_per_seq) \
         in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
+        start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
+        timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
+        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -202,9 +210,13 @@ def plot_probability(data, timestamp, opt):
     for idx, (expand_probability_per_seq, events_next_per_seq, time_next_per_seq, mask_next_per_seq, timestamp_per_seq, true_probability_per_seq) \
         in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
+        start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
+        timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
+        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
@@ -221,7 +233,7 @@ def plot_probability(data, timestamp, opt):
             r = np.corrcoef(x = true_probability_per_seq[:seq_len, :].flatten(), y = expand_probability_per_seq[:seq_len, :].flatten())[0, 1]
             # L1 distance
             L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                               timestamp = timestamp_per_seq, resolution = opt.resolution)
+                                               timestamp = timestamp_per_seq)
 
             annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
         else:
@@ -318,13 +330,17 @@ def plot_debug(data, timestamp, opt):
     for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_intensity_per_seq, \
               expand_integral_per_seq, timestamp_per_seq) in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
+        start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
+        timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
+        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(
-                {'Time': time_next_per_seq.cumsum(axis = -1), 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
-        event_list = [f'Event {i}' for i in range(num_events)]
+        event_list = [f'Mark {i}' for i in range(num_events)]
     
         df_intensity = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().repeat(num_events), 

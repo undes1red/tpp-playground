@@ -488,8 +488,8 @@ class MarkedLogNormMixWrapper(BasicModel):
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * opt.resolution], 
-                                            resolution = opt.resolution, num_events = self.num_events,
-                                            time_next = time_next_per_seq[:seq_len])
+                                                          resolution = opt.resolution,
+                                                          time_next = time_next_per_seq[:seq_len])
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
@@ -547,7 +547,7 @@ class MarkedLogNormMixWrapper(BasicModel):
 
             l1_per_seq = L1_distance_between_two_funcs(
                                         x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution)
+                                        timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 

@@ -547,8 +547,8 @@ class LLMTPP(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
-                                            resolution = resolution, num_events = self.num_events,
-                                            time_next = time_next_per_seq[:seq_len])
+                                                          resolution = resolution,
+                                                          time_next = time_next_per_seq[:seq_len])
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
