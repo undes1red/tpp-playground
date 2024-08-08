@@ -98,7 +98,8 @@ class FullyNN(nn.Module):
             events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
         else:
             events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
-        history = torch.cat([events_embeddings, time_history], dim = -1)       # [batch_size, seq_len, d_history + 1]
+        history = torch.cat([events_embeddings, time_history.unsqueeze(dim = -1)], dim = -1)
+                                                                               # [batch_size, seq_len, d_history + 1]
         
         # Reshape hidden output for full connection layers.
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
@@ -167,7 +168,8 @@ class FullyNN(nn.Module):
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history = torch.cat([events_embeddings, time_history], dim = -1)       # [batch_size, seq_len, d_history + 1]
+        history = torch.cat([events_embeddings, time_history.unsqueeze(dim = -1)], dim = -1)
+                                                                               # [batch_size, seq_len, d_history + 1]
         
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
@@ -264,7 +266,8 @@ class FullyNN(nn.Module):
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history = torch.cat([events_embeddings, time_history], dim = -1)       # [batch_size, seq_len, d_history + 1]
+        history = torch.cat([events_embeddings, time_history.unsqueeze(dim = -1)], dim = -1)
+                                                                               # [batch_size, seq_len, d_history + 1]
 
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
