@@ -403,8 +403,7 @@ class FENN(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
-                                                          resolution = resolution,
-                                                          time_next = original_time_expand_per_seq[:seq_len])
+                                                          time_next = original_time_expand_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
