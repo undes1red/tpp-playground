@@ -217,15 +217,7 @@ class FullyNN(nn.Module):
         expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events]
         expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        batch_size, seq_len = events_history.shape
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp = torch.cat([dummy_inception, original_time_expand], dim = -1)
-                                                                               # [batch_size, seq_len, resolution]
-
-        return expand_integral, expand_intensity, timestamp
+        return expand_integral, expand_intensity, original_time_expand
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, std):
@@ -316,14 +308,7 @@ class FullyNN(nn.Module):
         expand_integral = expand_integral.squeeze(dim = -1).detach()           # [..., batch_size, seq_len, resolution, num_events, num_events]
         expand_intensity = expand_intensity.detach()                           # [..., batch_size, seq_len, resolution, num_events, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        dummy_inception = torch.zeros_like(time_next).unsqueeze(dim = -2)      # [..., batch_size, seq_len, resolution, num_events]
-        timestamp = torch.cat([dummy_inception, original_time_expand], dim = -2)
-                                                                               # [..., batch_size, seq_len, resolution, num_events]
-
-        return expand_integral, expand_intensity, timestamp
+        return expand_integral, expand_intensity, original_time_expand
 
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, std, mask_next):
@@ -387,13 +372,6 @@ class FullyNN(nn.Module):
         time_expand.requires_grad = False
 
         expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events]
-
-        '''
-        Obtain timestamp here.
-        '''
-        batch_size, seq_len = time_history.shape
-        zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp = torch.cat([zero_inception, original_time_expand], dim = -1)# [batch_size, seq_len, resolution]
         
         '''
         The data dict is defined here.
@@ -441,4 +419,4 @@ class FullyNN(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        return data, timestamp
+        return data, original_time_expand

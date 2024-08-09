@@ -316,16 +316,7 @@ class IFIBC(nn.Module):
 
         expand_probability = expand_probability.detach()                       # [batch_size, seq_len, resolution, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        batch_size, seq_len = events_history.shape[0], events_history.shape[1]
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-
-        return expand_probability, timestamp
+        return expand_probability, original_time_expand
 
 
     def get_event_embedding(self, input_event):
@@ -467,4 +458,4 @@ class IFIBC(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        return data, timestamp
+        return data, original_time_expand

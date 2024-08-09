@@ -3,7 +3,6 @@ import torch
 import numpy as np
 
 from src.toolbox.misc import move_from_tensor_to_ndarray
-from src.toolbox.integration import approximate_integration
 
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 
