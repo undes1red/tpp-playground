@@ -4,6 +4,7 @@ from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
@@ -682,7 +683,7 @@ class NaiveMTPPWrapper(BasicModel):
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
             l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                                       timestamp = timestamp_per_seq, resolution = opt.resolution)
+                                                       timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
