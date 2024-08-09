@@ -7,18 +7,9 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.nonneg_mlp import NonNegLinear
 from src.toolbox.metrics import L1_distance_across_events
+from src.toolbox.activations import scaled_tanh
 
 from src.TPP.model.tifib_c.transformers import TransEncoder
-
-
-class new_tanh(nn.Module):
-    def __init__(self, parameter = 1, device = None):
-        super(new_tanh, self).__init__()
-        self.device = device
-        self.parameter = parameter
-    
-    def forward(self, x):
-        return self.parameter * nn.functional.tanh(x)
 
 
 class TIFIBC(nn.Module):
@@ -49,7 +40,7 @@ class TIFIBC(nn.Module):
         ])
 
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
-        self.layer_activation = new_tanh(self.tanh_parameter, device = self.device)
+        self.layer_activation = scaled_tanh(self.tanh_parameter, device = self.device)
 
         self.nonneg_activation = nn.Softplus()
         self.nonneg_factor = nn.ReLU()
@@ -308,16 +299,7 @@ class TIFIBC(nn.Module):
 
         expand_probability = expand_probability.detach()                       # [batch_size, seq_len, resolution, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        batch_size, seq_len = events_history.shape[0], events_history.shape[1]
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-
-        return expand_probability, timestamp
+        return expand_probability, original_time_expand
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, std):
@@ -399,14 +381,6 @@ class TIFIBC(nn.Module):
                 
         time_expand.requires_grad = False
 
-        # Timestamp part
-        batch_size, seq_len = hidden_history.shape[0], hidden_history.shape[1]
-        zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timstamp_ps = pack(
-            [zero_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-        timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
-
         '''
         The data dict is defined here.
         This dict should pack all data required by plot().
@@ -422,8 +396,7 @@ class TIFIBC(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for _, (expand_probability_per_seq, mask_next_per_seq, time_next_per_seq) in \
-                                              enumerate(zip(probability_for_each_event, mask_next, time_next)):
+        for _, (expand_probability_per_seq, mask_next_per_seq, original_time_expand_per_seq) in enumerate(zip(probability_for_each_event, mask_next, original_time_expand)):
             seq_len = mask_next_per_seq.sum()
             expand_probability_per_seq = move_from_tensor_to_ndarray(expand_probability_per_seq)
 
@@ -442,8 +415,7 @@ class TIFIBC(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
-                                                          resolution = resolution,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          time_next = original_time_expand_per_seq[:seq_len])
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
@@ -453,4 +425,4 @@ class TIFIBC(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        return data, timestamp
+        return data, original_time_expand

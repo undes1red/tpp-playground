@@ -440,7 +440,7 @@ def plot_debug(data, timestamp, opt):
         seq_len = sampled_mask_next_per_seq.sum()
         start_time = sampled_time_next_per_seq[:seq_len].cumsum(axis = -1)
         timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
-        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        sampled_timestamp_per_seq[:, 0] = sampled_timestamp_per_seq[:, 0] + 1e-30
         sampled_timestamp_per_seq = sampled_timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(
@@ -556,7 +556,7 @@ def plot_debug(data, timestamp, opt):
         seq_len = sampled_mask_next_per_seq.sum()
         start_time = sampled_time_next_per_seq[:seq_len].cumsum(axis = -1)
         timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
-        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
+        sampled_timestamp_per_seq[:, 0] = sampled_timestamp_per_seq[:, 0] + 1e-30
         sampled_timestamp_per_seq = sampled_timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
         df_event = pd.DataFrame.from_dict(

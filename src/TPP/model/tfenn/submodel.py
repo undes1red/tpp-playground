@@ -191,16 +191,7 @@ class TFENN(nn.Module):
         expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events]
         expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        batch_size, seq_len = events_history.shape
-        dummy_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timestamp_ps = pack(
-            [dummy_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-
-        return expand_integral, expand_intensity, timestamp
+        return expand_integral, expand_intensity, original_time_expand
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, resolution, mean, std):
@@ -288,14 +279,7 @@ class TFENN(nn.Module):
         expand_integral = expand_integral.squeeze(dim = -1).detach()           # [..., batch_size, seq_len, resolution, num_events, num_events]
         expand_intensity = expand_intensity.detach()                           # [..., batch_size, seq_len, resolution, num_events, num_events]
 
-        '''
-        Restore the original timestamp
-        '''
-        dummy_inception = torch.zeros_like(time_next).unsqueeze(dim = -2)      # [..., batch_size, seq_len, resolution, num_events]
-        timestamp = torch.cat([dummy_inception, original_time_expand.diff(dim = -2)], dim = -2)
-                                                                               # [..., batch_size, seq_len, resolution, num_events]
-
-        return expand_integral, expand_intensity, timestamp
+        return expand_integral, expand_intensity, original_time_expand
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, std):
@@ -356,15 +340,6 @@ class TFENN(nn.Module):
         time_expand.requires_grad = False
 
         expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events]
-
-        '''
-        Obtain timestamp here.
-        '''
-        batch_size, seq_len = time_history.shape
-        zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timstamp_ps = pack(
-            [zero_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
         
         '''
         The data dict is defined here.
@@ -382,8 +357,8 @@ class TFENN(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for _, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for _, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, original_time_expand_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, original_time_expand)):
             seq_len = mask_per_seq.sum()
 
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
@@ -404,8 +379,7 @@ class TFENN(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
-                                                          resolution = resolution,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          time_next = original_time_expand_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
@@ -414,4 +388,4 @@ class TFENN(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        return data, timestamp
+        return data, original_time_expand
