@@ -295,10 +295,6 @@ class RecurrentTPP(nn.Module):
         # drop probability predictions between the last event and end_time.
         probability = torch.exp(expanded_log_p[:, :-1, :])                     # [batch_size, seq_len, resolution]
 
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_inter_times[:, :-1, :].diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
-
         '''
         # Survival probability of the last interval (from t_N to t_end).
         # You can comment this section of the code out if you don't want to implement the log_survival_function
@@ -306,7 +302,7 @@ class RecurrentTPP(nn.Module):
         # but the difference shouldn't be significant if you are working with long sequences.
         '''
 
-        return probability, timestamp
+        return probability, expanded_inter_times
 
 
     def log_cdf(self, input_events, input_time, input_mask, taus, mean, std) -> torch.Tensor:

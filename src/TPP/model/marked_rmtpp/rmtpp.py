@@ -126,17 +126,11 @@ class MRMTPPModule(nn.Module):
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, num_events, resolution]
         integral_events = (intensity_events - constant) / time_scalar * std    # [batch_size, seq_len, num_events, resolution]
-
-        # aggregated timestamp
-        batch_size, seq_len, _ = original_time_expand.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
         
         intensity = rearrange(intensity_events, 'b s ne r -> b s r ne')        # [batch_size, seq_len, resolution, num_events]
         integral = rearrange(integral_events, 'b s ne r -> b s r ne')          # [batch_size, seq_len, resolution, num_events]
 
-        return integral, intensity, timestamp
+        return integral, intensity, original_time_expand
     
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, std):
@@ -178,13 +172,8 @@ class MRMTPPModule(nn.Module):
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [..., batch_size, seq_len, num_events, resolution, num_events]
         integral_events = (intensity_events - constant) / time_scalar * std    # [..., batch_size, seq_len, num_events, resolution, num_events]
-
-        # aggregated timestamp
-        timestamp = torch.cat(
-            (torch.zeros((*time_next.shape[:-1], self.num_events, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [..., batch_size, seq_len, resolution]
         
-        return integral_events, intensity_events, timestamp
+        return integral_events, intensity_events, original_time_expand
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, std):
@@ -219,12 +208,6 @@ class MRMTPPModule(nn.Module):
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, 1, resolution]
         integral_events = (intensity_events - constant) / time_scalar * std    # [batch_size, seq_len, 1, resolution]
-
-        # aggregated timestamp
-        batch_size, seq_len, _ = original_time_expand.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
         
         intensity = rearrange(intensity_events, 'b s ne r -> b s r ne')        # [batch_size, seq_len, resolution, num_events]
         integral = rearrange(integral_events, 'b s ne r -> b s r ne')          # [batch_size, seq_len, resolution, num_events]
@@ -242,8 +225,8 @@ class MRMTPPModule(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, original_time_expand_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, original_time_expand)):
             seq_len = mask_per_seq.sum()
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
             probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
@@ -263,8 +246,7 @@ class MRMTPPModule(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * resolution], 
-                                                          resolution = resolution,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          original_time_expand_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
@@ -273,4 +255,4 @@ class MRMTPPModule(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        return data, timestamp
+        return data, original_time_expand

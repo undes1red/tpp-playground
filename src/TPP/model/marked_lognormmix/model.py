@@ -3,6 +3,7 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, reduce, repeat
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.metrics import L1_distance_across_events
 
 from src.TPP.model.marked_lognormmix.log_norm_mix import MarkedLogNormMix
 from src.TPP.model.marked_lognormmix.plot import *
@@ -545,9 +546,8 @@ class MarkedLogNormMixWrapper(BasicModel):
             spearman_per_seq = \
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
-            l1_per_seq = L1_distance_between_two_funcs(
-                                        x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq)
+            l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                                       timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 

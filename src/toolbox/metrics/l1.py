@@ -48,7 +48,7 @@ def L1_distance_between_two_funcs(x, y, timestamp):
 
     function_interval = np.abs(x - y)                                          # [seq_len, resolution]
     L1 = approximate_integration(function_interval, timestamp, dim = -1, only_integral = True).sum()
-    # round up the value smaller than 1e-6
+    # round off the value smaller than 1e-6
     if L1 < 1e-6:
         L1 = 0
 
@@ -73,11 +73,11 @@ if __name__ == '__main__':
     func = np.stack([func1, func2, func3], axis = -1)
     l1_matrix = L1_distance_across_events(func, x, has_flatten = True)
     print(l1_matrix)
-    print('The matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')
+    print('The output matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')
 
 
     func = np.stack([func1, func2, func3], axis = -1)
     func = np.expand_dims(func, axis = 0)
     l1_matrix = L1_distance_across_events(func, x)
     print(l1_matrix)
-    print('The matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')
+    print('The output matrix should be [[0, 50, 100], [50, 0, 50], [100, 50, 0]]')
