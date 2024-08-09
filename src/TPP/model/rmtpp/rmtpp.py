@@ -140,16 +140,10 @@ class RMTPPModule(nn.Module):
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, 1, resolution]
         integral_events = (intensity_events - constant) / time_scalar * std    # [batch_size, seq_len, 1, resolution]
 
-        # aggregated timestamp
-        batch_size, seq_len, _ = original_time_expand.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
-        
         intensity = rearrange(intensity_events, 'b s ne r -> b s r ne')        # [batch_size, seq_len, resolution, 1]
         integral = rearrange(integral_events, 'b s ne r -> b s r ne')          # [batch_size, seq_len, resolution, 1]
 
-        return integral, intensity, timestamp
+        return integral, intensity, original_time_expand
 
 
     def model_probe_function(self, events_history, time_history, time_next, resolution, mean, std):
@@ -188,12 +182,6 @@ class RMTPPModule(nn.Module):
         
         intensity_events = torch.exp(time_scalar * expanded_time) * constant   # [batch_size, seq_len, 1, resolution]
         integral_events = (intensity_events - constant) / time_scalar * std    # [batch_size, seq_len, 1, resolution]
-
-        # aggregated timestamp
-        batch_size, seq_len, _ = original_time_expand.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), original_time_expand.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, resolution]
         
         intensity = rearrange(intensity_events, 'b s ne r -> b s r ne')        # [batch_size, seq_len, resolution, 1]
         integral = rearrange(integral_events, 'b s ne r -> b s r ne')          # [batch_size, seq_len, resolution, 1]
@@ -206,4 +194,4 @@ class RMTPPModule(nn.Module):
         data['expand_integral_for_each_event'] = integral                      # [batch_size, seq_len, resolution, 1]
 
 
-        return data, timestamp
+        return data, original_time_expand
