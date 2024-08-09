@@ -404,14 +404,6 @@ class IFIBC(nn.Module):
                 
         time_expand.requires_grad = False
 
-        # Timestamp part
-        batch_size, seq_len = hidden_history.shape[0], hidden_history.shape[1]
-        zero_inception = torch.zeros((batch_size, seq_len, 1), device = self.device)
-        timestamp, timstamp_ps = pack(
-            [zero_inception, original_time_expand.diff(dim = -1)],
-            'b s *')                                                           # [batch_size, seq_len, resolution]
-        timestamp = rearrange(timestamp, 'b s r -> b (s r)')                   # [batch_size, seq_len * resolution]
-
         '''
         The data dict is defined here.
         This dict should pack all data required by plot().
@@ -427,8 +419,7 @@ class IFIBC(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for _, (expand_probability_per_seq, mask_per_seq, time_next_per_seq) in \
-                                              enumerate(zip(probability_for_each_event, mask, time_next)):
+        for _, (expand_probability_per_seq, mask_per_seq, original_time_expand_per_seq) in enumerate(zip(probability_for_each_event, mask, original_time_expand)):
             seq_len = mask_per_seq.sum()
             expand_probability_per_seq = move_from_tensor_to_ndarray(expand_probability_per_seq)
 
@@ -447,8 +438,7 @@ class IFIBC(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
-                                                          resolution = resolution,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          time_next = original_time_expand_per_seq[:seq_len], has_flatten = True)
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
