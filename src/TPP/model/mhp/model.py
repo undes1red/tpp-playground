@@ -4,12 +4,13 @@ from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.integration import approximate_integration
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.mhp.plot import *
 from src.TPP.model.mhp.submodel import MHP
 from src.TPP.model.utils import *
-from src.TPP.model.mhp.utils import *
 from src.TPP.utils import pack_one_value_to_dict
 
 

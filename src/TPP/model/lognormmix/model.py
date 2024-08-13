@@ -150,29 +150,6 @@ class LogNormMixWrapper(BasicModel):
         The definition of loss.
         '''
         return (-loglik).sum()
-
-
-    @torch.no_grad()
-    def mean_absolute_error(self, input_events, input_time, input_mask, mean, std):
-        '''
-        The input should be the original minibatch.
-        MAE evaluation part for intensity-free model.
-        '''
-        def bisect_target(taus, probability_threshold):
-            probability, _ = self.model.log_cdf(input_events, input_time, input_mask, taus, mean, std)
-                                                                               # [sample_rate, batch_size, seq_len + 1]
-            return probability - probability_threshold
-
-        probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len]
-        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sample_rate, batch_size, seq_len]
-        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
-        mae = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len]
-        
-        return mae, tau_pred
     
 
     @torch.no_grad()
@@ -203,7 +180,7 @@ class LogNormMixWrapper(BasicModel):
 
     def sampling_by_its_for_tm(self, input_events, input_time, input_mask, mean, std):
         def bisect_target(taus, probability_threshold):
-            probability_sum, _ = self.model.probe_sum_of_cdf(input_events, input_time, input_mask, taus, mean, std)
+            probability_sum, _ = self.model.log_cdf(input_events, input_time, input_mask, taus, mean, std)
                                                                                # [sample_rate, batch_size, seq_len + 1]
             return probability_sum - probability_threshold
         

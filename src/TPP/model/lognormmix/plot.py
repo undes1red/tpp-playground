@@ -109,10 +109,7 @@ def plot_probability(data, timestamp, opt):
         ]
 
         plot_instruction[f'probability_{idx}'] \
-         = figure_instruction_generator(subplot_instruction,
-                                        figure_kwargs = {
-                                            'figsize': (large_graph_length, large_graph_height),
-                                        })
+         = figure_instruction_generator(subplot_instruction, figure_kwargs = {'figsize': (large_graph_length, large_graph_height),})
 
     return plot_instruction
 

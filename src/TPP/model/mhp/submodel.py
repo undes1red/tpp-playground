@@ -296,12 +296,6 @@ class MHP(nn.Module):
         expanded_integral_all_events \
             = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-        # aggregated timestamp
-        batch_size, seq_len, _ = expanded_time.shape
-        timestamp = torch.cat(
-            (torch.zeros((batch_size, seq_len, 1), device = self.device), expanded_time.diff(dim = -1)),
-            dim = -1)                                                          # [batch_size, seq_len, integration_sample_rate]
-        
         # construct the plot dict
         data = {}
         data['expand_intensity_for_each_event'] = expanded_intensity_all_events# [batch_size, seq_len, integration_sample_rate, num_events]
@@ -318,8 +312,8 @@ class MHP(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for _, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for _, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, expanded_time)):
             seq_len = mask_per_seq.sum()
 
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
@@ -340,7 +334,7 @@ class MHP(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
-                                                          time_next = time_next_per_seq[:seq_len], has_flatten = True)
+                                                          time_next = expanded_time_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
@@ -349,4 +343,4 @@ class MHP(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
         
-        return data, timestamp
+        return data, expanded_time

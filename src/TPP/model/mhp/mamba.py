@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat, reduce, pack, unpack
 
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
+
 # The original mamba does not support custom timestamps which is required by mamba hawkes process.
 # So we need a new mamba implementation for this usecase.
 
@@ -24,14 +26,12 @@ class mamba(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # time embeddings
-        self.weight_for_t = nn.Parameter(torch.zeros((1, d_input), device = self.device, requires_grad = True))
-        # Initialize special dt projection to preserve variance at initialization
-        nn.init.uniform_(self.weight_for_t, -d_input**-0.5, d_input**-0.5)
+        self.time_embedding = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
 
 
     def forward(self, events_history, time_history, mean, std):
         time_history = (time_history - mean) / (10 * std)
-        time_embedding = time_history.unsqueeze(dim = -1) * self.weight_for_t  # [batch_size, seq_len, d_input]
+        time_embedding = self.time_embedding(time_history)                     # [batch_size, seq_len, d_input]
         output_state = self.event_embedding(events_history)                    # [batch_size, seq_len, d_input]
 
         for mamba_layer in self.mamba_encoder:
