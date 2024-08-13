@@ -26,6 +26,7 @@ class mamba(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # time embeddings
+        # The positional embedding is given by sinusoidal functions, whose maximum and minimum are 1 and -1, respectively.
         self.time_embedding = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
 
 
