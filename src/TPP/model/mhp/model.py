@@ -15,7 +15,7 @@ from src.TPP.utils import pack_one_value_to_dict
 
 
 class MHPWrapper(BasicModel):
-    def __init__(self, info_dict, device, mode = 'pure_mamba', d_input = 64, d_mamba = 64, n_layers = 3,
+    def __init__(self, info_dict, device, mode = 'time_mamba', d_input = 64, d_mamba = 64, n_layers = 3,
                  dropout = 0.1, beta = 0, kernel_size = 5, expand = 2, sample_rate = 32, 
                  integration_sample_rate = 100, epsilon = 1e-20, mae_step = 32, mae_e_step = 32,
                  survival_loss_during_training = True):
