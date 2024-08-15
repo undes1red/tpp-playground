@@ -17,7 +17,7 @@ from mamba_ssm.ops.triton.layer_norm import layer_norm_fn, RMSNorm
 
 
 class MHP(nn.Module):
-    def __init__(self, device, num_events, d_input, d_mamba, n_layers,
+    def __init__(self, device, num_events, d_input, d_mamba, n_layers, min_time_interval, max_time_interval,
                  dropout, kernel_size, expand, beta, mode, integration_sample_rate):
         super(MHP, self).__init__()
         self.device = device
@@ -64,7 +64,8 @@ class MHP(nn.Module):
         else:
             # This is what the paper has claimed, however it does not work properly.
             # One possible reason is the delta time is too big for mamba to handle.
-            self.mamba_encoder = mamba(num_events, d_input, d_mamba, kernel_size, n_layers, dropout, expand, device = self.device)
+            self.mamba_encoder = mamba(num_events, min_time_interval, max_time_interval, \
+                                       d_input, d_mamba, kernel_size, n_layers, dropout, expand, device = self.device)
 
 
     def extract_history_embeddings(self, time, events, mask):

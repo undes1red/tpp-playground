@@ -9,7 +9,7 @@ from src.toolbox.position_embedding import BiasedPositionalEmbedding
 # So we need a new mamba implementation for this usecase.
 
 class mamba(nn.Module):
-    def __init__(self, num_events, d_input, d_mamba, kernel_size, n_layers, dropout, expand, device):
+    def __init__(self, num_events, min_time_interval, max_time_interval, d_input, d_mamba, kernel_size, n_layers, dropout, expand, device):
         super(mamba, self).__init__()
         self.device = device
         self.d_input = d_input
@@ -20,34 +20,34 @@ class mamba(nn.Module):
         
         self.mamba_encoder = nn.ModuleList(
             [
-                mamba_layer(d_input, d_mamba, kernel_size, expand, device = self.device) 
+                mamba_layer(min_time_interval, max_time_interval, d_input, d_mamba, kernel_size, expand, device = self.device) 
                     for _ in range(n_layers)
             ])
         self.dropout = nn.Dropout(dropout)
 
-        # time embeddings
-        # The positional embedding is given by sinusoidal functions, whose maximum and minimum are 1 and -1, respectively.
-        self.time_embedding = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
-
 
     def forward(self, events_history, time_history, mean, std):
-        time_history = (time_history - mean) / (10 * std)
-        time_embedding = self.time_embedding(time_history)                     # [batch_size, seq_len, d_input]
         output_state = self.event_embedding(events_history)                    # [batch_size, seq_len, d_input]
 
         for mamba_layer in self.mamba_encoder:
-            output_state = mamba_layer(output_state, time_embedding)           # [batch_size, seq_len, d_input]
+            output_state = mamba_layer(output_state, time_history)             # [batch_size, seq_len, d_input]
             output_state = self.dropout(output_state)                          # [batch_size, seq_len, d_input]
         
         return output_state
 
 
 class mamba_layer(nn.Module):
-    def __init__(self, d_input, d_mamba, kernel_size, expand, device):
+    def __init__(self, min_time_interval, max_time_interval, d_input, d_mamba, kernel_size, expand, device):
         super(mamba_layer, self).__init__()
         self.device = device
         self.d_input = d_input
         self.d_expanded_input = expand * d_input
+        # Follow the official Mamba implementation.
+        # We will scale the original time interval into [0.001, 0.1]
+        self.min_time_interval = min_time_interval
+        self.max_time_interval = max_time_interval
+        self.scaled_min_time_interval = 0.001
+        self.scaled_max_time_interval = 0.1
 
         # Inner projection, where the dimension expansion happens.
         # Also, extract x and z for SSM processing and residual connection, respectively.
@@ -82,10 +82,16 @@ class mamba_layer(nn.Module):
         self.out_proj = nn.Linear(self.d_expanded_input, d_input, device = self.device)
 
 
-    def forward(self, input_state, time_embedding):
+    def forward(self, input_state, time_history):
         _, seqlen, _ = input_state.shape
 
-        delta = self.linear_extract_time(time_embedding)                       # [batch_size, seq_len, d_expanded_input]
+        scaled_time_history = (time_history - self.min_time_interval) / (self.max_time_interval - self.min_time_interval)
+                                                                               # [batch_size, seq_len]
+        scaled_time_history = scaled_time_history * (self.scaled_max_time_interval - self.scaled_min_time_interval) + self.scaled_min_time_interval
+                                                                               # [batch_size, seq_len]
+        delta = repeat(scaled_time_history, 'b s -> b s d', d = self.d_expanded_input)
+                                                                               # [batch_size, seq_len, d_expanded_input]
+
         xz = rearrange(self.linear_extract_xz(input_state), 'b s dd -> b dd s')# [batch_size, d_expanded_input * 2, seq_len]
         x, z = xz.chunk(2, dim = -2)                                           # [batch_size, d_expanded_input, seq_len] * 2
 

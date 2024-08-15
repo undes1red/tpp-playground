@@ -24,6 +24,8 @@ class MHPWrapper(BasicModel):
         self.num_events = info_dict['num_events']
         self.start_time = info_dict['t_0']
         self.end_time = info_dict['T']
+        self.min_time_interval = info_dict['time_interval_min']
+        self.max_time_interval = info_dict['time_interval_max']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.integration_sample_rate = integration_sample_rate
@@ -37,7 +39,7 @@ class MHPWrapper(BasicModel):
 
         self.model = MHP(num_events = self.num_events, d_input = d_input, d_mamba = d_mamba, \
                          n_layers = n_layers, dropout = dropout, beta = beta, kernel_size = kernel_size, expand = expand, \
-                         mode = self.mode, \
+                         mode = self.mode, min_time_interval = self.min_time_interval, max_time_interval = self.max_time_interval, \
                          integration_sample_rate = integration_sample_rate, device = device)
 
 
