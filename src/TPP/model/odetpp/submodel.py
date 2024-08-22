@@ -4,16 +4,20 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 import numpy as np
 from scipy.stats import spearmanr
-import math
 
 from src.toolbox.integration import approximate_integration
-from src.TPP.model.utils import L1_distance_across_events, move_from_tensor_to_ndarray
-from src.TPP.model.odetpp.model_factory import build_ode_model
+from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.metrics import L1_distance_across_events
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
+from src.TPP.model.odetpp.adjoint import NeuralODE
+from src.TPP.model.odetpp.ode_utils import dict_ode_solver
+
+# Borrowed from EasyTPP.
+# Perhaps we should use torchdiffeq to reimplement ODETPP in the future.
 
 class ODETPP(nn.Module):
-    def __init__(self, device, num_events, hdim, cond_dim, hidden_dims, actfn, separate, \
-                 tol, otreg_strength, ode_method, integration_sample_rate):
+    def __init__(self, device, num_events, hidden_dims, ode_method, integration_sample_rate):
         super(ODETPP, self).__init__()
         self.num_events = num_events
         self.device = device
@@ -22,41 +26,89 @@ class ODETPP(nn.Module):
         self.ode_method = ode_method
 
         # event embedding layer.
-        self.events_embedding = nn.Embedding(num_events + 1, cond_dim, padding_idx = num_events, device = device)
+        self.events_embedding = nn.Embedding(num_events + 1, hidden_dims, padding_idx = num_events, device = device)
 
-        # build the ode model.
-        self.hidden_state_dynamics, self.ode_net \
-            = build_ode_model(hdim = hdim, cond_dim = cond_dim, hidden_dims = hidden_dims, \
-                              actfn = actfn, separate = separate, tol = tol, otreg_strength = otreg_strength)
-        # RNN start state.
-        self._init_state = nn.Parameter(torch.randn(hidden_dims[0]) / math.sqrt(hidden_dims[0]))
+        # position vector, used for temporal encoding
+        # FIXME: set max_len during runtime, current max_len = 4096
+        self.position_emb = BiasedPositionalEmbedding(hidden_dims, max_len = 4096, device = self.device)
 
+        # Convert history states to intensity values.
+        self.layer_intensity = nn.Sequential(
+            nn.Linear(self.hidden_dims, self.num_events),
+            nn.Softplus()
+        )
+        
+        # ODE solver.
+        self.solver = dict_ode_solver[ode_method]
+
+        # Hidden state model.
+        self.state_transition_func = nn.Sequential(
+            nn.Linear(self.hidden_dims, self.hidden_dims),
+            nn.Tanh()
+        )
+
+        self.layer_neural_ode = NeuralODE(model = self.state_transition_func,
+                                          solver = self.solver,
+                                          num_sample_times = integration_sample_rate,
+                                          device = self.device)
     
-    '''
-    def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
-        \'''
-        mu, eta, gamma: shape: [batch_size, seq_len, d_hidden]
-        dutation_t:     shape: [batch_size, seq_len, (integration_sample_rate, num_events)]
-        \'''
-        assert len(duration_t.shape) - 2 - num_dimension_prior_batch >= 0, "Too few dimensions in duration_t!"
 
-        # add additional dimension to mu, eta, and gamma.
-        mu = rearrange(mu, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        eta = rearrange(eta, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        gamma = rearrange(gamma, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+    def forward(self, events_history, time_history, time_next):
+        type_seq_emb = self.events_embedding(events_history)                   # [batch_size, seq_len, hidden_size]
+        historical_time_emb = self.position_emb(events_history, time_history)  # [batch_size, seq_len, hidden_size]
+        seq_emb = type_seq_emb + historical_time_emb                           # [batch_size, seq_len, hidden_size]
+        time_delta_seqs = time_next.unsqueeze(dim = -1)                        # [..., batch_size, seq_len, 1]
 
-        duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+        total_state_begin_time_interval = []
+        total_state_end_time_interval = []
+        last_state = torch.zeros(*time_delta_seqs.shape[:-2], self.hidden_dims, device = self.device)
+                                                                               # [..., batch_size, hidden_size]
+        for type_emb, dt in zip(torch.unbind(seq_emb, dim = -2), torch.unbind(time_delta_seqs, dim = -2)):
+            state_before_next_event = self.layer_neural_ode(last_state + type_emb, dt)
+                                                                               # [..., batch_size, hidden_size]
+            total_state_begin_time_interval.append(last_state + type_emb)
+            total_state_end_time_interval.append(state_before_next_event)
+            last_state = state_before_next_event
 
-        return cell_t
-    '''
+        total_state_begin_time_interval = torch.stack(total_state_begin_time_interval, dim = -2)
+                                                                               # [..., batch_size, seq_len, hidden_size]
+        total_state_end_time_interval = torch.stack(total_state_end_time_interval, dim = -2)
+                                                                               # [..., batch_size, seq_len, hidden_size]
 
-    def forward(self, task_name, *args, **kwargs):
-        return getattr(self, task_name)(*args, **kwargs)
+        intensity = self.layer_intensity(total_state_end_time_interval)        # [..., batch_size, seq_len, num_events]
 
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
+        expanded_state = self.compute_states_at_sample_times(total_state_begin_time_interval, expanded_time)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, hidden_size]
+        expanded_intensity = self.layer_intensity(expanded_state)              # [..., batch_size, seq_len, integration_sample_rate, num_events]
+        
+        integral_intensity = approximate_integration(expanded_intensity, expanded_x = expanded_time, dim = -2, only_integral = True)
+                                                                               # [..., batch_size, seq_len, num_events]
+
+        return integral_intensity, intensity
+
+
+    def compute_states_at_sample_times(self, total_state_begin_time_interval, expanded_time):
+        """Compute the states at sampling times.
+
+        Args:
+            total_state_begin_time_interval (tensor): [..., batch_size, seq_len, hidden_size], states right after the events.
+            expanded_time (tensor)                  : [..., batch_size, seq_len, num_samples], delta times in sampling.
+
+        Returns:
+            tensor: hiddens states at sampling times.
+        """
+
+        # Use broadcasting to compute the decays at all time steps
+        # at all sample points
+        # h_ts shape (batch_size, seq_len, num_samples, hidden_dim)
+        state = self.solver(diff_func = self.state_transition_func,
+                            dt = expanded_time[..., None],
+                            z0 = total_state_begin_time_interval[..., None, :])# [..., batch_size, seq_len, integration_sample_rate, hidden_size]
+
+        return state   
+    
 
     def get_intensity_integral_train(self, time_next, events_next, mask_next, t0, t1, nlinspace = 1):
         batch_size, seq_len = time_next.shape[-2:]
