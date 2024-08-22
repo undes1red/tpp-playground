@@ -3,6 +3,8 @@ import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.integration import approximate_integration
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.utils import *
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
@@ -217,7 +219,7 @@ class MRMTPP(BasicModel):
         sample_rate_list = step_split(number_of_total_samples, step)
 
         def evaluate_all_event(taus):
-            expanded_integral_across_events, expanded_intensity_across_events, timestamp_diff = \
+            expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
                 self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, mean, std)
                                                                                # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
@@ -230,7 +232,7 @@ class MRMTPP(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
-            probability = approximate_integration(expanded_probability_per_event, timestamp_diff, dim = -1, only_integral = True)
+            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
     
@@ -264,7 +266,8 @@ class MRMTPP(BasicModel):
             MTPP loss function
             '''
             integral, _, _ = self.model(events_history, time_history, taus, mean, std)
-                                                                               # [sample_rate, batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len, num_events]
+            integral = integral.sum(dim = -1)                                  # [sample_rate, batch_size, seq_len]
             return integral + torch.log(1 - probability_threshold)             # [sample_rate, batch_size, seq_len]
 
         tau_pred = []
@@ -328,7 +331,7 @@ class MRMTPP(BasicModel):
 
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
-        pred_time = self.sample(sample_approach = 'its', task = 'tm',
+        pred_time = self.sample(sampling_approach = 'its', task = 'tm',
                                 events_history = events_history, time_history = time_history, 
                                 number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]
@@ -360,14 +363,14 @@ class MRMTPP(BasicModel):
             = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
-        expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp_diff = \
+        expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, resolution_inf, mean, std)
                                                                                # 2 * [batch_size, seq_len, resolution_inf, num_events]
         expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, resolution_inf, 1]
         expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
                                                                                # [batch_size, seq_len, resolution_inf, num_events]
-        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp_diff, dim = -2, only_integral = True)
+        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
@@ -588,7 +591,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+                                                    time_next, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
 
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution, mean, std)
@@ -802,7 +805,6 @@ class MRMTPP(BasicModel):
         time_loss_survival = time_loss_survival.item()
         fact = score.sum().item() / the_number_of_events
         events_loss_time_next_without_dummy = events_loss_time_next_without_dummy.item() / the_number_of_events
-        mae = mae.sum().item() / the_number_of_events
 
         return time_loss_time_next_without_dummy, time_loss_survival, fact, events_loss_time_next_without_dummy, mae, f1
 
@@ -843,7 +845,7 @@ class MRMTPP(BasicModel):
             format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[2])
             format_dict['events_loss'] = pack_one_value_to_dict(input[3])
             format_dict['mae'] = pack_one_value_to_dict(input[4], '2.8f')
-            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[5], '2.8f')
+            format_dict['f1'] = pack_one_value_to_dict(input[5], '2.8f')
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))

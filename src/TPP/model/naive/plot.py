@@ -565,6 +565,7 @@ def plot_debug(data, timestamp, opt):
                         'hue': 'Mark',
                         'data': df_data_tau_pred_all_event_per_seq,
                         'markers': True,
+                        'palette': color_palette,
                         'hue_order': [f'Mark {item}' for item in range(num_events)]
                     }
                 }

@@ -5,7 +5,7 @@ from scipy.stats import spearmanr
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 from src.toolbox.integration import approximate_integration
-from src.toolbox.metrics.l1 import L1_distance_between_two_funcs
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.tfullynn.submodel import TFullyNN
@@ -817,7 +817,7 @@ class TFullyNNModel(BasicModel):
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
             l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                                       timestamp = timestamp_per_seq, resolution = opt.resolution)
+                                                       timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 

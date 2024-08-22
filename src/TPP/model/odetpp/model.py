@@ -543,9 +543,6 @@ class ODETPPWrapper(BasicModel):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
-        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
-                                                                               # [batch_size, seq_len, resolution]
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -557,7 +554,7 @@ class ODETPPWrapper(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp_diff, opt)
+        plots = plot_intensity(data, timestamp, opt)
         
         return plots
 
@@ -588,8 +585,6 @@ class ODETPPWrapper(BasicModel):
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
-        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
-                                                                               # [batch_size, seq_len, resolution]
 
         data = {
             'time_next': time_next,
@@ -598,7 +593,7 @@ class ODETPPWrapper(BasicModel):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp_diff, opt)
+        plots = plot_integral(data, timestamp, opt)
         return plots
 
 
@@ -624,8 +619,6 @@ class ODETPPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -639,7 +632,7 @@ class ODETPPWrapper(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp_diff, opt)
+        plots = plot_probability(data, timestamp, opt)
         return plots
 
 
@@ -701,8 +694,6 @@ class ODETPPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -712,12 +703,12 @@ class ODETPPWrapper(BasicModel):
         true_probability = expand_true_probability(time_next, input_intensity, opt)
                                                                                # [batch_size, seq_len, resolution] or batch_size * None
         
-        expand_probability, true_probability, timestamp_diff = move_from_tensor_to_ndarray(expand_probability, true_probability, timestamp_diff)
-        zipped_data = zip(expand_probability, true_probability, timestamp_diff, mask_next)
+        expand_probability, true_probability, timestamp = move_from_tensor_to_ndarray(expand_probability, true_probability, timestamp)
+        zipped_data = zip(expand_probability, true_probability, timestamp, mask_next)
 
         spearman = 0
         l1 = 0
-        for expand_probability_per_seq, true_probability_per_seq, timestamp_diff_per_seq, mask_next_per_seq in zipped_data:
+        for expand_probability_per_seq, true_probability_per_seq, timestamp_per_seq, mask_next_per_seq in zipped_data:
             seq_len = mask_next_per_seq.sum()
 
             spearman_per_seq = \
@@ -725,7 +716,7 @@ class ODETPPWrapper(BasicModel):
 
             l1_per_seq = L1_distance_between_two_funcs(
                                         x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_diff_per_seq, resolution = opt.resolution)
+                                        timestamp = timestamp_per_seq, resolution = opt.resolution)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
