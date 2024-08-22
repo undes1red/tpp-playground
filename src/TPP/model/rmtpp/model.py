@@ -3,7 +3,7 @@ import torch, copy
 from scipy.stats import spearmanr
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
-from src.toolbox.metric.l1 import L1_distance_between_two_funcs
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.utils import *
 from src.TPP.model.rmtpp.rmtpp import RMTPPModule

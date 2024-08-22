@@ -175,7 +175,7 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     Report the average of mae-e and f1.
     '''
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
-    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(t) is {mean_probability_sum}.'
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(m) is {mean_probability_sum}.'
     write_to_txt(strings, result_file)
 
 

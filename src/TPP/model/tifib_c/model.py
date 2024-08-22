@@ -4,7 +4,7 @@ from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
-from src.toolbox.metrics.l1 import L1_distance_between_two_funcs
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.tifib_c.submodel import TIFIBC

@@ -69,7 +69,7 @@ class Hawkes(nn.Module):
         self.base_intensity = nn.Parameter(torch.zeros(num_events, device = self.device))
 
         # \\alpha matrix
-        # \\alpha_{ij}, or self.transition_matrix[i][j] is the effect of event i in history to the predicted event marked j.
+        # \\alpha_{ij}, or self.transition_matrix[i][j] is the effect of event i in history to the conditional intensity function of mark j.
         self.transition_matrix = nn.Parameter(torch.ones(num_events, num_events, device = self.device))
 
         # \\beta
@@ -111,7 +111,7 @@ class Hawkes(nn.Module):
                                                                                # [..., batch_size, seq_len, 1, seq_len]
 
         # We replace all negative values in time_interal_matrix with a fixed value as some of them might introduce infinity to exp_b_m_t.
-        # This action is safe because these negative values are t_i - t_j with i < j, while intensity and integral calculation only counts t_i - t_j with i >= j.
+        # This action is safe because these negative values are t_i - t_j with i < j, while calculating intensity and its integral only counts t_i - t_j with i >= j.
         time_interval_matrix = time_interval_matrix.clamp(min = -1)            # [..., batch_size, seq_len, 1, seq_len]
         time_interval_matrix_from_t_l_to_t_i = time_interval_matrix_from_t_l_to_t_i.clamp(min = -1)
                                                                                # [..., batch_size, seq_len, 1, seq_len]

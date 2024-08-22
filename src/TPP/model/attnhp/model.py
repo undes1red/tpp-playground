@@ -529,9 +529,6 @@ class AttNHPWrapper(BasicModel):
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
-        timestamp_diff = torch.diff(timestamp, dim = -1, prepend = timestamp[..., 0].unsqueeze(dim = -1))
-                                                                               # [batch_size, seq_len, resolution]
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -543,7 +540,7 @@ class AttNHPWrapper(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp_diff, opt)
+        plots = plot_intensity(data, timestamp, opt)
         
         return plots
 

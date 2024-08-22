@@ -30,29 +30,7 @@ class ODETPP(nn.Module):
                               actfn = actfn, separate = separate, tol = tol, otreg_strength = otreg_strength)
         # RNN start state.
         self._init_state = nn.Parameter(torch.randn(hidden_dims[0]) / math.sqrt(hidden_dims[0]))
-
-    
-    '''
-    def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
-        \'''
-        mu, eta, gamma: shape: [batch_size, seq_len, d_hidden]
-        dutation_t:     shape: [batch_size, seq_len, (integration_sample_rate, num_events)]
-        \'''
-        assert len(duration_t.shape) - 2 - num_dimension_prior_batch >= 0, "Too few dimensions in duration_t!"
-
-        # add additional dimension to mu, eta, and gamma.
-        mu = rearrange(mu, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        eta = rearrange(eta, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        gamma = rearrange(gamma, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-
-        duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-
-        return cell_t
-    '''
+        
 
     def forward(self, task_name, *args, **kwargs):
         return getattr(self, task_name)(*args, **kwargs)
