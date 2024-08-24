@@ -437,11 +437,51 @@ class FENNModel(BasicModel):
     
 
     def sampling_by_thinning_for_mt(self, *args, **kwargs):
-        raise Exception('WIP. Please use ITS by setting sampling_approach = its.')
+        raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
 
 
-    def sampling_by_thinning_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std):
-        raise Exception('WIP. Please use ITS by setting sampling_approach = its.')
+    def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std):
+        sample_rate_list = step_split(number_of_total_samples, step)
+        batch_size, seq_len = time_history.shape
+        maximum_thinning_loops = 50
+        max_sample_time_limit = mean + 10 * std
+        integration_sample_rate = 5
+
+        def get_intensity(tau, time_history, events_history):
+            tau = repeat(tau, '... -> ... ne', ne = self.num_events)               # [sample_rate, batch_size, seq_len, num_events]
+            tau.requires_grad = True
+            integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, tau, mean, std)
+                                                                                   # [sample_rate, batch_size, seq_len, num_events]
+            '''
+            Obtains intensity values.
+            '''
+            intensity_for_each_event_from_tl_to_time_next = torch.autograd.grad(
+                outputs = integral_for_each_event_from_tl_to_time_next,
+                inputs = tau,
+                grad_outputs = torch.ones_like(integral_for_each_event_from_tl_to_time_next),
+            )[0]                                                                   # [sample_rate, batch_size, seq_len, num_events]
+            tau.requires_grad = False
+
+            return intensity_for_each_event_from_tl_to_time_next.sum(dim = -1)
+
+        def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history):
+            _, intensity_between_interval_left_and_right, _ \
+                = self.model.integral_intensity_time_next_2d(events_history, time_history, interval_right, \
+                                                             integration_sample_rate, mean, std, time_next_start = interval_left)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate, num_events]
+            intensity_between_interval_left_and_right = intensity_between_interval_left_and_right.sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate]
+
+            return intensity_between_interval_left_and_right.max(dim = -1)[0]
+        
+        sampled_time = []
+        for each_step in sample_rate_list:
+            sampled_time.append(thinning_sampling(maximum_thinning_loops, max_sample_time_limit, (each_step, batch_size, seq_len), self.device, \
+                                                  get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history))
+                                                                               # [sample_rate, batch_size, seq_len]
+        
+        sampled_time = torch.cat(sampled_time, dim = 0)
+        return sampled_time
 
 
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
@@ -468,7 +508,7 @@ class FENNModel(BasicModel):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+        pred_time = self.sample_time(sampling_approach = 'thinning', task = 'tm',
                                      events_history = events_history, time_history = time_history,
                                      number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]

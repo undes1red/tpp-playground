@@ -119,7 +119,7 @@ class FENN(nn.Module):
         return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, std):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, std, time_next_start = None):
         '''
         Intensity integral & intensity function prober. This function returns values of learned intensity function
         $ \\lambda^*(m, t) $ and corresponding integral values $ \\Lambda^*(m, t) $ at given times.
@@ -154,44 +154,48 @@ class FENN(nn.Module):
         '''
         Prepare the history embedding.
         '''
+        if time_next_start is None:
+            time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
+
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
+        history = torch.cat((events_embeddings, time_history.unsqueeze(dim = -1)), dim = -1)
+                                                                               # [batch_size, seq_len, d_history + 1]
 
-        
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
-        hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
+        einop = f'b s di -> {"() " * (len(time_next.shape) - 2)}b s () () di'
+        hidden_history = rearrange(hidden_history, einop)                      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
         '''
         Prepare the time embedding.
         '''
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
-        original_time_expand = time_next.unsqueeze(dim = -1) * time_multiplier # [batch_size, seq_len, resolution]
-        time_expand = original_time_expand.clone()                             # [batch_size, seq_len, resolution]
-        time_expand = repeat(original_time_expand, 'b s r -> b s r ne', ne = self.num_events)
-                                                                               # [batch_size, seq_len, resolution, num_events]
+        original_time_expand = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
+                                                                               # [..., batch_size, seq_len, resolution]
+        time_expand = original_time_expand.clone()                             # [..., batch_size, seq_len, resolution]
+        time_expand = repeat(original_time_expand, '... -> ... ne', ne = self.num_events)
+                                                                               # [..., batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = True
-        normed_time_expand = (time_expand - mean) / std                        # [batch_size, seq_len, resolution, num_events]
+        normed_time_expand = (time_expand - mean) / std                        # [..., batch_size, seq_len, resolution, num_events]
 
         emb_normed_time_expand = normed_time_expand.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
-                                                                               # [batch_size, seq_len, resolution, num_events, d_intensity]
+                                                                               # [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
-        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity]
-        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity]
+        emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
+        output = self.layer_activation(emb_normed_time_expand + hidden_history)# [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
         '''
         Get intensity integrals.
         '''
         for nonneg_layer in self.mlp:
-            output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity]
-            output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
+            output = nonneg_layer(output)                                      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
+            output = self.layer_activation(output)                             # [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
-        expand_integral = self.nonneg_activation(self.aggregate(output))       # [batch_size, seq_len, resolution, num_events, 1]
+        expand_integral = self.nonneg_activation(self.aggregate(output))       # [..., batch_size, seq_len, resolution, num_events, 1]
 
         '''
         Get intensity values at every sampled $ t $.
@@ -200,11 +204,11 @@ class FENN(nn.Module):
             outputs=expand_integral,
             inputs=time_expand,
             grad_outputs=torch.ones_like(expand_integral),
-        )[0]                                                                   # [batch_size, seq_len, resolution, num_events]
+        )[0]                                                                   # [..., batch_size, seq_len, resolution, num_events]
         time_expand.requires_grad = False
 
-        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [batch_size, seq_len, resolution, num_events]
-        expand_intensity = expand_intensity.detach()                           # [batch_size, seq_len, resolution, num_events]
+        expand_integral = expand_integral.squeeze(dim = -1).detach()           # [..., batch_size, seq_len, resolution, num_events]
+        expand_intensity = expand_intensity.detach()                           # [..., batch_size, seq_len, resolution, num_events]
 
         return expand_integral, expand_intensity, original_time_expand
 

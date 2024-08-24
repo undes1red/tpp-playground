@@ -333,7 +333,7 @@ class NaiveMTPPWrapper(BasicModel):
     def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std):
         sample_rate_list = step_split(number_of_total_samples, step)
         batch_size, seq_len = time_history.shape
-        maximum_thinning_loops = 500
+        maximum_thinning_loops = 50
         max_sample_time_limit = mean + 10 * std
 
         def get_intensity(tau, time_history, events_history):

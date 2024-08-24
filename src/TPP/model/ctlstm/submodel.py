@@ -104,27 +104,31 @@ class CTLSTM(nn.Module):
         return integral_all_events, intensity_all_events
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate, num_dimension_prior_batch = 0, time_next_start = None):
+        if time_next_start is None:
+            time_next_start = torch.zeros_like(time_next)                      # [batch_size, seq_len]
+
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+        history = torch.cat((events_embeddings, time_history.unsqueeze(dim = -1)), dim = -1)
+                                                                               # [batch_size, seq_len, d_mark_embedding + 1]
         
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
-
 
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = 0)
-                                                                               # [batch_size, seq_len, integration_sample_rate, d_input]
+        expanded_time = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate]
+        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, d_input]
 
         expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
         expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
 
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 

@@ -50,12 +50,12 @@ def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_outp
     thinning_unit_interval_length = max_sample_time_limit / maximum_thinning_loops
 
     predicted_time = torch.zeros(sample_rate, batch_size, seq_len, dtype = torch.int32, device = device)
-                                                                           # [sample_rate, batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len]
     # The initial mask tensor contains only zero.
     # Zero means we have got a valid time sample.
     # One means we need a resample
     rejected_mask = torch.ones(sample_rate, batch_size, seq_len, dtype = torch.int32, device = device)
-                                                                           # [sample_rate, batch_size, seq_len]
+                                                                               # [sample_rate, batch_size, seq_len]
     thinning_loops = 0
     while(rejected_mask.sum() > 0):
         thinning_loops += 1
@@ -66,7 +66,7 @@ def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_outp
                                                                                # [sample_rate, batch_size, seq_len]
         sampling_interval_right_side = torch.ones_like(rejected_mask) * thinning_unit_interval_length * thinning_loops
                                                                                # [sample_rate, batch_size, seq_len]
-        intensity_values_for_thinning_upper_bound = find_maximum_intensity_values_in_one_interval(sampling_interval_left_side, sampling_interval_right_side, *args, **kwargs)
+        intensity_values_for_thinning_upper_bound = find_maximum_intensity_values_in_one_interval(sampling_interval_left_side, sampling_interval_right_side, *args, **kwargs) * 1.05
                                                                                # [sample_rate, batch_size, seq_len]
         # Exponential distribution: F(x) = 1 - exp(-\\lambda x) => x = ln(1 - F(x)) / (-\\lambda)
         probability_threshold_for_exp = torch.zeros_like(intensity_values_for_thinning_upper_bound)
@@ -75,7 +75,7 @@ def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_outp
         probability_threshold_for_thinning = torch.zeros_like(intensity_values_for_thinning_upper_bound)
                                                                                # [sample_rate, batch_size, seq_len]
         torch.nn.init.uniform_(probability_threshold_for_thinning)             # [sample_rate, batch_size, seq_len]
-        sampled_time = - torch.log(1 - probability_threshold_for_exp) / intensity_values_for_thinning_upper_bound
+        sampled_time = - torch.log(1 - probability_threshold_for_exp) / (intensity_values_for_thinning_upper_bound + 1e-20)
                                                                                # [sample_rate, batch_size, seq_len]
         # Part 1: exclude time exceeding the limit.
         sampled_time_exceeding_limit = sampled_time > thinning_unit_interval_length

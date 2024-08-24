@@ -94,26 +94,31 @@ class THP(nn.Module):
         return integral_all_events, intensity_all_events
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
-        assert len(time_next.shape) == 2, "Wrong input time tensor shape."
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, time_next_start = None):
+        if time_next_start == None:
+            time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
 
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
-        history = repeat(history, 'b s di -> b s 1 di')                        # [batch_size, seq_len, 1, d_input]
+        einop = f'b s di -> {"() " * (len(time_next.shape) - 2)} b s () di'
+        history = rearrange(history, einop)                                    # [..., batch_size, seq_len, 1, d_input]
 
-        aggregate_time = time_history.cumsum(dim = -1).unsqueeze(dim = -1)     # [batch_size, seq_len]
+        aggregate_time = time_history.cumsum(dim = -1)                         # [batch_size, seq_len]
         # Avoid zero denominator
         aggregate_time = aggregate_time + self.history_time_offset             # [batch_size, seq_len]
+        einop = f'b s -> {"() " * (len(time_next.shape) - 2)} b s ()'
+        aggregate_time = rearrange(aggregate_time, einop)                      # [..., batch_size, seq_len, 1]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
+        expanded_time = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate]
 
-        scaled_time = (expanded_time / aggregate_time).unsqueeze(dim = -1)     # [batch_size, seq_len, integration_sample_rate, 1]
+        scaled_time = (expanded_time / aggregate_time).unsqueeze(dim = -1)     # [..., batch_size, seq_len, integration_sample_rate, 1]
         expanded_intensity_all_events = softplus_ext(self.linear(history) + self.alpha * scaled_time, beta = F.softplus(self.beta))
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
         expanded_integral_all_events \
             = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
 
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
         

@@ -45,11 +45,14 @@ class TransEncoder(nn.Module):
 
         # prepare attention masks
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        _, seq_len = events_history.shape[:2]
-        self_attn_mask_subseq = get_subsequent_mask(events_history)
-        self_attn_mask_keypad = repeat(non_pad_mask, 'b s -> b s_1 s', s_1 = seq_len)
+        _, seq_len = time_history.shape
+        
+        self_attn_mask_subseq = get_subsequent_mask(events_history)            # [batch_size, seq_len, seq_len]
+        self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
+                                                                               # [batch_size, seq_len]
+        self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s1 s', s1 = seq_len)
                                                                                # [batch_size, seq_len, seq_len]
-        self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, seq_len, seq_len]
+        self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
         # Mark Embeddings
         events_emb = self.event_emb(events_history)                            # [batch_size, seq_len, d_input]

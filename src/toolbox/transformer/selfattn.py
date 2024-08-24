@@ -32,7 +32,7 @@ class SelfAttn(nn.Module):
         attn = torch.einsum('...jkl, ...mkl -> ...kjm', q, k)                  # [batch_size, n_head, seq_len, seq_len]
 
         if mask is not None:
-            attn = attn.masked_fill(mask.unsqueeze(1), -1e9)                   # [batch_size, n_head, seq_len, seq_len]
+            attn = attn.masked_fill(mask.unsqueeze(1) == 0, -1e9)              # [batch_size, n_head, seq_len, seq_len]
 
         attn = self.dropout(F.softmax(attn, dim = -1))                         # [batch_size, n_head, seq_len, seq_len]
         output = torch.einsum('...jkl, ...ljn -> ...kjn', attn, v)             # [batch_size, seq_len, n_head, d_v]

@@ -338,23 +338,21 @@ class CTLSTMWrapper(BasicModel):
     def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std):
         sample_rate_list = step_split(number_of_total_samples, step)
         batch_size, seq_len = time_history.shape
-        maximum_thinning_loops = 500
+        maximum_thinning_loops = 50
         max_sample_time_limit = mean + 10 * std
 
         def get_intensity(tau, time_history, events_history):
             return self.model(time_history, tau, events_history, num_dimension_prior_batch = 1)[-1].sum(dim = -1)
         
         def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history):
-            intensity_values_at_left_side = get_intensity(interval_left, time_history, events_history)
-                                                                               # [sample_rate, batch_size, seq_len]
-            intensity_values_at_right_side = get_intensity(interval_right, time_history, events_history)
-                                                                               # [sample_rate, batch_size, seq_len]        
-            intensity_values_at_t_l_higher = (intensity_values_at_left_side > intensity_values_at_right_side).int()
-                                                                               # [sample_rate, batch_size, seq_len]
-            # We slightly lift the upper bound here to ensure this upper bound definitely higher than all intensity values in this interval.
-            intensity_values_for_thinning_upper_bound = (intensity_values_at_left_side * intensity_values_at_t_l_higher + intensity_values_at_right_side * (1 - intensity_values_at_t_l_higher)) * 1.05
-                                                                               # [sample_rate, batch_size, seq_len]
-            return intensity_values_for_thinning_upper_bound
+            _, intensity_between_interval_left_and_right, _ \
+                = self.model.integral_intensity_time_next_2d(events_history, time_history, interval_right, \
+                                                             self.integration_sample_rate, num_dimension_prior_batch = 1, time_next_start = interval_left)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate, num_events]
+            intensity_between_interval_left_and_right = intensity_between_interval_left_and_right.sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate]
+
+            return intensity_between_interval_left_and_right.max(dim = -1)[0]
         
         sampled_time = []
         for each_step in sample_rate_list:
@@ -368,9 +366,9 @@ class CTLSTMWrapper(BasicModel):
     
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                events_history = events_history, time_history = time_history,
-                                number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
+        pred_time = self.sample_time(sampling_approach = 'thinning', task = 'tm',
+                                     events_history = events_history, time_history = time_history,
+                                     number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
