@@ -43,11 +43,11 @@ class mamba_layer(nn.Module):
         self.d_input = d_input
         self.d_expanded_input = expand * d_input
         # Follow the official Mamba implementation.
-        # We will scale the original time interval into [0.001, 0.1]
+        # We will scale the original time interval into [1e-4, 1e-2]
         self.min_time_interval = min_time_interval
         self.max_time_interval = max_time_interval
-        self.scaled_min_time_interval = 0.001
-        self.scaled_max_time_interval = 0.1
+        self.scaled_min_time_interval = 1e-4
+        self.scaled_max_time_interval = 1e-2
 
         # Inner projection, where the dimension expansion happens.
         # Also, extract x and z for SSM processing and residual connection, respectively.
