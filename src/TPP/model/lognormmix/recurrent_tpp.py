@@ -302,7 +302,7 @@ class RecurrentTPP(nn.Module):
         # but the difference shouldn't be significant if you are working with long sequences.
         '''
 
-        return probability, expanded_inter_times
+        return probability, expanded_inter_times[:, :-1]
 
 
     def log_cdf(self, input_events, input_time, input_mask, taus, mean, std) -> torch.Tensor:

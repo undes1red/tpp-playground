@@ -257,7 +257,7 @@ class RecurrentTPP(nn.Module):
         # drop probability predictions between the last event and end_time.
         probability = probability[:, :-1, :, :]                                # [batch_size, seq_len, resolution, num_marks]
 
-        return probability, expanded_inter_times
+        return probability, expanded_inter_times[:, :-1]
 
 
     def probe_sum_of_cdf(self, input_events, input_time, input_mask, taus, mean, std) -> torch.Tensor:
