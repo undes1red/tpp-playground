@@ -12,7 +12,7 @@ from torch.utils.flop_counter import FlopCounterMode
 logger = get_logger(name = __file__)
 
 
-def draw(model, minibatch, desc, batch_idx, opt):
+def draw_old(model, minibatch, desc, batch_idx, opt):
     '''
     This function will be called when task_name = graph
 
@@ -89,6 +89,22 @@ def draw(model, minibatch, desc, batch_idx, opt):
         plt.close(fig = fig)
         del ax
         gc.collect()
+
+
+def draw(model, minibatch, desc, batch_idx, opt):
+    '''
+    This function will be called when task_name = graph
+
+    This function only accepts figure name-matplotlib figure object pairs and saves these figures in the predefined location
+    with the correct name and format.
+    '''
+    # Create the plot storing directory if not exist.
+    plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
+    opt.plot_store_dir_for_this_batch = plot_store_dir_for_this_batch
+    mkdir_if_not_exist(plot_store_dir_for_this_batch)
+
+    logger.info(f'Start drawing {opt.plot_type} figures for the No.{batch_idx} minibatch in {desc} dataset!')
+    model('figure', minibatch, opt)
 
 
 def spearman_and_l1_postprocess(all_evaluation_results, desc, opt):

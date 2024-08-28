@@ -2,6 +2,8 @@ import torch.nn as nn
 import torch
 import math
 
+from einops import rearrange
+
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, d_model, max_len = 4096):
@@ -39,16 +41,18 @@ class BiasedPositionalEmbedding(nn.Module):
         self.Wt = nn.Linear(1, d_model // 2 + (1 if d_model % 2 else 0), bias = False, device = self.device)
 
 
-    def forward(self, x, interval):
+    def forward(self, seq_len, interval, position_start_index = 0):
         phi = self.Wt(interval.unsqueeze(-1))                                  # [..., d_model // 2 + 1 if d_model % 2 else 0]
-        length = x.shape[-1]
 
-        arc = (self.position[:length] * self.div_term).unsqueeze(0)            # [1, seq_len, d_model // 2 + 1 if d_model % 2 else 0]
+        arc = (self.position[position_start_index:seq_len + position_start_index] * self.div_term)
+                                                                               # [seq_len, d_model // 2 + 1 if d_model % 2 else 0]
+        einop = f'... -> {"() " * (len(phi.shape) - 2)}...'
+        arc = rearrange(arc, einop)                                            # [..., seq_len, d_model // 2 + 1 if d_model % 2 else 0]
 
-        pe_cos = torch.cos(arc + phi)                                          # [1, seq_len, d_model // 2 + 1 if d_model % 2 else 0]
-        pe_sin = torch.sin(arc + phi)                                          # [1, seq_len, d_model // 2 + 1 if d_model % 2 else 0]
+        pe_cos = torch.cos(arc + phi)                                          # [..., seq_len, d_model // 2 + 1 if d_model % 2 else 0]
+        pe_sin = torch.sin(arc + phi)                                          # [..., seq_len, d_model // 2 + 1 if d_model % 2 else 0]
         if self.d_model % 2 == 1:
-            pe_sin = pe_sin[..., :-1]                                          # [1, seq_len, d_model // 2]
-        pe = torch.cat([pe_sin, pe_cos], dim=-1)                               # [1, seq_len, d_model // 2]
+            pe_sin = pe_sin[..., :-1]                                          # [..., seq_len, d_model // 2]
+        pe = torch.cat([pe_sin, pe_cos], dim=-1)                               # [..., seq_len, d_model // 2]
 
         return pe

@@ -42,19 +42,18 @@ class TransEncoder(nn.Module):
         2. time_history: historical time intervals.  shape: [batch_size, seq_len]
         3. non_pad_mask: pad mask tensor.            shape: [batch_size, seq_len]
         """
-
         # prepare attention masks
-        # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        _, seq_len = events_history.shape[:2]
-        self_attn_mask_subseq = get_subsequent_mask(events_history)
-        self_attn_mask_keypad = repeat(non_pad_mask, 'b s -> b s_1 s', s_1 = seq_len)
+        # self_attn_mask is where we cannot look, i.e., the future and the padding
+        seq_len = events_history.shape[-1]
+        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device)
                                                                                # [batch_size, seq_len, seq_len]
+        self_attn_mask_keypad = rearrange(non_pad_mask, 'b s -> b () s')       # [batch_size, seq_len, seq_len]
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, seq_len, seq_len]
 
         # Mark Embeddings
         events_emb = self.event_emb(events_history)                            # [batch_size, seq_len, d_input]
         # Time Embeddings
-        time_emb = self.position_emb(events_history, time_history)             # [batch_size, seq_len, d_input]
+        time_emb = self.position_emb(seq_len, time_history)                    # [batch_size, seq_len, d_input]
         output = events_emb + time_emb                                         # [batch_size, seq_len, d_input]
 
         for enc_layer in self.encoder:

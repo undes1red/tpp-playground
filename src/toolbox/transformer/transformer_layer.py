@@ -83,15 +83,15 @@ class MultiheadAttention(nn.Module):
         q = self.layer_norm(q)                                                 # [batch_size, seq_len, n_head, d_qk]
         
         # preparing for q, k, and v.
-        q = rearrange(self.w_q(q), 'b s (nh dq) -> b s nh dq', nh = self.n_head)
+        q = rearrange(self.w_q(q), '... (nh dq) -> ... nh dq', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_qk]
-        k = rearrange(self.w_k(k), 'b s (nh dk) -> b s nh dk', nh = self.n_head)
+        k = rearrange(self.w_k(k), '... (nh dk) -> ... nh dk', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_qk]
-        v = rearrange(self.w_v(v), 'b s (nh dv) -> b s nh dv', nh = self.n_head)
+        v = rearrange(self.w_v(v), '... (nh dv) -> ... nh dv', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_v]
 
         output, attn = self.self_attn(q, k, v, mask = mask)                    # [batch_size, seq_len, n_head, d_v] & [batch_size, n_head, seq_len, seq_len]
-        output = rearrange(output, 'b s nh dv -> b s (nh dv)', nh = self.n_head)
+        output = rearrange(output, '...  nh dv -> ... (nh dv)', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head * d_v]
         output = self.dropout(self.fc_attn_output(output))                     # [batch_size, seq_len, d_output]
         output += residual

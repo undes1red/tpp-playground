@@ -78,6 +78,7 @@ class TPPEvaluator:
         'best':{
             # Follwoing tasks involves a part of the dataset.
             'graph': self.task_graph,
+            'figure': self.task_figure,
 
             # Following tasks involves the entire dataset.
             'spearman_and_l1': self.task_evaluation_on_entire_dataset,
@@ -96,6 +97,27 @@ class TPPEvaluator:
     
 
     def task_graph(self):
+        # We will get three records from the training set, test set, and evaluation set, respectively.
+        if self.opt.training_data_name is not None:
+            for idx, train_data in enumerate(self.raw_data['Training']):
+                draw_old(self.model, train_data, 'train', batch_idx = idx, opt = self.opt)
+                if idx >= self.opt.figure_count - 1:
+                    break
+
+        if self.opt.evaluate_data_name is not None:
+            for idx, evaluation_data in enumerate(self.raw_data['Evaluation']):
+                draw_old(self.model, evaluation_data, 'evaluation', batch_idx = idx, opt = self.opt)
+                if idx >= self.opt.figure_count - 1:
+                    break
+
+        if self.opt.test_data_name is not None:
+            for idx, test_data in enumerate(self.raw_data['Test']):
+                draw_old(self.model, test_data, 'test', batch_idx = idx, opt = self.opt)
+                if idx >= self.opt.figure_count - 1:
+                    break
+
+
+    def task_figure(self):
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.training_data_name is not None:
             for idx, train_data in enumerate(self.raw_data['Training']):

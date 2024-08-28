@@ -57,7 +57,7 @@ class TransEncoder(nn.Module):
         # Mark Embeddings
         events_emb = self.event_emb(events_history)                            # [batch_size, seq_len, d_input]
         # Time Embeddings
-        time_emb = self.position_emb(events_history, time_history)             # [batch_size, seq_len, d_input]
+        time_emb = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_input]
         output = events_emb + time_emb                                         # [batch_size, seq_len, d_input]
 
         for enc_layer in self.encoder:

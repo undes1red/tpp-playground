@@ -55,7 +55,7 @@ class ODETPP(nn.Module):
 
     def forward(self, events_history, time_history, time_next):
         type_seq_emb = self.events_embedding(events_history)                   # [batch_size, seq_len, hidden_size]
-        historical_time_emb = self.position_emb(events_history, time_history)  # [batch_size, seq_len, hidden_size]
+        historical_time_emb = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, hidden_size]
         seq_emb = type_seq_emb + historical_time_emb                           # [batch_size, seq_len, hidden_size]
         time_delta_seqs = time_next.unsqueeze(dim = -1)                        # [..., batch_size, seq_len, 1]
 

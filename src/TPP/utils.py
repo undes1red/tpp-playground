@@ -219,7 +219,7 @@ def load_checkpoint(logger, checkpoint_dir, model, device, evaluation = True):
     '''
     Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DP if possible.
     '''
-    model_raw = torch.load(checkpoint_dir, weights_only = True, map_location = device)
+    model_raw = torch.load(checkpoint_dir, weights_only = False, map_location = device)
     model_state_dict = model_raw['model']
     model.load_state_dict(model_state_dict)
     if evaluation:

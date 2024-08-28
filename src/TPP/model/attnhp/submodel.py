@@ -19,152 +19,109 @@ class AttNHP(nn.Module):
         self.device = device
         self.integration_sample_rate = integration_sample_rate
 
-        # The original paper makes people believe SAHP is a RMTPP-like model.
-        # However, this model in fact decays the hidden embedding so it is akin to CTLSTM.
-        # The following three layers find the \\eta_{u, i+1}, \\mu_{u, i+1}, and \\gamma_{u i+1}
-        self.gelu = nn.GELU()
-
-        self.start_layer = nn.Sequential(
-            nn.Linear(d_input, d_input, bias = True, device = self.device),
-            self.gelu
-        )
-
-        self.converge_layer = nn.Sequential(
-            nn.Linear(d_input, d_input, bias = True, device = self.device),
-            self.gelu
-        )
-
-        self.decay_layer = nn.Sequential(
-            nn.Linear(d_input, d_input, bias = True, device = self.device)
-            ,nn.Softplus(beta = 10.0)
-        )
-
         # This layer translates decayed hidden states into intensity function values.
         self.intensity_layer = nn.Sequential(
-            nn.Linear(d_input, self.num_events, bias = True, device = self.device)
+            nn.Linear(d_input, 1, bias = True, device = self.device)
             ,nn.Softplus(beta = 1.)
         )
 
-        # History encoder. SAHP employs a plain transformer to encode marked temporal history
-        self.history_encoder = TransformerEncoder(num_events, device = self.device, \
-                                                  d_input = d_input, d_rnn = d_rnn, \
-                                                  d_hidden = d_hidden, n_layers = n_layers, \
-                                                  n_head = n_head, d_qk = d_qk, d_v = d_v, \
-                                                  dropout = dropout)
-
-
-    def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
-        '''
-        mu, eta, gamma: shape: [batch_size, seq_len, d_hidden]
-        dutation_t:     shape: [batch_size, seq_len, (integration_sample_rate, num_events)]
-        '''
-        assert len(duration_t.shape) - 2 - num_dimension_prior_batch >= 0, "Too few dimensions in duration_t!"
-
-        # add additional dimension to mu, eta, and gamma.
-        mu = rearrange(mu, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        eta = rearrange(eta, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-        gamma = rearrange(gamma, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
-                                                                               # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-
-        duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-
-        return cell_t
+        # History encoder. AttNHP employs a plain transformer to encode every events.
+        self.attn_model = TransformerEncoder(num_events, device = self.device, \
+                                             d_input = d_input, d_rnn = d_rnn, \
+                                             d_hidden = d_hidden, n_layers = n_layers, \
+                                             n_head = n_head, d_qk = d_qk, d_v = d_v, \
+                                             dropout = dropout, integration_sample_rate = self.integration_sample_rate)
 
 
     def forward(self, time_history, time_next, events_history, mask_history, custom_events_history = False, num_dimension_prior_batch = 0):
-        history = self.history_encoder(time_history, events_history, mask_history, custom_events_history)
-                                                                               # [batch_size, seq_len, d_input]
-        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
-
-        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = num_dimension_prior_batch)
-                                                                               # [..., batch_size, seq_len, d_input]
-        # calculate the intensity.
-        intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [..., batch_size, seq_len, num_events]
         # calculate the integral
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
-                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
-                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, 1]
+        # Rearrage the intensity tensor.
+        intensity_all_events = rearrange(intensity_all_events, '... isr ne bs sl () -> ... bs sl isr ne')
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_event]
         
-        integral_all_events = approximate_integration(expanded_intensity_all_events, \
-                                                      expanded_time, dim = -2, only_integral = True)
+        integral_all_events = approximate_integration(intensity_all_events, expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
         
-        return integral_all_events, intensity_all_events
+        return integral_all_events, intensity_all_events[..., -1, :]
 
 
     def get_event_embedding(self, input_event):
         return self.history_encoder.get_event_embedding(input_event)           # [batch_size, seq_len, d_history]
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
-        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, time_next_start = None):
+        if time_next_start is None:
+            time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
 
+        # calculate the integral
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = 0)
-                                                                               # [batch_size, seq_len, integration_sample_rate, d_input]
+        expanded_time = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate]
 
-        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
-        expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
-                                                                               # [batch_size, seq_len, integration_sample_rate, num_events]
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, 1]
+        # Rearrage the intensity tensor.
+        intensity_all_events = rearrange(intensity_all_events, '... isr ne bs sl () -> ... bs sl isr ne')
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_event]
         
-        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
+        integral_all_events = approximate_integration(intensity_all_events, expanded_time, dim = -2)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+        
+        return integral_all_events, intensity_all_events, expanded_time
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, num_dimension_prior_batch = 0):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
-        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
-
+        # calculate the integral
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
-                                                                               # [integration_sample_rate]
-        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, num_events, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
-                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, d_input]
-        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
-                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
-                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
-
-        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
+        original_expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier
+                                                                               # [..., batch_size, seq_len, num_event, integration_sample_rate]
+        expanded_time = rearrange(original_expanded_time, '... b s ne isr -> ... ne b s isr')
+                                                                               # [..., num_event, batch_size, seq_len, integration_sample_rate]
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history, sample_time_with_mark = True)
+                                                                               # [..., num_event, integration_sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [..., num_event, integration_sample_rate, num_event, batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [..., num_event, integration_sample_rate, num_event, batch_size, seq_len, 1]
+        # Rearrage the intensity tensor.
+        intensity_all_events = rearrange(intensity_all_events, '... ne isr ne1 bs sl () -> ... bs sl ne isr ne1')
+                                                                               # [..., batch_size, seq_len, num_event, integration_sample_rate, num_event]
+        integral_all_events = approximate_integration(intensity_all_events, original_expanded_time, dim = -2)
+                                                                               # [..., batch_size, seq_len, num_events, integration_sample_rate, num_event]
+        
+        return integral_all_events, intensity_all_events, expanded_time
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
-        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
-
+        # calculate the integral
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = 0)
-                                                                               # [batch_size, seq_len, integration_sample_rate, d_input]
 
-        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history)
+                                                                               # [integration_sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [integration_sample_rate, num_event, batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [integration_sample_rate, num_event, batch_size, seq_len, 1]
+        # Rearrage the intensity tensor.
+        expanded_intensity_all_events = rearrange(intensity_all_events, '... isr ne bs sl () -> ... bs sl isr ne')
+                                                                               # [batch_size, seq_len, integration_sample_rate, num_event]
+        
+        expanded_integral_all_events = approximate_integration(intensity_all_events, expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
-        expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
-                                                                               # [batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        # Obtain timestamp
-        timestamp, timestamp_ps = pack(
-            (torch.zeros_like(time_next), expanded_time.diff(dim = -1)),
-            'b s *'
-        )                                                                      # [batch_size, seq_len, integration_sample_rate]
         
         # construct the plot dict
         data = {}
@@ -182,8 +139,8 @@ class AttNHP(nn.Module):
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, time_next_per_seq) \
-            in enumerate(zip(expand_intensity, expand_integral, mask_next, time_next)):
+        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) \
+            in enumerate(zip(expand_intensity, expand_integral, mask_next, expanded_time)):
             seq_len = mask_per_seq.sum()
             probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
             probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
@@ -203,7 +160,7 @@ class AttNHP(nn.Module):
             
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
-                                                          time_next = time_next_per_seq[:seq_len], has_flatten = True)
+                                                          time_next = expanded_time_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
@@ -212,4 +169,4 @@ class AttNHP(nn.Module):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
         
-        return data, timestamp
+        return data, expanded_time

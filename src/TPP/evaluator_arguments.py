@@ -27,7 +27,8 @@ class TPPEvaluatorArguments(BasicArguments):
         
         # Training procedure related hyperparameters
         self.parser.add_argument('-ub', '--used_batch_size', type=int, default=2048, help='Batch size used for training the model.')
-        
+        self.parser.add_argument('-eb', '--evaluation_batch_size', type=int, default=1, help='Batch size used for training the model.')
+
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
         self.parser.add_argument('--model_config', type=str, default=None, help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{model_name}/{model_config}.")
@@ -75,7 +76,9 @@ def Evaluator_postprocess(opt, root_path):
         opt.n_training_steps *= opt.agg_update_step
 
     opt.training_batch_size = 1
-    opt.evaluation_batch_size = 1
+    if opt.task_name not in ['figure', 'plot']:
+        opt.evaluation_batch_size = 1
+        
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None

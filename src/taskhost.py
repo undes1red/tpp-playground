@@ -89,11 +89,6 @@ class TaskHost:
         Might benefit the Dataloader.
         '''
         torch.multiprocessing.set_sharing_strategy('file_system')
-
-        '''
-        Allow loading argparse.Namespace 
-        '''
-        torch.serialization.add_safe_globals([argparse.Namespace])
     
     
     def cuda(self):

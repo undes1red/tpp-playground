@@ -1,9 +1,14 @@
 import torch
 
-def get_subsequent_mask(seq):
-    """ For masking out the subsequent info, i.e., masked self-attention. """
 
-    sz_b, len_s = seq.size()
-    subsequent_mask = torch.triu(torch.ones((len_s, len_s), device = seq.device, dtype = torch.uint8)).T
-    subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1)  # b x ls x ls
+def get_subsequent_mask(seq_len, device):
+    """ For masking out the subsequent info, i.e., masked self-attention. """
+    '''
+    In our case, 1 means item keeped, and 0 means item masked.
+    '''
+
+    subsequent_mask = torch.triu(torch.ones((seq_len, seq_len), device = device, dtype = torch.uint8)).T
+                                                                                # [seq_len, seq_len]
+    subsequent_mask = subsequent_mask.unsqueeze(dim = 0)                        # [1, seq_len, seq_len]
+
     return subsequent_mask

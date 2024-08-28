@@ -95,7 +95,7 @@ class Encoder(nn.Module):
         self_attn_mask = (self_attn_mask_keypad + self_attn_mask_subseq).gt(0) # [batch_size, seq_len, seq_len]
 
         # Time Embedding
-        time_emb = self.position_emb(events_history, time_history)             # [batch_size, seq_len, d_input]
+        time_emb = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_input]
 
         # Event Embedding
         if events_history != None:

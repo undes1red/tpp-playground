@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from einops import repeat
+from einops import rearrange
 
 from src.toolbox.transformer import TransformerLayer
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
@@ -39,17 +39,16 @@ class Encoder(nn.Module):
         2. event_time: input time intervals. shape: [batch_size, seq_len]
         3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
         """
-
         # prepare attention masks
-        # slf_attn_mask is where we cannot look, i.e., the future and the padding
-        _, seq_len = event_type.shape[:2]
-        self_attn_mask_subseq = get_subsequent_mask(event_type)
-        self_attn_mask_keypad = repeat(non_pad_mask, 'b s -> b s_1 s', s_1 = seq_len)
+        # self_attn_mask is where we cannot look, i.e., the future and the padding
+        seq_len = event_type.shape[-1]
+        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device)
                                                                                # [batch_size, seq_len, seq_len]
+        self_attn_mask_keypad = rearrange(non_pad_mask, 'b s -> b () s')       # [batch_size, seq_len, seq_len]
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, seq_len, seq_len]
 
         # Time Embedding
-        time_emb = self.position_emb(event_type, event_time)                   # [batch_size, seq_len, d_input]
+        time_emb = self.position_emb(seq_len, event_time)                      # [batch_size, seq_len, d_input]
 
         if event_type != None:
             events_emb = self.event_emb(event_type)                            # [batch_size, seq_len, d_input]

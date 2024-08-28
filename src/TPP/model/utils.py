@@ -1,10 +1,25 @@
 from einops import rearrange, reduce, repeat
 import torch
 import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from src.toolbox.misc import move_from_tensor_to_ndarray
 
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
+
+plt.rcParams.update({
+    'text.usetex': True,
+    'font.family': 'serif',
+    'font.serif': ['Times',],
+    'mathtext.fontset': 'cm',
+    'text.latex.preamble': r'\usepackage{amsmath}'
+})
+
+default_figure_kwargs = {'font.size': 18,
+                         'figure.figsize': (8, 4),}
 
 
 '''
@@ -173,6 +188,88 @@ def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
         top_k_acc.append(top_k_acc_single_event_seq)
     
     return f1, top_k_acc
+
+
+def draw_intensity_integral_and_probability(df, df_event, annotation, figure_type, color_palette, num_events, figure_kwargs = {}):
+    figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
+    no_ground_truth = len(df.columns) == 2
+
+    df_plot = pd.melt(df, 'Time')
+    df_plot.columns = ['Time', ' ', figure_type]
+
+    with mpl.rc_context(figure_kwargs):
+        fig, ax = plt.subplots()
+        sns.lineplot(x = 'Time', y = figure_type, hue = ' ', data = df_plot, ax = ax)
+    
+        handles, labels = ax.get_legend_handles_labels()
+        lineplot_legend = ax.legend(handles = handles, labels = labels, loc = 'lower left')
+        ax.add_artist(lineplot_legend)
+    
+        sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = color_palette, \
+                        hue = 'Mark', hue_order = [f'Mark {item}' for item in range(num_events)], ax = ax)
+    
+        handles, labels = ax.get_legend_handles_labels()
+        lineplot_legend = ax.legend(handles = handles[1 if no_ground_truth else 2:], labels = labels[1 if no_ground_truth else 2:])
+        lineplot_legend.set_title('Mark')
+        ax.add_artist(lineplot_legend)
+    
+        if annotation is not None:
+            props = dict(boxstyle = 'round', facecolor = 'wheat', alpha = 0.5)
+            ax.text(0.05, 0.95, annotation, transform = ax.transAxes, fontsize = 14, verticalalignment = 'top', bbox=props)
+    
+    return fig
+
+
+def draw_intensity_integral_per_mark(df, df_event, figure_type, color_palette, num_events, figure_kwargs = {}):
+    figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
+
+    with mpl.rc_context(figure_kwargs):
+        fig, ax = plt.subplots()
+    
+        sns.lineplot(x = 'Time', y = figure_type, hue = 'Mark', data = df, palette = color_palette, \
+                     hue_order = [f'Mark {item}' for item in range(num_events)], ax = ax)
+
+        sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = color_palette, \
+                        hue = 'Mark', hue_order =  [f'Mark {item}' for item in range(num_events)], ax = ax)
+
+        handles, labels = ax.get_legend_handles_labels()
+        lineplot_legend = ax.legend(handles = [(handles[idx], handles[idx + num_events]) for idx in range(num_events)], 
+                                    labels = labels[:num_events], handler_map = {tuple: mpl.legend_handler.HandlerTuple(ndivide = None)})
+        lineplot_legend.set_title('Mark')
+
+    return fig
+
+
+def draw_heatmap(df_matrix, index_name, column_name, value_name, figure_kwargs):
+    figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
+    index, column = df_matrix.shape
+
+    # The index and column list
+    index_list = [ele for ele in range(index) for _ in range(column)]
+    column_list = list(range(column)) * index
+
+    df = pd.DataFrame.from_dict({
+        index_name: index_list,
+        column_name: column_list,
+        value_name: df_matrix.flatten()
+    })
+    df = df.pivot(index = index_name, columns = column_name, values = value_name)
+
+    with mpl.rc_context(figure_kwargs):
+        fig, ax = plt.subplots()
+        sns.heatmap(data = df, cmap = "YlGnBu", vmin = 0, vmax = max(1, np.max(df_matrix)), annot = False, ax = ax)
+
+    return fig
+
+
+def draw_lineplot(*args, figure_kwargs = {}, **kwargs):
+    figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
+
+    with mpl.rc_context(figure_kwargs):
+        fig, ax = plt.subplots()
+        sns.lineplot(*args, **kwargs, ax = ax)
+
+    return fig
 
 
 '''
