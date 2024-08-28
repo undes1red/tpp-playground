@@ -100,7 +100,7 @@ class SAHPWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
 
@@ -468,17 +468,6 @@ class SAHPWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -507,8 +496,19 @@ class SAHPWrapper(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
     
 
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
     @torch.no_grad()
-    def intensity(self, input_data, opt):
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -528,7 +528,6 @@ class SAHPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -540,13 +539,13 @@ class SAHPWrapper(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp, opt)
+        plots = generate_intensity_figure(data, timestamp, opt)
         
         return plots
 
 
     @torch.no_grad()
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -566,7 +565,6 @@ class SAHPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -578,12 +576,12 @@ class SAHPWrapper(BasicModel):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp, opt)
+        plots = generate_integral_figure(data, timestamp, opt)
         return plots
 
 
     @torch.no_grad()
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -603,13 +601,11 @@ class SAHPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
         expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -617,12 +613,12 @@ class SAHPWrapper(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
     @torch.no_grad()
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -660,9 +656,7 @@ class SAHPWrapper(BasicModel):
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''

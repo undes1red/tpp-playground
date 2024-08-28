@@ -455,17 +455,6 @@ class CTLSTMWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -492,163 +481,6 @@ class CTLSTMWrapper(BasicModel):
         mean, std = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, std
-
-
-    @torch.no_grad()
-    def intensity(self, input_data, opt):
-        '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
-        '''
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-
-        expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
-                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
-        
-        check_tensor(expand_integral)
-        check_tensor(expand_intensity)
-        assert expand_intensity.shape == expand_integral.shape
-
-        data = {
-            'time_next': time_next,
-            'events_next': events_next,
-            'mask_next': mask_next,
-            'expand_intensity': expand_intensity,
-            'input_intensity': input_intensity
-            }
-        plots = plot_intensity(data, timestamp, opt)
-        
-        return plots
-
-
-    @torch.no_grad()
-    def integral(self, input_data, opt):
-        '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
-        '''
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-
-        expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
-                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
-        check_tensor(expand_integral)
-        check_tensor(expand_intensity)
-        assert expand_intensity.shape == expand_integral.shape
-
-        data = {
-            'time_next': time_next,
-            'events_next': events_next,
-            'mask_next': mask_next,
-            'expand_integral': expand_integral,
-            'input_intensity': input_intensity
-            }
-        plots = plot_integral(data, timestamp, opt)
-        return plots
-
-
-    @torch.no_grad()
-    def probability(self, input_data, opt):
-        '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
-        '''
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-
-        expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
-                                                                               # 3 * [batch_size, seq_len, resolution, num_events]
-
-        check_tensor(expand_integral)
-        check_tensor(expand_intensity)
-        assert expand_intensity.shape == expand_integral.shape
-        expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
-                                                                               # [batch_size, seq_len, resolution, num_events]
-
-        data = {
-            'time_next': time_next,
-            'events_next': events_next,
-            'mask_next': mask_next,
-            'expand_probability': expand_probability,
-            'input_intensity': input_intensity
-            }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
-
-
-    @torch.no_grad()
-    def debug(self, input_data, opt):
-        '''
-        Args:
-        time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
-        resolution: int
-              How many interpretive numbers we have between an event interval?
-        '''
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
-                                                                               # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_next, opt.resolution)
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std)
-
-        '''
-        Append additional info into the data dict.
-        '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
-        data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
-        data['mae_before_event'] = mae
-        data['f1_before_time_pred'] = f1_2
-        data['top_k'] = top_k
-        data['probability_sum'] = probability_sum
-        data['tau_pred_all_event'] = tau_pred_all_event
-        data['maes_after_event_avg'] = maes_avg
-        data['maes_after_event'] = maes
-
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
 
 
     def figure(self, minibatch, opt):
@@ -797,7 +629,7 @@ class CTLSTMWrapper(BasicModel):
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std,  return_mean = False)
 
         '''
         Append additional info into the data dict.

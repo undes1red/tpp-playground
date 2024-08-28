@@ -67,7 +67,7 @@ class RMTPP(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
         }
@@ -302,17 +302,6 @@ class RMTPP(BasicModel):
         return mae, f1
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -341,8 +330,19 @@ class RMTPP(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
 
 
+    def figure(self, minibatch, opt):
+        plot_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return plot_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
     @torch.no_grad()
-    def intensity(self, input_data, opt):
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -373,13 +373,12 @@ class RMTPP(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp, opt)
         
-        return plots
-
+        generate_intensity_figure(data, timestamp, opt)
+        
 
     @torch.no_grad()
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -411,12 +410,12 @@ class RMTPP(BasicModel):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp, opt)
-        return plots
+        
+        generate_integral_figure(data, timestamp, opt)
 
 
     @torch.no_grad()
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -450,12 +449,12 @@ class RMTPP(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
     @torch.no_grad()
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -472,22 +471,15 @@ class RMTPP(BasicModel):
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_next, mean, std)
-                                                                               # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, \
-                                                          time_next, opt.resolution, mean, std, mask_next)
-
+                                                                               # [batch_size, seq_len]        
+        data = {}
         '''
         Append additional info into the data dict.
         '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
         data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
         data['mae_before_event'] = mae
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, None, opt)
 
 
     '''

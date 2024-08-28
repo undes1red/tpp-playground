@@ -67,7 +67,7 @@ class MarkedLogNormMixWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             # 'which_event_occurs_first': self.get_which_event_first,
             # 'samples_from_et': self.samples_from_et,
         }   
@@ -328,17 +328,6 @@ class MarkedLogNormMixWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -369,8 +358,19 @@ class MarkedLogNormMixWrapper(BasicModel):
         return input_time, input_events, input_mask, input_intensity, mean, std
 
 
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
     @torch.no_grad()
-    def intensity(self, input_data, opt):
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -384,7 +384,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -398,7 +398,7 @@ class MarkedLogNormMixWrapper(BasicModel):
 
 
     @torch.no_grad()
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -434,12 +434,11 @@ class MarkedLogNormMixWrapper(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        generate_probability_figure(data, timestamp, opt)
 
 
     @torch.no_grad()
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -516,9 +515,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''

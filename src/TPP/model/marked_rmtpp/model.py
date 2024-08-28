@@ -68,7 +68,7 @@ class MRMTPP(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
         }
@@ -421,17 +421,6 @@ class MRMTPP(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -460,8 +449,19 @@ class MRMTPP(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
 
 
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
     @torch.no_grad()
-    def intensity(self, input_data, opt):
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -479,7 +479,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -493,13 +493,13 @@ class MRMTPP(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp, opt)
+        plots = generate_intensity_figure(data, timestamp, opt)
         
         return plots
 
 
     @torch.no_grad()
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -517,9 +517,8 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -531,12 +530,12 @@ class MRMTPP(BasicModel):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp, opt)
+        plots = generate_integral_figure(data, timestamp, opt)
         return plots
 
 
     @torch.no_grad()
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -554,7 +553,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -570,12 +569,12 @@ class MRMTPP(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
     @torch.no_grad()
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -591,10 +590,10 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_next, mean, std)
+                                                    time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution, mean, std)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
+                                                          mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
 
@@ -613,9 +612,7 @@ class MRMTPP(BasicModel):
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''

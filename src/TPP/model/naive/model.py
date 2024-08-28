@@ -451,17 +451,6 @@ class NaiveMTPPWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def figure(self, minibatch, opt):
-        figure_type_to_functions = {
-            'intensity': self.figure_intensity,
-            'integral': self.figure_integral,
-            'probability': self.figure_probability,
-            'debug': self.figure_debug
-        }
-    
-        return figure_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -488,6 +477,17 @@ class NaiveMTPPWrapper(BasicModel):
         mean, std = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, std
+
+
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
 
 
     @torch.no_grad()
@@ -625,7 +625,7 @@ class NaiveMTPPWrapper(BasicModel):
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
 
         '''
         Append additional info into the data dict.

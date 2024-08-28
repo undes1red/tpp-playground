@@ -2,23 +2,22 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, figure_instruction_generator
+from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, save_fig, get_logger
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
+from src.TPP.model.utils import draw_intensity_integral_and_probability, draw_lineplot
 from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
 
-large_graph_length = 18
-large_graph_height = 10
+logger = get_logger(__name__)
 
 
-def plot_intensity(data, timestamp, opt):
+def generate_intensity_figure(data, timestamp, opt):
     '''
     '''
 
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    plot_instruction = {}
     '''
     Part 1: the sum of intensity functions over all markers.
     '''
@@ -45,10 +44,11 @@ def plot_intensity(data, timestamp, opt):
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
+        annotation = None
         if true_intensity_per_seq is not None:
-            df_intensity = pd.DataFrame.from_dict(
+            df_intensity_plot = pd.DataFrame.from_dict(
                     {'Time': timestamp_per_seq.flatten(),
-                     'Intensity': expand_intensity_per_seq[:seq_len, :].flatten(),
+                     'Predicted': expand_intensity_per_seq[:seq_len, :].flatten(),
                      'Truth': true_intensity_per_seq[:seq_len, :].flatten()}
             )
 
@@ -60,69 +60,26 @@ def plot_intensity(data, timestamp, opt):
             L1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
+            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {L1}$'))
         else:
-            df_intensity = pd.DataFrame.from_dict({
-                'Time': timestamp_per_seq.flatten(),
-                'Intensity': expand_intensity_per_seq[:seq_len, :].flatten()})
-            annotation = ''
+            df_intensity_plot = pd.DataFrame.from_dict(
+                    {'Time': timestamp_per_seq.flatten(),
+                     'Predicted': expand_intensity_per_seq[:seq_len, :].flatten()})
 
-        df_intensity_plot = pd.melt(df_intensity, 'Time')
-        df_intensity_plot.columns = ['Time', ' ', 'Intensity']
+        fig = draw_intensity_integral_and_probability(df_intensity_plot, df_event, annotation, 'Intensity', color_palette, num_events)
+        save_fig(fig, opt.plot_store_dir_for_this_batch, f'intensity_{idx}.pdf')
+        logger.info(f'intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'kwargs':
-                {
-                    'x':'Time',
-                    'y': 'Intensity',
-                    'hue': ' ',
-                    'data': df_intensity_plot
-                }
-            },
-            {
-                'plot_type': 'scatterplot',
-                'kwargs':
-                {
-                    'x': 'Time',
-                    'y': 'Point',
-                    'data': df_event,
-                    'palette': color_palette,
-                    'hue': 'Mark',
-                    'hue_order': [f'Mark {item}' for item in range(num_events)]
-                }
-            },
-            {
-                'plot_type': 'text',
-                'kwargs':
-                {
-                    'x': -1, 
-                    'y': -0.75,
-                    'verticalalignment': 'top',
-                    'horizontalalignment': 'left',
-                    's': annotation,
-                    'fontsize': 12,
-                }
-            }
-        ]
-
-        plot_instruction[f'intensity_{idx}'] \
-            = figure_instruction_generator(subplot_instruction, figure_kwargs = {
-                                               'figsize': (large_graph_length, large_graph_height),
-                                           })
-
-    return plot_instruction
+    return 0
 
 
-def plot_integral(data, timestamp, opt):
+def generate_integral_figure(data, timestamp, opt):
     '''
     '''
 
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    plot_instruction = {}
     '''
     Part 1: the sum of intensity integrals over all markers.
     '''
@@ -130,7 +87,6 @@ def plot_integral(data, timestamp, opt):
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]
-
     expand_integral = expand_integral.sum(dim = -1)                            # [batch_size, seq_len, resolution]
 
     packed_data = zip(*move_from_tensor_to_ndarray(expand_integral, events_next, time_next, mask_next, timestamp))
@@ -147,52 +103,25 @@ def plot_integral(data, timestamp, opt):
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
-        df_integral = pd.DataFrame.from_dict(
+        df_integral_plot = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten(),
-                 'Integral': expand_integral_per_seq[:seq_len, :].flatten()}
+                 'Predicted': expand_integral_per_seq[:seq_len, :].flatten()}
         )
 
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'kwargs':
-                {
-                    'x':'Time',
-                    'y': 'Integral',
-                    'data': df_integral
-                }
-            },
-            {
-                'plot_type': 'scatterplot',
-                'kwargs':
-                {
-                    'x': 'Time',
-                    'y': 'Point',
-                    'data': df_event,
-                    'palette': color_palette,
-                    'hue': 'Mark',
-                    'hue_order': [f'Mark {item}' for item in range(num_events)]
-                }
-            }
-        ]
+        fig = draw_intensity_integral_and_probability(df_integral_plot, df_event, None, 'Integral', color_palette, num_events)
+        save_fig(fig, opt.plot_store_dir_for_this_batch, f'integral_{idx}.pdf')
+        logger.info(f'integral_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-        plot_instruction[f'integral_{idx}'] \
-            = figure_instruction_generator(subplot_instruction, figure_kwargs = {
-                                               'figsize': (large_graph_length, large_graph_height),
-                                           })
-
-    return plot_instruction
+    return 0
 
 
-def plot_probability(data, timestamp, opt):
+def generate_probability_figure(data, timestamp, opt):
     '''
 
     '''
-
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    plot_instruction = {}
     '''
     Part 1: the sum of probability distributions over all markers.
     '''
@@ -219,10 +148,11 @@ def plot_probability(data, timestamp, opt):
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
+        annotation = None
         if true_probability_per_seq is not None:
-            df = pd.DataFrame.from_dict(
+            df_probability_plot = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten(),
-                 'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten(),
+                 'Predicted': expand_probability_per_seq[:seq_len, :].flatten(),
                  'Truth': true_probability_per_seq[:seq_len, :].flatten()}
             )
 
@@ -234,152 +164,23 @@ def plot_probability(data, timestamp, opt):
             L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
+            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {L1}$'))
         else:
-            df = pd.DataFrame.from_dict(
+            df_probability_plot = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten(),
-                 'Predicted Probability': expand_probability_per_seq[:seq_len, :].flatten()}
+                 'Predicted': expand_probability_per_seq[:seq_len, :].flatten()}
             )
-            annotation = ''
 
-        df_probability_plot = pd.melt(df, 'Time')
-        df_probability_plot.columns = ['Time', ' ', 'Probability']
+        fig = draw_intensity_integral_and_probability(df_probability_plot, df_event, annotation, 'Probability', color_palette, num_events)
+        save_fig(fig, opt.plot_store_dir_for_this_batch, f'probability_{idx}.pdf')
+        logger.info(f'probability_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'kwargs':
-                {
-                    'x':'Time',
-                    'y': 'Probability',
-                    'hue': ' ',
-                    'data': df_probability_plot
-                }
-            },
-            {
-                'plot_type': 'scatterplot',
-                'kwargs':
-                {
-                    'x': 'Time',
-                    'y': 'Point',
-                    'data': df_event,
-                    'palette': color_palette,
-                    'hue': 'Mark',
-                    'hue_order': [f'Mark {item}' for item in range(num_events)]
-                }
-            },
-            {
-                'plot_type': 'text',
-                'kwargs':
-                {
-                    'x': -1, 
-                    'y': -0.75,
-                    'verticalalignment': 'top',
-                    'horizontalalignment': 'left',
-                    's': annotation,
-                    'fontsize': 12,
-                }
-            }
-        ]
-
-        plot_instruction[f'probability_{idx}'] \
-            = figure_instruction_generator(subplot_instruction, figure_kwargs = {
-                                               'figsize': (large_graph_length, large_graph_height),
-                                           })
-
-    return plot_instruction
+    return 0
 
 
-def plot_debug(data, timestamp, opt):
+def generate_debug_figure(data, timestamp, opt):
     '''
-    What is inside dict data?
-    1. expand_intensity_for_each_event  shape: [batch_size, seq_len, resolution, num_events]
-    2. expand_integral_for_each_event   shape: [batch_size, seq_len, resolution, num_events]
-    3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
-    4. macro-f1: measure the event prediction performance without time prediction.
-    5. top_k: measure the event prediction performance without time prediction.
-    6. probability_sum: the value of \\int_{t_l}^{+infty}{p(m, \\tau)d\\tau}
-    7. tau_pred_all_event: The time prediction of all events, with p(m) known.
-    8. mae_before_event: as known as MAE.
-    9. maes_after_event_avg: contains mae_per_event_with_predict_index_avg and mae_per_event_with_event_next_avg
-    10. maes_after_event: contains mae_per_event_with_predict_index and mae_per_event_with_event_next
-    11. event_next: 
-    12. time_next:
     '''
-    num_events = opt.info_dict['num_events']
-    resolution = opt.resolution
-    color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
-
-    plot_instruction = {}
-    '''
-    Part 1: expand intensity and expand integral
-    Required plots: lineplot and scatterplot
-    '''
-    events_next = data['events_next']                                          # [batch_size, seq_len]
-    time_next = data['time_next']                                              # [batch_size, seq_len]
-    mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    expand_intensity = data['expand_intensity_for_each_event']                 # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-    expand_integral = data['expand_integral_for_each_event']                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-    expand_timestamp = timestamp                                               # [batch_size, seq_len, resolution]
-
-    packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp))
-    for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_intensity_per_seq, \
-              expand_integral_per_seq, timestamp_per_seq) in enumerate(packed_data):
-        seq_len = mask_next_per_seq.sum()
-        start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
-        timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
-        timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
-        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
-
-        df_event = pd.DataFrame.from_dict(
-                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
-                 'Mark': [f'Mark {item}' for item in events_next_per_seq]}
-        )
-
-        event_list = [f'Mark {i}' for i in range(num_events)]
-    
-        df_intensity = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(), 
-                 'Mark': event_list * (seq_len * resolution)}
-            )
-        df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Integral': expand_integral_per_seq[:seq_len, :, :].flatten(),
-                 'Mark': event_list * (seq_len * resolution)}
-            )
-        
-        for df, y in [(df_intensity, 'Intensity'), (df_integral, 'Integral')]:
-            subplot_instruction = [
-                {
-                    'plot_type': 'lineplot',
-                    'kwargs':
-                    {
-                        'x':'Time',
-                        'y': y,
-                        'hue': 'Mark',
-                        'data': df,
-                        'palette': color_palette,
-                        'hue_order': [f'Mark {item}' for item in range(num_events)]
-                    }
-                },
-                {
-                    'plot_type': 'scatterplot',
-                    'kwargs':
-                    {
-                        'x': 'Time',
-                        'y': 'Point',
-                        'data': df_event,
-                        'palette': color_palette,
-                        'hue': 'Mark',
-                        'hue_order': [f'Mark {item}' for item in range(num_events)]
-                    }
-                }
-            ]
-            plot_instruction[f'sub{y.lower()}_{idx}'] \
-                = figure_instruction_generator(subplot_instruction, figure_kwargs = {
-                                                   'figsize': (large_graph_length, large_graph_height),
-                                               })
 
     '''
     Only MAE is available.
@@ -393,26 +194,14 @@ def plot_debug(data, timestamp, opt):
         seq_len = mask_next_per_seq.sum()
 
         data_maes_per_seq = {
-            'x': list(range(seq_len)),
-            'y': np.log(1 + mae_per_seq[:seq_len]),
-            'marks': ['MAE'] * seq_len
+             'Event Index': list(range(seq_len)),
+            r'$\log(1 + \mathrm{MAE})$': np.log(1 + mae_per_seq[:seq_len]),
+             'marks': ['MAE'] * seq_len
         }
-        df_data_maes_per_seq = pd.DataFrame.from_dict(data_maes_per_seq)
 
-        subplot_instruction = [
-            {
-                'plot_type': 'lineplot',
-                'kwargs':
-                {
-                    'x': 'x',
-                    'y': 'y',
-                    'hue': 'marks',
-                    'data': df_data_maes_per_seq,
-                    'markers': True
-                }
-            }
-        ]
-        plot_instruction[f'log_mae_k_{idx}'] = figure_instruction_generator(subplot_instruction)
+        fig1 = draw_lineplot(data = data_maes_per_seq, x = 'Event Index', y = r'$\log(1 + \mathrm{MAE})$', hue = 'Mark', \
+                             figure_kwargs = {'font.size': 18, 'figure.figsize': (5, 5)})
+        save_fig(fig1, opt.plot_store_dir_for_this_batch, f'MAE_{idx}.pdf')
+        logger.info(f'MAE_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    return plot_instruction
+    return 0

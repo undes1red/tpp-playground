@@ -82,7 +82,7 @@ class IFIBCModel(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1_by_time_event': self.get_mae_e_and_f1_by_time_event,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
         }
@@ -639,17 +639,6 @@ class IFIBCModel(BasicModel):
         return time_history_for_sampling, events_history_for_sampling, sampled_mask
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -679,7 +668,18 @@ class IFIBCModel(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
 
 
-    def intensity(self, input_data, opt):
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -693,7 +693,7 @@ class IFIBCModel(BasicModel):
         return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -706,7 +706,7 @@ class IFIBCModel(BasicModel):
         return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -726,7 +726,6 @@ class IFIBCModel(BasicModel):
         expand_probability, timestamp = \
             self.model.probability(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -734,11 +733,11 @@ class IFIBCModel(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -828,10 +827,7 @@ class IFIBCModel(BasicModel):
         data['sampled_timestamp_time_event'] = sampled_timestamp_time_event
         data['sampled_subprobability_time_event'] = sampled_data_time_event['expand_probability_for_each_event']
 
-
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''

@@ -81,7 +81,7 @@ class TIFIBCModel(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot
+            'figure': self.figure
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -635,17 +635,6 @@ class TIFIBCModel(BasicModel):
         return time_history_for_sampling, events_history_for_sampling, sampled_mask
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -675,7 +664,18 @@ class TIFIBCModel(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
 
 
-    def intensity(self, input_data, opt):
+    def figure(self, minibatch, opt):
+        figure_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return figure_type_to_functions[opt.plot_type](minibatch, opt)
+    
+
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -686,10 +686,10 @@ class TIFIBCModel(BasicModel):
                       How many interpretive numbers we have between an event interval?
         '''
 
-        return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
+        return NotImplementedError('TIFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -699,10 +699,10 @@ class TIFIBCModel(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
+        return NotImplementedError('TIFIB is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -729,11 +729,11 @@ class TIFIBCModel(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
-    def debug(self, input_data, opt):
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -748,13 +748,11 @@ class TIFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, \
-                                                          opt.resolution, mean, std)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, opt.resolution, mean, std)
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_history, mask_next, mean, std, return_mean = False)
 
         '''
@@ -771,12 +769,10 @@ class TIFIBCModel(BasicModel):
                                                                                # 2 * [batch_size, seq_len]
         sampled_mask_history_event_time, sampled_mask_next_event_time = self.divide_history_and_next(sampled_mask_event_time)
                                                                                # 2 * [batch_size, seq_len]
-
         sampled_data_event_time, sampled_timestamp_event_time \
             = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, sampled_mask_history_event_time, \
-                                              sampled_mask_next_event_time, opt.resolution, mean, std)
-
+                                              sampled_time_next_event_time, sampled_mask_history_event_time, sampled_mask_next_event_time, \
+                                              opt.resolution, mean, std)
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
             = self.sample_time_event(1, self.end_time - self.start_time, mean, std)
@@ -791,9 +787,9 @@ class TIFIBCModel(BasicModel):
 
         sampled_data_time_event, sampled_timestamp_time_event \
             = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, sampled_mask_history_time_event, \
-                                              sampled_mask_next_time_event, opt.resolution, mean, std)
-
+                                              sampled_time_next_time_event, sampled_mask_history_time_event, sampled_mask_next_time_event, \
+                                              opt.resolution, mean, std)
+    
         '''
         Append additional info into the data dict.
         '''
@@ -826,9 +822,7 @@ class TIFIBCModel(BasicModel):
         data['sampled_timestamp_time_event'] = sampled_timestamp_time_event
         data['sampled_subprobability_time_event'] = sampled_data_time_event['expand_probability_for_each_event']
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''

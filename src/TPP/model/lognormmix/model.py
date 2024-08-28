@@ -66,7 +66,7 @@ class LogNormMixWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.figure,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
         }
@@ -233,17 +233,6 @@ class LogNormMixWrapper(BasicModel):
         return mae, f1
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -274,7 +263,18 @@ class LogNormMixWrapper(BasicModel):
         return input_time, input_events, input_mask, input_intensity, mean, std
 
 
-    def intensity(self, input_data, opt):
+    def figure(self, minibatch, opt):
+        plot_type_to_functions = {
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
+        }
+    
+        return plot_type_to_functions[opt.plot_type](minibatch, opt)
+
+
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -288,7 +288,7 @@ class LogNormMixWrapper(BasicModel):
         return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
-    def integral(self, input_data, opt):
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -302,7 +302,7 @@ class LogNormMixWrapper(BasicModel):
 
 
     @torch.no_grad()
-    def probability(self, input_data, opt):
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -335,7 +335,7 @@ class LogNormMixWrapper(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
+        plots = generate_probability_figure(data, timestamp, opt)
         return plots
 
 
@@ -350,26 +350,18 @@ class LogNormMixWrapper(BasicModel):
         '''
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
-        _, time_next = self.divide_history_and_next(input_time)                # [batch_size, seq_len]
-        _, events_next = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(input_mask)                # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
+        mae, _ = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
                                                                                # [batch_size, seq_len]
-        _, timestamp = \
-            self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, std)
-                                                                               # [batch_size, seq_len, resolution] * 2
         data = {}
         '''
         Append additional info into the data dict.
         '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
         data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
         data['mae_before_event'] = mae
 
-        plots = plot_debug(data, timestamp, opt)
+        plots = generate_debug_figure(data, None, opt)
 
         return plots
 
