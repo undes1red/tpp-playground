@@ -1,94 +1,11 @@
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import seaborn as sns
 import os
 import numpy as np
-import gc
 from tqdm import tqdm
 from src.toolbox.misc import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt, flatten, free_model_from_gpu
 from torch.utils.flop_counter import FlopCounterMode
 
 
 logger = get_logger(name = __file__)
-
-
-def draw_old(model, minibatch, desc, batch_idx, opt):
-    '''
-    This function will be called when task_name = graph
-
-    In the new pipeline, each plot is defined as a instruction list. draw_features() should extract and
-    call correct seaborn APIs with expected kwargs. The structure of the dict goes as follows:
-    {
-        ...
-        '[plot name]':
-        [
-            ...
-            {
-                'plot_type': '[plot_type]'
-                'length': [diagram length],
-                'height': [diagram height],
-                'kwargs':
-                {
-                    ...'[arguments sent to seaborn APIs.]'
-                }
-            }
-            ...
-        ]
-        ...
-    }
-    '''
-    # Create the plot storing directory if not exist.
-    plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
-    opt.plot_store_dir_for_this_batch = plot_store_dir_for_this_batch
-    mkdir_if_not_exist(plot_store_dir_for_this_batch)
-
-    plots = model('graph', minibatch, opt)
-    
-    plt.rcParams.update(
-        {'font.size': 24,
-         'figure.figsize': (7, 7),
-         'text.usetex': True,
-         'mathtext.fontset': 'cm',
-         'text.latex.preamble': r"\usepackage{amsmath, times}"})
-    
-    for plot_name, figure_instructions in plots.items():
-        # instruction['figure'] defines a figure.
-        figure_instruction = figure_instructions.get('figure')
-        if figure_instruction:
-            fig = plt.figure(figsize = figure_instruction.get('figsize'), layout = 'constrained')
-        else:
-            fig = plt.figure(layout = 'constrained')
-        # Grid specification.
-        grid = figure_instruction.get('layout') if figure_instruction.get('layout') else (1, 1)
-        gs = gridspec.GridSpec(*grid, figure = fig)
-        
-        plot_instructions = figure_instructions.get('plots')
-        if plot_instructions is None:
-            logger.warning('No figure to draw??')
-            continue
-        if len(plot_instructions) != (gs._nrows * gs._ncols):
-            logger.exception(f'The number of subplots and plot instructions mismatch! We have defined {len(plot_instructions)} plots but there are {gs._nrows * gs._ncols} available.')
-
-        for part, plot_instruction in zip(gs, plot_instructions):
-            ax = fig.add_subplot(part)
-            preamble = plot_instruction['preamble']
-            for key, kwargs in preamble.items():
-                func = getattr(ax, key)
-                func(**kwargs)
-
-            commands = plot_instruction['commands']
-            for subcommand in commands:
-                if subcommand.get('plot_type') == 'text':
-                    ax.text(**subcommand['kwargs'])
-                else:
-                    ax = getattr(sns, subcommand['plot_type'])(ax = ax, **subcommand['kwargs'])
-        
-        plt.savefig(os.path.join(plot_store_dir_for_this_batch, plot_name + '.pdf'), bbox_inches = "tight")
-        logger.info(f'{plot_name} for No.{batch_idx} minibatch in {desc} dataset finished drawing!')
-        fig.clear()
-        plt.close(fig = fig)
-        del ax
-        gc.collect()
 
 
 def draw(model, minibatch, desc, batch_idx, opt):

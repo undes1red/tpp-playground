@@ -11,4 +11,4 @@ from src.toolbox.misc.clamp_preserve_gradients import clamp_preserve_gradients
 from src.toolbox.misc.save_matplotlib_figure import save_fig
 
 
-from src.toolbox.misc.figure_instruction_generator import figure_instruction_generator
+# from src.toolbox.misc.figure_instruction_generator import figure_instruction_generator

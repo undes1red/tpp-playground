@@ -104,5 +104,6 @@ class NaiveModule(nn.Module):
         data['spearman_matrix'] = spearman_matrix
         data['pearson_matrix'] = pearson_matrix
         data['L1_matrix'] = L1_matrix
+        data['model_parameter'] = self.naive_tpp.get_model_parameter()
         
         return data, expanded_time

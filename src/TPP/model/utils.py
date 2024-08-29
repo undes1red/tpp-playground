@@ -10,14 +10,6 @@ from src.toolbox.misc import move_from_tensor_to_ndarray
 
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 
-plt.rcParams.update({
-    'text.usetex': True,
-    'font.family': 'serif',
-    'font.serif': ['Times',],
-    'mathtext.fontset': 'cm',
-    'text.latex.preamble': r'\usepackage{amsmath}'
-})
-
 default_figure_kwargs = {'font.size': 18,
                          'figure.figsize': (8, 4),}
 

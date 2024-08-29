@@ -52,6 +52,10 @@ class Poisson(nn.Module):
         intensity = torch.ones_like(integral) * F.softplus(self.intensities)   # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
         
         return integral, intensity
+    
+
+    def get_model_parameter(self):
+        return {'mu': F.softplus(self.intensities)}
 
 
 class Hawkes(nn.Module):
@@ -295,3 +299,9 @@ class Hawkes(nn.Module):
         integral = interval + base_intensity_integral                          # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
         return integral, intensity
+
+
+    def get_model_parameter(self):
+        return {'mu': F.softplus(self.base_intensity),
+                'alpha': F.softplus(self.transition_matrix),
+                'beta': F.softplus(self.time_scaling_factors)}

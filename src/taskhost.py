@@ -1,5 +1,6 @@
-import sys, torch, importlib, random, os, time, argparse
+import sys, torch, importlib, random, os, time
 import numpy as np
+import matplotlib
 
 from src.toolbox.misc import get_logger, version_check
 
@@ -7,7 +8,6 @@ from src.toolbox.misc import get_logger, version_check
 The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.
 '''
 logger = get_logger('TaskHost')
-
 
 class TaskHost:
     def __init__(self, parser, root_path):
@@ -89,7 +89,7 @@ class TaskHost:
         Might benefit the Dataloader.
         '''
         torch.multiprocessing.set_sharing_strategy('file_system')
-    
+
     
     def cuda(self):
         '''
@@ -131,7 +131,13 @@ class TaskHost:
         logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
         
         '''
-        Show and check PyTorch version.
+        Show the config file of matplotlib.
+        '''
+        logger.info(f'The current active matplotlib config file is {matplotlib.matplotlib_fname()}.')
+
+        '''
+        Show the version and other information of installed PyTorch.
+        Then do some configurations.
         '''
         logger.info(f'PyTorch Version: {torch.__version__}.')
         self.pytorch_warning(torch.__version__)
