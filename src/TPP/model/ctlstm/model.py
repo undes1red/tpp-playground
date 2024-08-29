@@ -90,7 +90,6 @@ class CTLSTMWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
             'figure': self.figure,
         }
 

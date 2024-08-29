@@ -190,6 +190,9 @@ def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
     return f1, top_k_acc
 
 
+'''
+Plotting.
+'''
 def draw_intensity_integral_and_probability(df, df_event, annotation, figure_type, color_palette, num_events, figure_kwargs = {}):
     figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
     no_ground_truth = len(df.columns) == 2
