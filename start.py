@@ -1,5 +1,4 @@
-from src import TaskHost
-import os, argparse, importlib
+import os
 
 # Hope we can get rid of absolute path in training scripts.
 root_path = os.path.dirname(os.path.abspath(__file__))
@@ -38,8 +37,25 @@ sub_procedure_translator = {
     'fakenews': 'Trainer'
 }
 
+
+def environment_var_settings():
+    '''
+    Set up custom environment variables.
+    '''
+    if os.path.exists(os.path.join(root_path, 'config', 'matplotlibrc')):
+        os.environ['MATPLOTLIBRC'] = os.path.join(root_path, 'config')
+
+
 if __name__ == '__main__':
-    # Train
+    '''
+    We configure all environment variables here before importing everything via ```importlib.import_module('src.' + main_procedure)```.
+    '''
+    environment_var_settings()
+    
+    # Start the process.
+    import argparse, importlib
+    from src import TaskHost
+    
     parser = argparse.ArgumentParser()
 
     # Enumerate subparsers from procedure_names

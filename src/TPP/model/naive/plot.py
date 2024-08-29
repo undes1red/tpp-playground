@@ -1,13 +1,16 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, save_fig, get_logger
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
-from src.TPP.model.utils import draw_intensity_integral_and_probability, draw_intensity_integral_per_mark, draw_heatmap, draw_lineplot
-from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
 
+from src.TPP.model.utils import draw_intensity_integral_and_probability, draw_intensity_integral_per_mark, draw_heatmap, draw_lineplot, default_figure_kwargs
+from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
 
 logger = get_logger(__name__)
 
@@ -198,7 +201,8 @@ def generate_debug_figure(data, timestamp, opt):
 
     num_events = opt.info_dict['num_events']
     resolution = opt.resolution
-    color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
+    event_list = [f'Mark {i}' for i in range(num_events)]
+    color_palette = stable_palette(event_list)
 
     '''
     Part 1: expand intensity and expand integral
@@ -228,8 +232,6 @@ def generate_debug_figure(data, timestamp, opt):
                 {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
-
-        event_list = [f'Mark {i}' for i in range(num_events)]
     
         df_intensity = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().repeat(num_events), 
@@ -353,6 +355,52 @@ def generate_debug_figure(data, timestamp, opt):
                              hue = 'Mark', figure_kwargs = {'font.size': 18, 'figure.figsize': (5, 5)})
         save_fig(fig9, opt.plot_store_dir_for_this_batch, f'log_pred_time_{idx}.pdf')
         logger.info(f'log_pred_time_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
+    
 
+    '''
+    Part 10: Show the model parameter.
+    Different from other NN models. Parameters in NaiveTPP are explainable.
+    '''
+    parameters = data['model_parameter']
+    number_of_parameter_blocks = len(parameters)
+    figure_kwargs = dict(default_figure_kwargs, **{'font.size': 14, 'figure.figsize': (6 * number_of_parameter_blocks, 6),})
+    with mpl.rc_context(figure_kwargs):
+        fig10, axes = plt.subplots(1, number_of_parameter_blocks)
+        
+        # Poisson process
+        if number_of_parameter_blocks == 1:
+            mu =  parameters['mu']
+            mu = move_from_tensor_to_ndarray(mu)
+            mu = np.expand_dims(mu, axis = 0)
+
+            ax.imshow(mu)
+            ax.set_title(r'\(\mathbf{\mu}\)')
+            ax.set_xticks(np.arange(num_events), labels = event_list)
+
+        # Hawkes process
+        elif number_of_parameter_blocks == 3:
+            mu = parameters['mu']
+            alpha = parameters['alpha']
+            beta = parameters['beta']
+
+            mu, alpha, beta = move_from_tensor_to_ndarray(mu, alpha, beta)
+            mu = np.expand_dims(mu, axis = 0)
+            beta = np.expand_dims(beta, axis = 0)
+
+            sns.heatmap(mu, ax = axes[0], vmin = 0, annot = True, xticklabels = event_list)
+            axes[0].set_title(r'\(\mathbf{\mu}\)')
+
+            sns.heatmap(alpha, ax = axes[1], vmin = 0, annot = True, xticklabels = event_list, yticklabels = event_list)
+            axes[1].set_title(r'\(\mathbf{\alpha}\)')
+
+            sns.heatmap(beta, ax = axes[2], vmin = 0, annot = True, xticklabels = event_list)
+            axes[2].set_title(r'\(\mathbf{\beta}\)')
+
+        # Unknown process
+        else:
+            raise Exception('Unknown process.')
+
+        save_fig(fig10, opt.plot_store_dir_for_this_batch, f'parameter.pdf')
+        logger.info(f'Model parameters drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
     return 0
