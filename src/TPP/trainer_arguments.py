@@ -98,4 +98,11 @@ def Trainer_postprocess(opt, root_path):
     opt.log = os.path.join(root_path, 'log', opt.procedure, replace_index, opt.dataset_name)
     opt.save_model = os.path.join(root_path, 'model', opt.procedure, replace_index, opt.dataset_name)
 
+    # Process identification.
+    # self identification mark
+    opt.procedure = 'TPP'
+    opt.displayed_procedure_name = 'Temporal Point Process'
+    opt.task_category = 'Trainer'
+    opt.displayed_task_category = 'Model Training'
+
     return opt

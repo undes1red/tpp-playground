@@ -10,9 +10,11 @@ TaskHost needs this file to start required tasks. Please, do not modify the cont
 from src.TPP.trainer_arguments import TPPTrainerArguments, Trainer_postprocess
 from src.TPP.evaluator_arguments import TPPEvaluatorArguments, Evaluator_postprocess
 
-from src.TPP.trainer import TPPTrainer
-from src.TPP.evaluator import TPPEvaluator
+# from src.TPP.trainer import TPPTrainer
+# from src.TPP.evaluator import TPPEvaluator
 
+from src.TPP.model import get_model
+from src.TPP.dataloader import prepare_dataloaders as get_dataloader
 
 pytorch_version_warnings = {
     '>=2.1.0': [
