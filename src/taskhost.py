@@ -4,6 +4,8 @@ import matplotlib
 
 from src.toolbox.misc import get_logger, version_check
 
+from src.trainer import Trainer
+
 '''
 The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.
 '''
@@ -154,19 +156,18 @@ class TaskHost:
         '''
 
         '''
-        The name of the worker should:
-        1. be named "main procedure + sub procedure name". E.x.: TPP_plotter's has main procedure name 'TPP' and sub-proceudre name 'Plotter', 
-        so its procedure class name should be 'TPPPlotter'. This class does not inherit any class.
-        2. present in src/${procedure}/__init__.py.
-        '''
-        self.worker = getattr(self.procedure, self.opt.procedure + self.opt.task_category)()
-
-        '''
         Report device properties.
         Current framework only supports single GPU training.
         '''
         self.opt.device = torch.device(f'cuda:{self.opt.cuda_device}' if self.opt.cuda else 'cpu')
     
-        self.worker.work(opt = self.opt)
+        '''
+        The name of the worker should:
+        1. be named "main procedure + sub procedure name". E.x.: TPP_plotter's has main procedure name 'TPP' and sub-proceudre name 'Plotter', 
+        so its procedure class name should be 'TPPPlotter'. This class does not inherit any class.
+        2. present in src/${procedure}/__init__.py.
+        '''
+        self.worker = Trainer(opt = self.opt, procedure = self.procedure)
+        self.worker.work()
 
         sys.exit(0)

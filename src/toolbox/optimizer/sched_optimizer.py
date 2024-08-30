@@ -2,7 +2,7 @@
 
 import math
 from src.toolbox.misc import get_logger
-from src.TPP.utils import mean, read_yaml
+from src.utils import mean, read_yaml
 import torch.optim as optim
 
 logger = get_logger(__name__)
