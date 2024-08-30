@@ -47,20 +47,18 @@ def environment_var_settings():
 
 
 if __name__ == '__main__':
-    '''
-    We configure all environment variables here before importing everything via ```importlib.import_module('src.' + main_procedure)```.
-    '''
+    # We should configure all environment variables here before importing everything via ```from src import TaskHost```.
     environment_var_settings()
     
     # Start the process.
     import argparse, importlib
     from src import TaskHost
     
-    parser = argparse.ArgumentParser()
-
     # Enumerate subparsers from procedure_names
     # we need main_procedure_translator and sub_procedure_translator to translate
     # procedure names into the correct procedure and argument class.
+    # The argument class of each process will be attached to the main parser and can be selected by procedure_name.
+    parser = argparse.ArgumentParser()
     procedure_names = [
         # Temporal point process
         'TPP_train',

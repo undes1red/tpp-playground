@@ -63,9 +63,7 @@ class TaskHost:
         np.random.seed(self.opt.seed)
         torch.backends.cudnn.benchmark = False
 
-        '''
-        Limit the number of executing thread when running code on CPU.
-        '''
+        # Limit the number of executing thread when running code on CPU.
         if not self.opt.cuda:
             torch.set_num_threads(14)
 
