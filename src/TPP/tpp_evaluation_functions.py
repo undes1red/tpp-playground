@@ -1,27 +1,10 @@
 import os
 import numpy as np
 from tqdm import tqdm
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt, flatten, free_model_from_gpu
-from torch.utils.flop_counter import FlopCounterMode
+from src.toolbox.misc import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt, flatten
 
 
 logger = get_logger(name = __file__)
-
-
-def draw(model, minibatch, desc, batch_idx, opt):
-    '''
-    This function will be called when task_name = graph
-
-    This function only accepts figure name-matplotlib figure object pairs and saves these figures in the predefined location
-    with the correct name and format.
-    '''
-    # Create the plot storing directory if not exist.
-    plot_store_dir_for_this_batch = os.path.join(opt.store_dir, opt.plot_type, desc, str(batch_idx))
-    opt.plot_store_dir_for_this_batch = plot_store_dir_for_this_batch
-    mkdir_if_not_exist(plot_store_dir_for_this_batch)
-
-    logger.info(f'Start drawing {opt.plot_type} figures for the No.{batch_idx} minibatch in {desc} dataset!')
-    model('figure', minibatch, opt)
 
 
 def spearman_and_l1_postprocess(all_evaluation_results, desc, opt):
@@ -166,68 +149,7 @@ def samples_from_et_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
-desc_funcs = {
-    'spearman_and_l1': ['Spearman and L1 for {0}', spearman_and_l1_postprocess],
-    'mae_and_f1': ['MAE and macro-f1 for {0}', mae_and_f1_postprocess],
-    'mae_e_and_f1': ['MAE-E and macro-f1 for {0}', mae_e_and_f1_postprocess],
-    'mae_e_and_f1_by_time_event': ['MAE-E and macro-f1 for {0} following NER', mae_e_and_f1_by_time_event_postprocess],
-    'which_event_occurs_first': ['Predict the next event by finding which event occurs first for {0}', which_event_occurs_first_postprocess],
-    'samples_from_et': [f'Samples of {0} for each mark', samples_from_et_postprocess]
-}
-
-
-def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True):
-    task_name = opt.task_name
-    desc_string, postprocess_func = desc_funcs[task_name]
-
-    elapsed_time = 0
-    list_output_results = None
-
-    if opt.fpcounter:
-        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
-            with FlopCounterMode(display = False) as counter:
-                for minibatch in progress_bar:
-                    results_per_minibatch = model(task_name, minibatch, opt)
-                    
-                    if list_output_results is None:
-                        result_length = len(results_per_minibatch)
-                        list_output_results = [[] for _ in range(result_length)]
-                    
-                    [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-    
-            flops = sum(counter.flop_counts['Global'].values())
-            elapsed_time = progress_bar.format_dict['elapsed']
-            data_size = progress_bar.format_dict['total']
-    else:
-        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
-            for minibatch in progress_bar:
-                results_per_minibatch = model(task_name, minibatch, opt)
-                
-                if list_output_results is None:
-                    result_length = len(results_per_minibatch)
-                    list_output_results = [[] for _ in range(result_length)]
-                
-                [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-    
-            flops = 0
-            elapsed_time = progress_bar.format_dict['elapsed']
-            data_size = progress_bar.format_dict['total']
-
-    if early_offload:
-        # How to remove a model and free its memory immediately?
-        free_model_from_gpu(model)
-
-    mkdir_if_not_exist(opt.store_dir)
-    result_file = os.path.join(opt.store_dir, f'{desc}_{task_name}_misc.txt')
-    strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n', 
-               f'Computation: {flops / 1000**4} TFlops.']
-    write_to_txt(strings, result_file)
-
-    # call user's postprocess function for evaluation results.
-    postprocess_func(list_output_results, desc, opt)
-
-
-def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
+def mae_and_f1_of_imputated_events(model, dataset, desc, opt, early_offload):
     '''
     This function is called when task_name = mae_e_and_f1.
 
@@ -268,3 +190,16 @@ def mae_and_f1_of_imputated_events(model, dataset, desc, opt):
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_of_imputated_events.pkl')
     data = {'mae_e': list_mae, 'f1': f1}
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
+
+desc_funcs = {
+    'spearman_and_l1': {'desc_string': 'Spearman and L1 for {0}', 'postprocess_func': spearman_and_l1_postprocess},
+    'mae_and_f1': {'desc_string': 'MAE and macro-f1 for {0}', 'postprocess_func': mae_and_f1_postprocess},
+    'mae_e_and_f1': {'desc_string': 'MAE-E and macro-f1 for {0}', 'postprocess_func': mae_e_and_f1_postprocess},
+    'mae_e_and_f1_by_time_event': {'desc_string': 'MAE-E and macro-f1 for {0} following NER', 'postprocess_func': mae_e_and_f1_by_time_event_postprocess},
+    'which_event_occurs_first': {'desc_string': 'Predict the next event by finding which event occurs first for {0}', 'postprocess_func': which_event_occurs_first_postprocess},
+    'samples_from_et': {'desc_string': f'Samples of {0} for each mark', 'postprocess_func': samples_from_et_postprocess},
+
+    # Custom evaluation function.
+    'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events
+}

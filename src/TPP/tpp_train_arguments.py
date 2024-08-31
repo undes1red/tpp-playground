@@ -1,6 +1,6 @@
 import os, argparse
 from src.arguments import BasicArguments
-from src.TPP.utils import replace_check
+from src.TPP.utils import suffix
 
 
 class TPPTrainerArguments(BasicArguments):
@@ -63,7 +63,7 @@ class TPPTrainerArguments(BasicArguments):
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Trainer',
+        self.parser.add_argument('--required_worker', type = str, default = 'Trainer',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Training',
                             help=argparse.SUPPRESS)
@@ -91,18 +91,7 @@ def Trainer_postprocess(opt, root_path):
     opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
-    
-    replace_index = replace_check(opt, root_path, 'log', 'model') if not opt.replace else ''
-
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.log = os.path.join(root_path, 'log', opt.procedure, replace_index, opt.dataset_name)
-    opt.save_model = os.path.join(root_path, 'model', opt.procedure, replace_index, opt.dataset_name)
-
-    # Process identification.
-    # self identification mark
-    opt.procedure = 'TPP'
-    opt.displayed_procedure_name = 'Temporal Point Process'
-    opt.task_category = 'Trainer'
-    opt.displayed_task_category = 'Model Training'
+    opt.model_identifier = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
 
     return opt

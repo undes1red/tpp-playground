@@ -4,7 +4,6 @@ import matplotlib
 
 from src.toolbox.misc import get_logger, version_check
 
-from src.trainer import Trainer
 
 '''
 The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.
@@ -22,10 +21,14 @@ class TaskHost:
                      Where the start.py locates.
         '''
         self.opt = parser.parse_args()
-        self.root_path = root_path
+        self.opt.root_path = root_path
 
+        '''
+        Parsing and postprocessing the input opt.
+        '''
         self.procedure = importlib.import_module('src.' + self.opt.procedure)
-        self.opt = getattr(self.procedure, f'{self.opt.task_category}_postprocess')(self.opt, self.root_path)
+        self.opt = getattr(self.procedure, f'{self.opt.required_worker}_postprocess')(self.opt, root_path)
+
         time.sleep(self.opt.sleep)
         self.pytorch_warning_dict = getattr(self.procedure, 'pytorch_version_warnings')
     
@@ -127,7 +130,7 @@ class TaskHost:
            in src.arguments.
         2. The name of the entry function should be work().
         '''
-        logger.debug(f'Root path: {self.root_path}.')
+        logger.debug(f'Root path: {self.opt.root_path}.')
         logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
         
         '''
@@ -167,7 +170,8 @@ class TaskHost:
         so its procedure class name should be 'TPPPlotter'. This class does not inherit any class.
         2. present in src/${procedure}/__init__.py.
         '''
-        self.worker = Trainer(opt = self.opt, procedure = self.procedure)
+        root_package = importlib.import_module('src')
+        self.worker = getattr(root_package, self.opt.required_worker)(opt = self.opt, procedure = self.procedure)
         self.worker.work()
 
         sys.exit(0)

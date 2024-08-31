@@ -71,7 +71,7 @@ if __name__ == '__main__':
         # Long-horizon Temporal point process
         # 'TPP_patch_train',
         # 'TPP_patch_evaluate',
-        ]
+    ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')
     for procedure_name in procedure_names:

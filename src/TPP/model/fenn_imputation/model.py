@@ -8,7 +8,7 @@ from src.toolbox.integration import approximate_integration
 
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.fenn_imputation.submodel import FENN
-from src.TPP.utils import pack_one_value_to_dict
+from src.utils import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.fenn_imputation.plot import *
 
@@ -692,7 +692,7 @@ class FENNModel(BasicModel):
             'debug': self.debug
         }
     
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
+        return plot_type_to_functions[opt.subtask_name](minibatch, opt)
 
 
     def extract_plot_data(self, minibatch):

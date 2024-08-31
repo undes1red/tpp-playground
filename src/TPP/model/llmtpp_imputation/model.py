@@ -4,7 +4,7 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
-from src.TPP.utils import pack_one_value_to_dict
+from src.utils import pack_one_value_to_dict
 from src.TPP.model.basic_tpp_model import BasicModel
 from src.TPP.model.llmtpp_imputation.submodel import LLMTPP
 from src.TPP.model.utils import *
@@ -401,7 +401,7 @@ class LLMTPPModel(BasicModel):
             'debug': self.debug
         }
     
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
+        return plot_type_to_functions[opt.subtask_name](minibatch, opt)
 
 
     def extract_plot_data(self, minibatch):

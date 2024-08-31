@@ -5,12 +5,12 @@ from itertools import cycle
 from torch.nn import DataParallel as DP
 from torch.utils.flop_counter import FlopCounterMode
 
-from src.toolbox.misc import get_logger, mkdir_if_not_exist
+from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml
 from src.toolbox.optimizer import ScheduledOptim
+from src.toolbox.list_operation import list_add, list_div
+from src.toolbox.metrics import Metric
 
-from src.TPP.utils import suffix
-from src.utils import print_performances, lst_add_lst, read_yaml, only_keep_data, \
-                      lst_divide, get_evaluation_results, Metric, print_args, pack_one_value_to_dict
+from src.utils import print_performances, only_keep_data, get_evaluation_results, print_args, pack_one_value_to_dict, replace_check
 
 
 logger = get_logger(__name__)
@@ -31,9 +31,24 @@ class Trainer:
         # Store required initial information.
         self.opt = opt
 
-        # load the model.
+        # Insert the model index if needed.
+        replace_index = '' if self.opt.replace else replace_check(self.opt, self.opt.model_identifier, 'log', 'model')
+        self.opt.log = os.path.join(self.opt.root_path, 'log', self.opt.procedure, replace_index, self.opt.dataset_name)
+        self.opt.save_model = os.path.join(self.opt.root_path, 'model', self.opt.procedure, replace_index, self.opt.dataset_name)
+
+        # Load the entry of the model and dataloader.
         self.get_model = getattr(procedure, 'get_model')
         self.get_dataloader = getattr(procedure, 'get_dataloader')
+
+        '''
+        Directory preparation.
+        Create log and model-saving dirs if they are not present.
+        '''
+        self.output_checkpoint_folder = 'model_' + self.opt.model_identifier
+        self.log_folder = 'log_' + self.opt.model_identifier
+
+        mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
+        mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
 
 
     def get_procedure_monitor_dict(self, additional_info = {}):
@@ -73,9 +88,8 @@ class Trainer:
         logger.info(f'The input model hyperparameters are {model_param}')
         
         '''
-        We load proper model by get_model()
+        We load the required model by get_model()
         '''
-        
         self.model_class = self.get_model(self.opt)
         self.model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
             **model_param
@@ -107,18 +121,6 @@ class Trainer:
     
     
     def task(self):
-        '''
-        Directory preparation
-        
-        Create log and model-saving dirs if they are not present.
-        '''
-        self.folder_suffix = suffix(self.opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
-        self.output_checkpoint_folder = 'model_' + self.folder_suffix
-        self.log_folder = 'log_' + self.folder_suffix
-
-        mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
-        mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
-
         '''
         Write hyperparameters into the model dir.
         '''
@@ -179,12 +181,13 @@ class Trainer:
                 self.sched_optimizer.step_and_update_lr()
                 self.sched_optimizer.zero_grad()
     
-            self.report_sum = lst_add_lst(self.report_sum, lst_divide(step_result, self.opt.n_report_steps))
+            self.report_sum = list_add(self.report_sum, step_result)
 
             '''
             A short report about training.
             '''
             if current_step % self.opt.n_report_steps == 0:
+                self.report_sum = list_div(self.report_sum, self.opt.n_report_steps)
                 self.train_report(current_step)
             
             '''
@@ -306,7 +309,7 @@ class Trainer:
                                         current_step = current_step, warmup = self.opt.n_warmup_steps)
 
         if save_should_or_not:
-            model_name = os.path.join(self.opt.save_model, 'model_' + self.folder_suffix, checkpoint_name)
+            model_name = os.path.join(self.opt.save_model, self.output_checkpoint_folder, checkpoint_name)
             torch.save(checkpoint, model_name)
             self.transform_report_sum_into_recording_df(procedure = 'Best', current_step = current_step, data = metric_data)
             logger.warning(f'----> We stored the model in {checkpoint_name} at step {current_step}. <----')

@@ -8,7 +8,7 @@ from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.tifib_c.submodel import TIFIBC
-from src.TPP.utils import pack_one_value_to_dict
+from src.utils import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.tifib_c.plot import *
 
@@ -81,7 +81,12 @@ class TIFIBCModel(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'figure': self.figure
+
+            # Figure Drawing.
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -662,17 +667,6 @@ class TIFIBCModel(BasicModel):
         mean, std = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, std
-
-
-    def figure(self, minibatch, opt):
-        figure_type_to_functions = {
-            'intensity': self.figure_intensity,
-            'integral': self.figure_integral,
-            'probability': self.figure_probability,
-            'debug': self.figure_debug
-        }
-    
-        return figure_type_to_functions[opt.plot_type](minibatch, opt)
     
 
     def figure_intensity(self, input_data, opt):

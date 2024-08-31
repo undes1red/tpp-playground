@@ -1,6 +1,6 @@
 import os, argparse
 from src.arguments import BasicArguments
-from src.TPP.utils import possible_checkpoint_detect
+from src.TPP.utils import suffix
 
 
 class TPPEvaluatorArguments(BasicArguments):
@@ -44,22 +44,22 @@ class TPPEvaluatorArguments(BasicArguments):
         parser.add_argument('--training_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
         parser.add_argument('--evaluate_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
         parser.add_argument('--test_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
-        parser.add_argument('--plot_type', type=str, choices=['intensity', 'probability', 'integral', 'debug', 'debug_addition_only'], default = 'intensity', help='Temporal point process only.')
         parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
         parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
         parser.add_argument('--task_name', type=str, help='Define which evaluation task you\'d like to start.')
+        parser.add_argument('--subtask_name', type=str, help='Define which evaluation subtask you\'d like to start.')
         parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
-
 
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Evaluator',
+        self.parser.add_argument('--required_worker', type = str, default = 'Evaluator',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Evaluation',
                             help=argparse.SUPPRESS)
+        
 
 '''
 The following functions are preprocessing functions.
@@ -88,12 +88,8 @@ def Evaluator_postprocess(opt, root_path):
         opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
         opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None
 
-    if not opt.replace:
-        opt.replace_index = possible_checkpoint_detect(opt, root_path)
-    else:
-        opt.replace_index = ['',]
-
     opt.checkpoint_of_this_procedure = os.path.join(root_path, 'model', opt.procedure)
     opt.results_of_this_procedure = os.path.join(root_path, 'results', opt.procedure)
-    
+    opt.model_identifier = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config')
+
     return opt

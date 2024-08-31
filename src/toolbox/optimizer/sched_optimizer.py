@@ -1,8 +1,8 @@
 '''A wrapper for a scheduled optimizer '''
 
 import math
-from src.toolbox.misc import get_logger
-from src.utils import mean, read_yaml
+from src.toolbox.misc import get_logger, read_yaml
+from src.toolbox.list_operation import list_mean
 import torch.optim as optim
 
 logger = get_logger(__name__)
@@ -67,7 +67,7 @@ class ScheduledOptim():
         for items in self._optimizer.state_dict()['param_groups']:
             lr.append(items['lr'])
 
-        return mean(lr)
+        return list_mean(lr)
     
 
     def state_dict(self):

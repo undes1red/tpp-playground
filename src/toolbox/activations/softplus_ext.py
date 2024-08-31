@@ -28,5 +28,4 @@ def softplus_ext(input, beta, threshold = 20):
 
     output = output_part_1 * threshold_mask + output_part_2
 
-
     return output

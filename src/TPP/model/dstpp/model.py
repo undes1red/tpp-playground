@@ -646,7 +646,7 @@ class DSTPPWrapper(BasicModule):
             'debug': self.debug
         }
     
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
+        return plot_type_to_functions[opt.subtask_name](minibatch, opt)
 
 
     def extract_plot_data(self, minibatch):
