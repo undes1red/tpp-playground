@@ -65,8 +65,8 @@ if __name__ == '__main__':
         'TPP_evaluate',
 
         # Explainable History Distillation.
-        'ehd_train',
-        'ehd_evaluate',
+        # 'ehd_train',
+        # 'ehd_evaluate',
 
         # Long-horizon Temporal point process
         # 'TPP_patch_train',
@@ -79,7 +79,7 @@ if __name__ == '__main__':
         Get the argument list
         '''
         main_procedure = main_procedure_translator[procedure_name]
-        sub_procedure_argument_prefix = main_procedure + sub_procedure_translator[procedure_name]
+        sub_procedure_argument_prefix = sub_procedure_translator[procedure_name]
 
         tmp_parser_hook = subparsers.add_parser(procedure_name, help = f'We use {procedure_name}.')
         procedure = importlib.import_module('src.' + main_procedure)

@@ -1,14 +1,28 @@
-import os, argparse
-from src.arguments import BasicArguments
-from src.TPP.utils import suffix
+class BasicTrainerArguments:
+    def __init__(self, parser):
+        self.parser = parser
+        # The Ultimate
+        self.parser.add_argument('--no_seed', action='store_true',
+                            help='This argument tells our code to randomly select a seed. You can use this option to explore your model\'s robustness.')
+        self.parser.add_argument('--seed', type=int, default=32,
+                            help='Set global random seed.')
+        self.parser.add_argument('--cuda', action='store_true', 
+                            help="Set it to true if you want to use GPU to accelerate model training.")
+        self.parser.add_argument('--cuda_device', type=int, default=0,
+                            help="Select which CUDA device you want to use. Default number is 0. This argument does nothing if --cuda is not set.")
+        self.parser.add_argument('--replace', action='store_true', 
+                            help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
+        self.parser.add_argument('--fpcounter', action='store_true', 
+                            help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.")
 
-
-class TPPTrainerArguments(BasicArguments):
-    def __init__(self, parser, root_path):
-        super().__init__(parser)
-
-        self.root_path = root_path        
-        # Input data
+        # The number of Dataloader worker
+        self.parser.add_argument('--n_worker', default=4, type=int,
+                  help='The number of dataloader workers. For most datasets, multiprocessing might speed up the training procedure. But you should set it to lower value, even 0 \
+                      if you meet \'received 0 items of ancdata\' exception.')
+        self.parser.add_argument('--sleep', default=0, type=int,
+                                 help='This task is delayed and will start in the amount of time you have set.')
+        
+        # Datasets.
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/${main_procedure_name}.')
         self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
@@ -16,7 +30,6 @@ class TPPTrainerArguments(BasicArguments):
         self.parser.add_argument('--training_data_name', type=str, default='train', help='Name of the dataset used for training the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
         self.parser.add_argument('--evaluate_data_name', type=str, default='evaluate', help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{evaluate_data_name}.{dataset_type}.')
         self.parser.add_argument('--test_data_name', type=str, default='test', help='Name of the dataset used for testing the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{test_data_name}.{dataset_type}.')
-
 
         # Training procedure related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='Training steps used for training the model.')
@@ -57,41 +70,3 @@ class TPPTrainerArguments(BasicArguments):
                             help='Input learning rate. The real learning rate could change due to the lr scheduler.')
         self.parser.add_argument('--n_cycles', type=float, default=0.5)
         self.parser.add_argument('--last_epoch', type=int, default=-1)
-
-        # self identification mark
-        self.parser.add_argument('--procedure', type = str, default = 'TPP',
-                            help=argparse.SUPPRESS)
-        self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
-                            help=argparse.SUPPRESS)
-        self.parser.add_argument('--required_worker', type = str, default = 'Trainer',
-                            help=argparse.SUPPRESS)
-        self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Training',
-                            help=argparse.SUPPRESS)
-
-
-'''
-The following functions are preprocessing functions.
-'''
-def Trainer_postprocess(opt, root_path):
-    '''
-    Convert relative paths into absolute path.
-    '''
-
-    '''
-    Gradient aggergation check
-    '''
-    if opt.agg_update_step > 1:
-        opt.n_training_steps *= opt.agg_update_step
-        opt.n_evaluation_steps *= opt.agg_update_step
-        opt.n_report_steps *= opt.agg_update_step
-        opt.n_warmup_steps *= opt.agg_update_step
-
-    opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
-    opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
-    opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
-    opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
-    opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
-    opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.model_identifier = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
-
-    return opt

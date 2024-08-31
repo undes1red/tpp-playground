@@ -1,21 +1,19 @@
 import os, argparse
-
 from src.trainer_arguments import BasicTrainerArguments
-from src.ehd.utils import suffix
+from src.TPP.utils import suffix
 
 
 class TrainerArguments(BasicTrainerArguments):
     def __init__(self, parser, root_path):
         super().__init__(parser)
-
-        self.root_path = root_path
+        self.root_path = root_path        
 
         # self identification mark
-        self.parser.add_argument('--procedure', type = str, default = 'ehd',
+        self.parser.add_argument('--procedure', type = str, default = 'TPP',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Counterfactual History Distillation',
+        self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Trainer',
+        self.parser.add_argument('--required_worker', type = str, default = 'Trainer',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Training',
                             help=argparse.SUPPRESS)
@@ -37,24 +35,13 @@ def Trainer_postprocess(opt, root_path):
         opt.n_evaluation_steps *= opt.agg_update_step
         opt.n_report_steps *= opt.agg_update_step
         opt.n_warmup_steps *= opt.agg_update_step
-    opt.base_dataset_name = cut_the_dataset_name(opt.dataset_name)
 
-    opt.root_path = root_path
-    opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.log = os.path.join(root_path, 'log', opt.procedure, opt.dataset_name)
-    opt.save_model = os.path.join(root_path, 'model', opt.procedure, opt.dataset_name)
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
     opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
+    opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.model_identifier = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
 
     return opt
-
-
-def cut_the_dataset_name(name):
-    '''
-    New format of dataset name: [dataset_name]_[seq_len_x]_[seq_len_h]
-    '''
-    return name.rsplit('_', maxsplit = 2)[0]

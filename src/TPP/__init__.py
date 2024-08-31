@@ -8,12 +8,12 @@ TaskHost needs this file to start required tasks. Please, do not modify the cont
 '''
 
 # Argument parser
-from src.TPP.tpp_train_arguments import TPPTrainerArguments, Trainer_postprocess
-from src.TPP.tpp_evaluate_arguments import TPPEvaluatorArguments, Evaluator_postprocess
+from src.TPP.train_arguments import TrainerArguments, Trainer_postprocess
+from src.TPP.evaluate_arguments import EvaluatorArguments, Evaluator_postprocess
 
 # Model and dataloader entry.
 from src.TPP.model import get_model
-from src.TPP.dataloader import prepare_dataloaders as get_dataloader
+from src.TPP.dataloader import get_dataloader
 
 # Evaluation.
 from src.TPP.tpp_evaluation_functions import desc_funcs as get_evaluation_funcs

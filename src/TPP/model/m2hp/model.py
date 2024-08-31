@@ -10,7 +10,7 @@ from src.TPP.model.m2hp.plot import *
 from src.TPP.model.m2hp.submodel import M2HP
 from src.TPP.model.utils import *
 from src.TPP.model.m2hp.utils import *
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 
 
 class M2HPWrapper(BasicModel):

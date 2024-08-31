@@ -1,11 +1,10 @@
-import os, torch
+import os
 from torch.nn import DataParallel as DP
 
-from src.toolbox.misc import get_logger, read_yaml
+from src.toolbox.misc import get_logger, read_yaml, print_args
 from src.toolbox.evaluation import basic_evaluation_loop, basic_evaluation
-
-from src.utils import print_args, load_checkpoint, possible_checkpoint_detect
-
+from src.toolbox.evaluation import load_checkpoint, possible_checkpoint_detect
+from src.toolbox.dataloader import prepare_dataloaders
 
 '''
 Detailed training procedure after all required data are ready.
@@ -37,7 +36,7 @@ class Evaluator:
         ========= Load Dataset =========
         '''
         if self.opt.data_path:
-            self.raw_data = self.get_dataloader(self.opt)
+            self.raw_data = prepare_dataloaders(self.opt, self.get_dataloader)
         else:
             raise logger.exception("Wrong input data path.")
     
@@ -65,7 +64,7 @@ class Evaluator:
             Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DP if possible.
             '''
             model = load_checkpoint(logger, os.path.join(self.opt.checkpoint_folder, 'checkpoint.chkpt'), model, device = self.opt.device)
-            logger.info(print_args(self.opt))
+            logger.info(print_args(self.opt, 'Evaluation Info'))
 
             if self.opt.cuda:
                 self.model = DP(model, device_ids = [self.opt.cuda_device, ])

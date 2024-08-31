@@ -6,7 +6,7 @@ from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 
 from src.TPP.model.lognormmix.log_norm_mix import LogNormMix
 from src.TPP.model.utils import *
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.lognormmix.plot import *
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 

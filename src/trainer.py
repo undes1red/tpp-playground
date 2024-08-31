@@ -5,13 +5,13 @@ from itertools import cycle
 from torch.nn import DataParallel as DP
 from torch.utils.flop_counter import FlopCounterMode
 
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml
+from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml, print_args, pack_one_value_to_dict, only_keep_data
 from src.toolbox.optimizer import ScheduledOptim
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
-
-from src.utils import print_performances, only_keep_data, get_evaluation_results, print_args, pack_one_value_to_dict, replace_check
-
+from src.toolbox.training import print_performances, replace_check
+from src.toolbox.evaluation import get_evaluation_results
+from src.toolbox.dataloader import prepare_dataloaders
 
 logger = get_logger(__name__)
 
@@ -77,7 +77,7 @@ class Trainer:
         ========= Load Dataset =========
         '''
         if self.opt.data_path:
-            self.raw_data = self.get_dataloader(self.opt)
+            self.raw_data = prepare_dataloaders(self.opt, self.get_dataloader)
             self.opt.training_size = len(self.raw_data['Training'])
         else:
             raise logger.exception("Wrong input data path.")
@@ -100,7 +100,7 @@ class Trainer:
         total_parameters = sum(p.numel() for p in self.model.parameters())
         self.opt.trainable_parameters = trainable_parameters
         self.opt.epoch = self.opt.n_training_steps / self.opt.training_size
-        logger.info(print_args(self.opt))
+        logger.info(print_args(self.opt, 'Training Info'))
         logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
         logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}.')
     

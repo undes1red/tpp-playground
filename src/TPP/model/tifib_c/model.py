@@ -8,7 +8,7 @@ from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.tifib_c.submodel import TIFIBC
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.tifib_c.plot import *
 

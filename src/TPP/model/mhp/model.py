@@ -11,7 +11,7 @@ from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_
 from src.TPP.model.mhp.plot import *
 from src.TPP.model.mhp.submodel import MHP
 from src.TPP.model.utils import *
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 
 
 class MHPWrapper(BasicModel):

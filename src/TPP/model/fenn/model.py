@@ -9,7 +9,7 @@ from src.toolbox.integration import approximate_integration
 
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_bound, its_upper_bound
 from src.TPP.model.fenn.submodel import FENN
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.fenn.plot import *
 

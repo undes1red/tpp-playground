@@ -7,12 +7,17 @@ TPPTrainer and TPPPlotter handles the main process of training and evaluation.
 TaskHost needs this file to start required tasks. Please, do not modify the content of this file.
 '''
 
-from src.ehd.trainer_arguments import ehdTrainerArguments, Trainer_postprocess
-from src.ehd.evaluator_arguments import ehdEvaluatorArguments, Evaluator_postprocess
+from src.ehd.trainer_arguments import TrainerArguments, Trainer_postprocess
+from src.ehd.evaluator_arguments import EvaluatorArguments, Evaluator_postprocess
 
 
-from src.ehd.trainer import ehdTrainer
-from src.ehd.evaluator import ehdEvaluator
+# Model and dataloader entry.
+from src.ehd.model import get_model
+from src.ehd.dataloader import prepare_dataloaders as get_dataloader
+
+# Evaluation.
+# from src.TPP.tpp_evaluation_functions import desc_funcs as get_evaluation_funcs
+
 
 pytorch_version_warnings = {
     '1.4.0': [

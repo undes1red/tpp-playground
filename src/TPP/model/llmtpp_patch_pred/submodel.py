@@ -5,9 +5,11 @@ import transformers
 import re
 import math
 
+from src.toolbox.metrics import L1_distance_across_events
+from src.toolbox.subsequent_mask import get_subsequent_mask
+
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr
-from src.TPP.model.utils import L1_distance_across_events
 from src.TPP.model.llmtpp_patch_pred.transformers_module import lm_module_location
 from src.TPP.model.llmtpp_patch_pred.embedding import DataEmbedding
 
@@ -56,7 +58,7 @@ class LLMTPP(nn.Module):
             nn.GELU(),
             nn.Dropout(0.1),
             nn.LayerNorm(d_model),
-            nn.Linear(d_model, self.patch_size, device = self.device),
+            nn.Linear(d_model, self.patch_size * self.num_events, device = self.device),
             nn.Softplus()
         )
 
@@ -94,12 +96,12 @@ class LLMTPP(nn.Module):
         return task_mapper[mode](*args, **kwargs)
     
 
-    def model_forward(self, events_history, time_history, mask_history, mean, var):
-        time_history = (time_history - mean) / var
+    def model_forward(self, events_history, time_history, mask_history, mean, std):
+        time_history = (time_history - mean) / std
 
-        events_history, time_history, mask_history = self.patchify(events_history, time_history, mask_history)
+        patched_events_history, patched_time_history, patched_mask_history = self.patchify(events_history, time_history, mask_history)
                                                                                # [batch_size, num_of_patches, patch_size]
-        input_embs = self.enc_embedding(events_history, time_history, mask_history)
+        input_embs = self.enc_embedding(patched_events_history, patched_time_history, patched_mask_history)
                                                                                # [batch_size, num_of_patches, d_model]
 
         input_embs = torch.nn.functional.pad(input_embs, (0, self.d_lm_embedding - input_embs.shape[-1]))
@@ -110,15 +112,16 @@ class LLMTPP(nn.Module):
         mark_dist = rearrange(mark_dist, '... (ps ne) -> ... ps ne', ps = self.patch_size)
                                                                                # [batch_size, seq_len, patch_size, num_events]
         mark_dist = torch.nn.functional.softmax(mark_dist, dim = -1)           # [batch_size, seq_len, patch_size, num_events]
-        pred_time = self.time(outputs)                                         # [batch_size, seq_len, patch_size]
-
-        pred_time = (pred_time - (mean / var)) * var + mean
+        pred_time = self.time(outputs)                                         # [batch_size, seq_len, patch_size * num_events]
+        pred_time = rearrange(pred_time, '... (ps ne) -> ... ps ne', ps = self.patch_size)
+                                                                               # [batch_size, seq_len, patch_size, num_events]
+        pred_time = (pred_time - (mean / std)) * std + mean
 
         return pred_time, mark_dist
 
 
     def train_procedure(self, time_history, time_prediction, event_history, \
-                        event_prediction, mask_history, mask_prediction, mean, var):
+                        event_prediction, mask_history, mask_prediction, mean, std):
         '''
         Args:
             events_history: [batch_size, seq_len] or [batch_size, seq_len, d_history] if custom_events_history = True
@@ -316,7 +319,7 @@ class LLMTPP(nn.Module):
                time_pred
 
 
-    def sample(self, sampled_events_history, sampled_time_history, tau, mean, var):
+    def sample(self, sampled_events_history, sampled_time_history, tau, mean, std):
         '''
         Args:
             events_history: [number_of_sampled_sequences, sampled_seq_len]
@@ -328,7 +331,7 @@ class LLMTPP(nn.Module):
         '''
         Obtain historical embeddings.
         '''
-        sampled_time_history = (sampled_time_history - mean) / var             # [number_of_sampled_sequences, sampled_seq_len]
+        sampled_time_history = (sampled_time_history - mean) / std             # [number_of_sampled_sequences, sampled_seq_len]
 
         sampled_events_embeddings = self.events(sampled_events_history)        # [number_of_sampled_sequences, sampled_seq_len, d_history]
         sampled_history, sampled_history_ps = pack([sampled_events_embeddings, sampled_time_history], 'b s *')
@@ -345,8 +348,8 @@ class LLMTPP(nn.Module):
         '''
         Obtain timestamp embeddings.
         '''
-        tau = (tau - mean) / var                                               # [number_of_sampled_sequences, 1, num_events]
-        time_next_zero = torch.ones_like(tau) * (-mean / var)                  # [number_of_sampled_sequences, 1, num_events]
+        tau = (tau - mean) / std                                               # [number_of_sampled_sequences, 1, num_events]
+        time_next_zero = torch.ones_like(tau) * (-mean / std)                  # [number_of_sampled_sequences, 1, num_events]
 
         time_embedding = tau.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [number_of_sampled_sequences, 1, num_events, d_intensity]
@@ -379,7 +382,7 @@ class LLMTPP(nn.Module):
         return probability_integral_from_t_to_inf / (probability_integral_from_tl_to_inf + self.epsilon)
 
 
-    def probability(self, events_history, time_history, time_next, resolution, mean, var):
+    def probability(self, events_history, time_history, time_next, resolution, mean, std):
         '''
         Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
         Args:
@@ -392,7 +395,7 @@ class LLMTPP(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
@@ -414,7 +417,7 @@ class LLMTPP(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         time_expand.requires_grad = True
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
@@ -458,7 +461,7 @@ class LLMTPP(nn.Module):
         return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, var, mask):
+    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, std, mask):
         '''
         We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
         Args:
@@ -470,7 +473,7 @@ class LLMTPP(nn.Module):
         '''
         History embeddings
         '''
-        time_history = (time_history - mean) / var                             # [batch_size, seq_len]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
         history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_history + 1]
@@ -493,7 +496,7 @@ class LLMTPP(nn.Module):
                                                                                # [batch_size, seq_len, resolution, num_events]
         
         time_expand.requires_grad = True      
-        time_expand_norm = (time_expand - mean) / var                          # [batch_size, seq_len, resolution, num_events]
+        time_expand_norm = (time_expand - mean) / std                          # [batch_size, seq_len, resolution, num_events]
 
         emb_time_expand = time_expand_norm.unsqueeze(dim = -1) * self.nonneg_activation(self.weight_for_t)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
@@ -562,7 +565,7 @@ class LLMTPP(nn.Module):
                     spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
-            pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowvar = False)
+            pearson_matrix_per_seq = np.corrcoef(expand_probability_per_seq[:seq_len * resolution], rowstd = False)
             if self.num_events == 1:
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             

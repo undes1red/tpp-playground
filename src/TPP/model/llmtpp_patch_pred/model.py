@@ -4,9 +4,11 @@ from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
+from src.toolbox.metrics import L1_distance_across_events
+from src.toolbox.misc import pack_one_value_to_dict
+
 from src.TPP.model.basic_tpp_model import BasicModel
 from src.TPP.model.llmtpp_patch_pred.submodel import LLMTPP
-from src.utils import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.llmtpp_patch_pred.plot import *
 
@@ -52,7 +54,7 @@ class LLMTPPModel(BasicModel):
         * mean          type: float shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
-        * var           type: float shape: N/A
+        * std           type: float shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
         * evaluate      type: bool shape: N/A
@@ -69,7 +71,7 @@ class LLMTPPModel(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
+            'figure': self.plot,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -106,20 +108,36 @@ class LLMTPPModel(BasicModel):
             return result
 
 
-    def train_procedure(self, input_time, input_events, input_score, input_mask, mean, var):
+    @torch.no_grad()
+    def sample_time(self, sampling_approach, task = 'mt', *args, **kwargs):
+        '''
+        number_of_total_samples: how many samples do we need to predict one next event.
+        step: we output "step" samples to reduce memory comsumption during inference.
+        sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
+        task: 'mt' for mark first time second, 'tm' for time first mark second.
+        '''
+
+        dict_sampling_apparoch = {
+            'its': self.sampling_by_its,
+            'thinning': self.sampling_by_thinning
+        }
+
+        return dict_sampling_apparoch[sampling_approach](task = task, *args, **kwargs)
+
+
+    def train_procedure(self, input_time, input_events, input_score, input_mask, mean, std):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(input_mask)     # [batch_size, seq_len]
 
-        pred_time, pred_event_prob = self.model('train', events_history = events_history, \
-                                                time_history = time_history, mask_history = mask_history, \
-                                                mean = mean, var = var)
-                                                                               # [batch_size, patch_len, patch_size] + [batch_size, patch_len, patch_size, num_events]
-        patch_len = pred_time.shape[-2]
+        pred_time, pred_event_prob = self.model('train', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, patch_len, patch_size, num_events] * 2
+        patch_len = pred_time.shape[-3]
         pred_event_prob = rearrange(pred_event_prob, '... pl ps ne -> ... (pl ps) ne')
                                                                                # [batch_size, patch_len * patch_size, num_events]
-        pred_time = rearrange(pred_time, '... p n -> ... (p n)')               # [batch_size, patch_len * patch_size]
+        pred_time = rearrange(pred_time, '... p n ne -> ... (p n) ne')         # [batch_size, patch_len * patch_size, num_events]
 
         '''
         Remove the probability of the dummy event by mask.
@@ -132,9 +150,7 @@ class LLMTPPModel(BasicModel):
                                                                                 # [batch_size, patch_len * patch_size] * 3
         the_number_of_events = padded_mask_next_without_dummy.sum().item()
 
-        '''
-        cross entropy loss between p_{real} and p_{pred}.
-        '''
+        # cross entropy loss between p_{real} and p_{pred}.
         events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
                                                                                 padded_events_next_without_dummy.long(), reduction = 'none')
                                                                                # [batch_size, seq_len]
@@ -142,8 +158,8 @@ class LLMTPPModel(BasicModel):
                                                                                # [batch_size, seq_len]
         events_loss_without_dummy = events_loss_without_dummy.sum()
 
-        # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
-        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = padded_time_next, mask_next = padded_mask_next_without_dummy)
+        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = padded_time_next, \
+                                            event_next = padded_events_next_without_dummy, mask_next = padded_mask_next_without_dummy)
         time_loss_without_dummy = self.lambda_t * time_loss_without_dummy
         events_loss_without_dummy = self.lambda_e * events_loss_without_dummy
         loss = time_loss_without_dummy + events_loss_without_dummy
@@ -152,7 +168,7 @@ class LLMTPPModel(BasicModel):
         return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
 
 
-    def evaluate_procedure(self, input_time, input_events, input_score, input_mask, mean, var):
+    def evaluate_procedure(self, input_time, input_events, input_score, input_mask, mean, std):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
@@ -165,18 +181,26 @@ class LLMTPPModel(BasicModel):
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
         
-        mae, pred_time, pred_event_prob \
-            = self.mean_absolute_error(events_history = events_history, time_history = time_history,\
-                                       time_next = time_next, mask_history = mask_history, \
-                                       mask_next = mask_next_without_dummy, mean = mean, var = var)
-                                                                               # [batch_size, patch_len * patch_size] + [batch_size, patch_len * patch_size] + [batch_size, patch_len * patch_size, num_events] 
+        mae, f1 = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history, \
+                                                  events_next = events_next, time_next = time_next, \
+                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, \
+                                                  mean = mean, std = std)      # [batch_size, patch_len * patch_size] + [batch_size, patch_len * patch_size] + [batch_size, patch_len * patch_size, num_events] 
         mae = mae.sum().item() / the_number_of_events
 
-        padded_length = pred_time.shape[-1]
+        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, patch_len, patch_size, num_events] * 2
+        padded_length = pred_time.shape[-3]
+        pred_event_prob = rearrange(pred_event_prob, '... pl ps ne -> ... (pl ps) ne')
+                                                                               # [batch_size, patch_len * patch_size, num_events]
+        pred_time = rearrange(pred_time, '... pl ps ne -> ... (pl ps) ne')     # [batch_size, patch_len * patch_size, num_events]
+
         padded_mask_next_without_dummy, padded_events_next_without_dummy, padded_time_next \
-            = self.pad_sequences(int(padded_length / self.patch_size), mask_next_without_dummy, events_next_without_dummy, time_next)
+            = self.pad_sequences(padded_length, mask_next_without_dummy, events_next_without_dummy, time_next)
                                                                                # [batch_size, patch_len * patch_size] * 3
-        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = padded_time_next, mask_next = padded_mask_next_without_dummy)
+        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = padded_time_next, \
+                                            event_next = padded_events_next_without_dummy, mask_next = padded_mask_next_without_dummy)
+
         events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
                                                                                 padded_events_next_without_dummy.long(), reduction = 'none')
                                                                                # [batch_size, patch_len * patch_size]
@@ -187,19 +211,10 @@ class LLMTPPModel(BasicModel):
         events_loss_without_dummy = self.lambda_e * events_loss_without_dummy
         loss = time_loss_without_dummy + events_loss_without_dummy
 
-        '''
-        macro-F1 value for reference.
-        '''
-        pred_event = torch.argmax(pred_event_prob, dim = -1)                   # [batch_size, patch_len * patch_size]
-        events_pred_index_at_pred_time = pred_event[padded_mask_next_without_dummy == 1]
-        events_true = events_next[mask_next_without_dummy == 1]
-        events_true, events_pred_index_at_pred_time = move_from_tensor_to_ndarray(events_true, events_pred_index_at_pred_time)
-        f1_pred = f1_score(y_true = events_true, y_pred = events_pred_index_at_pred_time, average = 'macro')
-
-        return loss, time_loss_without_dummy, events_loss_without_dummy, f1_pred, mae, the_number_of_events
+        return loss, time_loss_without_dummy, events_loss_without_dummy, f1, mae, the_number_of_events
 
 
-    def loss(self, pred_time, time_next, mask_next):
+    def loss(self, pred_time, time_next, event_next, mask_next):
         '''
         The definition of loss.
     
@@ -208,7 +223,11 @@ class LLMTPPModel(BasicModel):
             events_next:        [batch_size, seq_len]
             mask_next:          [batch_size, seq_len]
         '''
-        gap = torch.abs(pred_time - time_next)                                 # [batch_size, seq_len]
+        # pick the time.
+        event_next_mask = torch.nn.functional.one_hot(event_next, num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
+        selected_pred_time = (pred_time * event_next_mask).sum(dim = -1)       # [batch_size, seq_len]
+        gap = torch.abs(selected_pred_time - time_next)                        # [batch_size, seq_len]
         masked_gap = gap * mask_next                                           # [batch_size, seq_len]
         loss = torch.pow(masked_gap, 1)                                        # [batch_size, seq_len]
         loss = torch.sum(loss)
@@ -216,29 +235,43 @@ class LLMTPPModel(BasicModel):
         return loss
 
 
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, var):
-        mae, pred_time, pred_event_prob = self.mean_absolute_error(events_history, time_history, time_next, \
-                                                                   mask_history, mask_next, mean, var)
-                                                                               # [batch_size, seq_len * patch_size, num_events] + [batch_size, seq_len * patch_size]
-        target_length = pred_time.shape[-1]
-        padded_mask_next = self.pad_sequences(int(target_length / self.patch_size), mask_next)
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
+        '''
+        The input should be the original minibatch
+        '''
+        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, patch_len, patch_size, num_events] * 2
+        patch_len = pred_time.shape[-3]
+        padded_mask_next, padded_time_next = self.pad_sequences(patch_len, mask_next, time_next)
+                                                                               # [batch_size, patch_len * patch_size, num_events] * 2
+        events_pred_index = torch.argmax(pred_event_prob, dim = -1)            # [batch_size, patch_len, patch_size]
+        events_pred_index = rearrange(events_pred_index, '... pl ps -> ... (pl ps)')
+                                                                               # [batch_size, patch_len * patch_size]
+        events_pred_index_mask = torch.nn.functional.one_hot(events_pred_index, num_classes = self.num_events)
+                                                                               # [batch_size, patch_len * patch_size, num_events]
+        einop = '... pl ps ne -> ... (pl ps) ne'
+        pred_event_prob = rearrange(pred_event_prob, einop)                    # [batch_size, patch_len * patch_size, num_events]
+        pred_time = rearrange(pred_time, einop)                                # [batch_size, patch_len * patch_size, num_events]
+        pred_time = (pred_time * events_pred_index_mask).sum(dim = -1)         # [batch_size, patch_len * patch_size]
 
-        events_pred_index = torch.argmax(pred_event_prob, dim = -1)[padded_mask_next == 1]
+        mae = torch.abs(pred_time - padded_time_next) * padded_mask_next       # [batch_size, patch_len * patch_size, num_events]
+
         events_true = events_next[mask_next == 1]
+        events_pred_index = events_pred_index[padded_mask_next == 1]
         events_pred_index, events_true = move_from_tensor_to_ndarray(events_pred_index, events_true)
         f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
          
         return mae, f1
 
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, var):
+    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, std):
         '''
         The input should be the original minibatch
         '''
-        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, \
-                                                time_history = time_history, mask_history = mask_history, \
-                                                mean = mean, var = var)
-                                                                               # [batch_size, seq_len, patch_size, num_events] + [batch_size, seq_len, patch_size]
+        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, seq_len, patch_size, num_events] * 2
         patch_len = pred_time.shape[-2]
         pred_event_prob = rearrange(pred_event_prob, '... pl ps ne -> ... (pl ps) ne')
                                                                                # [batch_size, patch_len * patch_size, num_events]
@@ -251,7 +284,7 @@ class LLMTPPModel(BasicModel):
         return mae, pred_time, pred_event_prob
 
 
-    def sample_event_seq(self, number_of_sampled_sequences, end_time, mean, var):
+    def sample_event_seq(self, number_of_sampled_sequences, end_time, mean, std):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
@@ -270,7 +303,7 @@ class LLMTPPModel(BasicModel):
 
         while seq_length < MAX_sampled_seq:
             sampled_time, sampled_events = \
-                self.sample_one_patch_from_model(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var)
+                self.sample_one_patch_from_model(number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, std)
                                                                                # [number_of_sampled_sequences, 1]
             # Ensure the sampled times and events are correct.
             assert sampled_time.shape == (number_of_sampled_sequences, 1)
@@ -296,10 +329,10 @@ class LLMTPPModel(BasicModel):
         return time_history_for_sampling, events_history_for_sampling, sampled_mask
 
 
-    def sample_one_patch_from_model(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, var):
+    def sample_one_patch_from_model(self, number_of_sampled_sequences, events_history_for_sampling, time_history_for_sampling, mean, std):
         def evaluate_sample(integral_from_zero_to_inf, taus):
             taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [number_of_sampled_sequences, 1, num_events]
-            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, var)
+            probability_integral_from_t_to_inf_for_sample = self.model.sample(events_history_for_sampling, time_history_for_sampling, taus, mean, std)
                                                                                # [number_of_sampled_sequences, 1, num_events]
             probability_integral_from_t_to_inf_for_sample = probability_integral_from_t_to_inf_for_sample.detach()
                                                                                # [number_of_sampled_sequences, 1, num_events]
@@ -337,14 +370,14 @@ class LLMTPPModel(BasicModel):
                                                                                # [number_of_sampled_sequences, 1]
         time_next_zero = repeat(time_next_zero, 'b s -> b s ne', ne = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events]
-        integral_from_zero_to_inf = self.model.sample(events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, var = var)
+        integral_from_zero_to_inf = self.model.sample(events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, std = std)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         integral_from_zero_to_inf = integral_from_zero_to_inf.detach()         # [number_of_sampled_sequences, 1, num_events]
         tau_sampled = median_prediction_sample(integral_from_zero_to_inf, l, r)# [number_of_sampled_sequences, 1]
         repeated_tau_sampled = repeat(tau_sampled, 'b s -> b s ne', ne = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events]
         repeated_tau_sampled.requires_grad = True
-        integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, var = var)
+        integral_from_sampled_time_to_inf = self.model(events_history_for_sampling, time_history_for_sampling, repeated_tau_sampled, mean = mean, std = std)
                                                                                # [number_of_sampled_sequences, 1, num_events]
  
         probability_for_each_event_at_pred_time = - torch.autograd.grad(
@@ -374,12 +407,12 @@ class LLMTPPModel(BasicModel):
 
     def extract_plot_data(self, minibatch):
         '''
-        This function extracts input_time, input_events, input_intensity, mask, mean, and var from the minibatch.
+        This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
         Caution: dataloader won't add the end dummy event during evaluation!
 
         Args:
         * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, var)]
+                     data structure: [[input_time, input_events, score, mask], (mean, std)]
         
         Outputs:
         * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
@@ -391,14 +424,14 @@ class LLMTPPModel(BasicModel):
         * mean          type: int shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
-        * var           type: int shape: N/A
+        * std           type: int shape: N/A
                         The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
                         this value if needed.
         '''
         input_time, input_events, _, mask, input_intensity = minibatch[0]
-        mean, var = minibatch[1]
+        mean, std = minibatch[1]
 
-        return input_time, input_events, input_intensity, mask, mean, var
+        return input_time, input_events, input_intensity, mask, mean, std
 
 
     def intensity(self, input_data, opt):
@@ -451,7 +484,7 @@ class LLMTPPModel(BasicModel):
         '''
         
 
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -459,19 +492,19 @@ class LLMTPPModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, var)
+                                                    time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, var, mask_next)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, std, mask_next)
 
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, var)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std)
 
         '''
         We show how porobability distribution goes on two sampled sequences, one following the event-time routine, and the other following
         the time-event routine.
         '''
         time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
-            = self.sample_event_time(1, self.end_time - self.start_time, mean, var)
+            = self.sample_event_time(1, self.end_time - self.start_time, mean, std)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
@@ -483,11 +516,11 @@ class LLMTPPModel(BasicModel):
 
         sampled_data_event_time, sampled_timestamp_event_time \
             = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, opt.resolution, mean, var, sampled_mask_next_event_time)
+                                              sampled_time_next_event_time, opt.resolution, mean, std, sampled_mask_next_event_time)
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(1, self.end_time - self.start_time, mean, var)
+            = self.sample_time_event(1, self.end_time - self.start_time, mean, std)
                                                                                # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)
@@ -499,7 +532,7 @@ class LLMTPPModel(BasicModel):
 
         sampled_data_time_event, sampled_timestamp_time_event \
             = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, opt.resolution, mean, var, sampled_mask_next_time_event)
+                                              sampled_time_next_time_event, opt.resolution, mean, std, sampled_mask_next_time_event)
 
 
         '''
@@ -547,14 +580,14 @@ class LLMTPPModel(BasicModel):
 
 
     def get_mae_and_f1(self, input_data, opt):
-        input_time, input_events, input_intensity, mask, mean, var = self.extract_plot_data(input_data)
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, var)
+                                                    time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
 
@@ -580,11 +613,11 @@ class LLMTPPModel(BasicModel):
         '''
     
         model.train()
-        [input_time, input_events, input_score, input_mask], (mean, var) = minibatch
+        [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model(         
                 task_name = 'train', input_time = input_time, input_events = input_events, \
                 input_score = input_score, input_mask = input_mask, \
-                mean = mean, var = var
+                mean = mean, std = std
         )
         
         loss.backward()
@@ -601,10 +634,10 @@ class LLMTPPModel(BasicModel):
         ''' Epoch operation in evaluation phase '''
     
         model.eval()
-        [input_time, input_events, input_score, input_mask], (mean, var) = minibatch
+        [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
         loss, time_loss_without_dummy, events_loss, \
         f1_pred, mae, the_number_of_events = model(task_name = 'evaluate', input_time = input_time, input_events = input_events, \
-                                                   input_score = input_score, input_mask = input_mask, mean = mean, var = var)
+                                                   input_score = input_score, input_mask = input_mask, mean = mean, std = std)
         
         loss = loss.item() / the_number_of_events
         time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events

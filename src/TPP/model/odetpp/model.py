@@ -8,7 +8,7 @@ from src.toolbox.integration import approximate_integration
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
 from src.TPP.model.odetpp.plot import *
-from src.utils import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.odetpp.submodel import ODETPP
 from src.TPP.model.utils import *
 
