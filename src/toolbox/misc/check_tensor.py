@@ -1,6 +1,9 @@
 import torch
+import math
+import numbers
 
-def check_tensor(x, positive = True, inf = True, nan = True):
+
+def check_tensor(x, positive = True, inf = True, nan = True, break_out = True):
     '''
     Ensure that the input tensor does not contain: negative numbers, inf, and nan.
     
@@ -11,11 +14,42 @@ def check_tensor(x, positive = True, inf = True, nan = True):
     Outputs:
       No outputs available.
     '''
+    assert torch.is_tensor(x), 'Input value is not a torch.tensor!'
+
+    if_positive = True
     if positive:
-        assert (x < 0).any() == False, 'Negative numbers detected!'
+        if_positive = (x < 0).any() == False
 
+    if_inf = False
     if inf:
-        assert torch.isfinite(x).all() == True, 'inf detected in input!'
+        if_inf = torch.isfinite(x).any()
 
+    if_nan = False
     if nan:
-        assert torch.isnan(x).any() == False, 'Nan detected in input!'
+        if_nan = torch.isnan(x).any()
+    
+    if break_out:
+        assert if_positive & ~if_inf & ~if_nan, 'Input Check failed!'
+    else:
+        return if_positive & ~if_inf & ~if_nan
+
+
+def check_number(x, positive = True, inf = True, nan = True, break_out = True):
+    assert isinstance(x, numbers.Number), 'Input value is not a number!'
+
+    if_positive = True
+    if positive:
+        if_positive = x > 0
+
+    if_inf = False
+    if inf:
+        if_inf = math.isinf(x)
+    
+    if_nan = False
+    if nan:
+        if_nan = math.isnan(x)
+
+    if break_out:
+        assert if_positive & ~if_inf & ~if_nan, 'Input Check failed!'
+    else:
+        return if_positive & ~if_inf & ~if_nan

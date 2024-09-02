@@ -1,8 +1,6 @@
 import numbers
 
-def apply_ops_on_list1(list1, second_value, ops):
-    assert isinstance(list1, list) or isinstance(list1, tuple)
-    
+def apply_ops_on_list1(list1, second_value, ops):    
     if isinstance(second_value, numbers.Number):
         return [ops(x, second_value) for x in list1]
     

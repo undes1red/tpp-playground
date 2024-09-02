@@ -172,6 +172,11 @@ class TaskHost:
         '''
         root_package = importlib.import_module('src')
         self.worker = getattr(root_package, self.opt.required_worker)(opt = self.opt, procedure = self.procedure)
-        self.worker.work()
+        try:
+            self.worker.work()
+        except Exception as e:
+            self.worker.finish_task()
+            logger.warning('Task exited unexpectedly!')
+            raise e
 
         sys.exit(0)

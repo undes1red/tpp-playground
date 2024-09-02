@@ -15,4 +15,4 @@ def read_yaml(yaml_path):
 
 def write_yaml(data, yaml_path, yaml_file):
     with io.open(os.path.join(yaml_path, yaml_file), 'w', encoding = 'utf8') as outfile:
-        yaml.dump(data, outfile, default_flow_style = False, allow_unicode = True)
+        yaml.safe_dump(data, outfile, default_flow_style = False, allow_unicode = True)

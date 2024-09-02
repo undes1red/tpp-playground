@@ -1,11 +1,11 @@
-import os, torch, yaml, io, copy
+import os, torch, copy
 from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
 from torch.nn import DataParallel as DP
 from torch.utils.flop_counter import FlopCounterMode
 
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml, print_args, pack_one_value_to_dict, only_keep_data
+from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml, write_yaml, print_args, pack_one_value_to_dict, only_keep_data
 from src.toolbox.optimizer import ScheduledOptim
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
@@ -124,17 +124,16 @@ class Trainer:
         '''
         Write hyperparameters into the model dir.
         '''
-        with io.open(os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'model_card.yml'), 'w', encoding = 'utf8') as f_hyperparameters:
-            hyperparameters = copy.deepcopy(vars(self.opt))
-            del hyperparameters['device']
-            logger.debug(hyperparameters)
-            yaml.safe_dump(hyperparameters, f_hyperparameters, default_flow_style = False, allow_unicode = True)
+        hyperparameters = copy.deepcopy(vars(self.opt))
+        del hyperparameters['device']
+        write_yaml(hyperparameters, os.path.join(self.opt.save_model, self.output_checkpoint_folder), 'model_card.yml')
 
         '''
         Setting up file loggers and a wandb online logger.
         '''
         if self.opt.log and self.opt.wandb:
             import wandb
+            wandb.require("core")
             wandb.init(project = f'{self.opt.displayed_procedure_name} {self.opt.displayed_task_category}', \
                        config = vars(self.opt), group = self.opt.dataset_name, \
                        name = '-'.join([self.opt.model_name, str(self.opt.model_config), \
@@ -195,7 +194,14 @@ class Trainer:
             '''
             if current_step % self.opt.n_evaluation_steps == 0:
                 self.evaluation_report(current_step)
-                        
+
+        self.finish_task()
+        logger.warning('Training finished!')
+
+        return 0
+
+
+    def finish_task(self):
         if self.opt.log:
             for key, value in self.df_records.items():
                 if value is None:
@@ -206,15 +212,16 @@ class Trainer:
                     log_filepath = os.path.join(self.opt.save_model, self.output_checkpoint_folder, 'checkpoint.csv')
                 else:
                     log_filepath = os.path.join(self.opt.log, self.log_folder, f'{key}_record.csv')
- 
+     
                 logger.info(f'Logs of {key} process are stored in {log_filepath}.')
                 df_value = pd.DataFrame.from_dict(value)
                 df_value.to_csv(log_filepath, index = False)
 
             if self.opt.wandb:
+                import wandb
                 wandb.finish()
         
-        logger.warning('Training finished!')
+        return 0
 
 
     def train_report(self, current_step):

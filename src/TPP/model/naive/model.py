@@ -15,8 +15,8 @@ from src.TPP.model.utils import *
 
 
 class NaiveMTPPWrapper(BasicModel):
-    def __init__(self, info_dict, device, process_name = 'Poisson', epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
-                 integration_sample_rate = 100, survival_loss_during_training = True):
+    def __init__(self, info_dict, device, process_name = 'Poisson', epsilon = 1e-20, sample_rate = 32, \
+                 mae_step = 4, mae_e_step = 4, integration_sample_rate = 100, survival_loss_during_training = True):
         super(NaiveMTPPWrapper, self).__init__()
         self.device = device
         self.num_events = info_dict['num_events']
@@ -25,7 +25,7 @@ class NaiveMTPPWrapper(BasicModel):
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_rate = 32
+        self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-5

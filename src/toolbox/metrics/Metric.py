@@ -1,6 +1,7 @@
 import math
 
 from src.toolbox.list_operation import list_mul
+from src.toolbox.misc import check_number
 
 class Metric():
     '''
@@ -26,7 +27,7 @@ class Metric():
         output = True
 
         for input_number, recorded in zip(tmp, self.best_metric):
-            if input_number > recorded:
+            if check_number(input_number, positive = False) and input_number > recorded:
                 output = False
                 break
         

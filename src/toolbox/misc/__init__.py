@@ -1,4 +1,4 @@
-from src.toolbox.misc.check_tensor import check_tensor
+from src.toolbox.misc.check_tensor import check_tensor, check_number
 from src.toolbox.misc.tensor_to_array import move_from_tensor_to_ndarray
 from src.toolbox.misc.stable_palette import stable_palette
 from src.toolbox.misc.get_logger import get_logger
