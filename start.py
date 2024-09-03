@@ -47,17 +47,22 @@ def environment_var_settings():
 
 
 if __name__ == '__main__':
-    # We should configure all environment variables here before importing everything via ```from src import TaskHost```.
+    '''
+    We should configure all environment variables here before ```from src import TaskHost``` imports everything.
+    '''
     environment_var_settings()
     
-    # Start the process.
+    '''
+    Process starts here.
+    Do NOT move these import codes to the beginning of this file.
+    '''
     import argparse, importlib
     from src import TaskHost
     
-    # Enumerate subparsers from procedure_names
-    # we need main_procedure_translator and sub_procedure_translator to translate
-    # procedure names into the correct procedure and argument class.
-    # The argument class of each process will be attached to the main parser and can be selected by procedure_name.
+    '''
+    Enumerate subparsers from procedure_names
+    we need main_procedure_translator and sub_procedure_translator to translate procedure names into correct argument classes.
+    '''
     parser = argparse.ArgumentParser()
     procedure_names = [
         # Temporal point process
@@ -76,7 +81,7 @@ if __name__ == '__main__':
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')
     for procedure_name in procedure_names:
         '''
-        Get the argument list
+        Fetch the argument class and attach them to the main parser.
         '''
         main_procedure = main_procedure_translator[procedure_name]
         sub_procedure_argument_prefix = sub_procedure_translator[procedure_name]
@@ -86,5 +91,8 @@ if __name__ == '__main__':
         argument_class_name = sub_procedure_argument_prefix + 'Arguments'
         getattr(procedure, argument_class_name)(tmp_parser_hook, root_path)
 
+    '''
+    Call TaskHost to start the task.
+    '''
     agent = TaskHost(parser = parser, root_path = root_path)
     agent.start()

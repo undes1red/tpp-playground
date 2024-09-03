@@ -155,6 +155,9 @@ src/Transformers/*
 src/TPP_patch/*
 src/ehd/*
 src/ml/*
+src/TPP_imputation/*
+src/TPP_ood/*
+
 
 # data serialization files
 *.yml

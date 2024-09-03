@@ -6,7 +6,7 @@ from torch.nn import DataParallel as DP
 from torch.utils.flop_counter import FlopCounterMode
 
 from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml, write_yaml, print_args, pack_one_value_to_dict, only_keep_data
-from src.toolbox.optimizer import ScheduledOptim
+from src.toolbox.optimizer import *
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
 from src.toolbox.training import print_performances, replace_check
@@ -50,9 +50,15 @@ class Trainer:
         mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
         mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
 
+        try:
+            from accelerate import Accelerator
+            self.accelerator = Accelerator()
+        except ImportError as e:
+            logger.warning('Huggingface Accelerate not found! We fallback to plain pytorch training.')
+            self.accelerator = None
 
     def get_procedure_monitor_dict(self, additional_info = {}):
-        monitored_info = {'lr': pack_one_value_to_dict(self.sched_optimizer.get_lr(), '8.5f'),
+        monitored_info = {'lr': pack_one_value_to_dict(get_lr(self.optimizer), '8.5f'),
                           'tensor_memory_consumption': pack_one_value_to_dict(torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0, '5f', 'MiB'),
                           'reserved_memory': pack_one_value_to_dict(torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0, '5f', 'MiB')
                          }
@@ -108,7 +114,7 @@ class Trainer:
         Due to the complexity of learning rate scheduler, the scheduler is fixed. 
         If you want to use another learning rate scheduler, plz modify it in src.optim.
         '''
-        self.sched_optimizer = ScheduledOptim(self.opt, self.model)
+        self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
 
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
@@ -155,7 +161,7 @@ class Trainer:
         desc = '  - (Training)   '
         step_range = range(1, self.opt.n_training_steps + 1)
         training_iter = cycle(iter(self.raw_data['Training']))
-        self.sched_optimizer.zero_grad()
+        zero_grad(self.optimizer)
 
         '''
         Start training.
@@ -177,8 +183,8 @@ class Trainer:
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
-                self.sched_optimizer.step_and_update_lr()
-                self.sched_optimizer.zero_grad()
+                step_and_update_lr(self.optimizer, self.scheduler)
+                zero_grad(self.optimizer)
     
             self.report_sum = list_add(self.report_sum, step_result)
 
@@ -242,7 +248,7 @@ class Trainer:
             if self.opt.wandb:
                 import wandb
                 wandb.log({'Training': plain_training_results}, commit = False, step = current_step)
-                wandb.log({'lr': self.sched_optimizer.get_lr()}, step = current_step)
+                wandb.log({'lr': get_lr(self.optimizer)}, step = current_step)
 
         self.report_sum = [0] * self.format_dict_length
         self.training_flop = 0
@@ -305,7 +311,7 @@ class Trainer:
     def save(self, current_step, evaluation_results, test_results):
         # We will store the checkpoint after model evaluation.
         checkpoint = {'step': current_step, 'settings': self.opt, 'model': self.model.module.state_dict() if self.opt.cuda else self.model.state_dict(),
-                      'optimizer': self.sched_optimizer.state_dict()}
+                      'optimizer': state_dict(self.optimizer, self.scheduler)}
 
         metric_values, metric_names = self.model_class.choose_metric(evaluation_results, test_results)
         assert len(metric_values) == len(metric_names), "metric_values mismatches metric_names!"

@@ -71,7 +71,10 @@ class LLMTPPModel(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'figure': self.plot,
+            'intensity': self.intensity,
+            'integral': self.integral,
+            'probability': self.probability,
+            'debug': self.debug
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -265,25 +268,6 @@ class LLMTPPModel(BasicModel):
         return mae, f1
 
 
-    def mean_absolute_error(self, events_history, time_history, time_next, mask_history, mask_next, mean, std):
-        '''
-        The input should be the original minibatch
-        '''
-        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
-                                                mask_history = mask_history, mean = mean, std = std)
-                                                                               # [batch_size, seq_len, patch_size, num_events] * 2
-        patch_len = pred_time.shape[-2]
-        pred_event_prob = rearrange(pred_event_prob, '... pl ps ne -> ... (pl ps) ne')
-                                                                               # [batch_size, patch_len * patch_size, num_events]
-        pred_time = rearrange(pred_time, '... p n -> ... (p n)')               # [batch_size, patch_len * patch_size]
-        
-        padded_mask_next, padded_time_next \
-            = self.pad_sequences(patch_len, mask_next, time_next)      
-        mae = torch.abs(pred_time - padded_time_next) * padded_mask_next       # [batch_size, seq_len]
-
-        return mae, pred_time, pred_event_prob
-
-
     def sample_event_seq(self, number_of_sampled_sequences, end_time, mean, std):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
@@ -394,17 +378,6 @@ class LLMTPPModel(BasicModel):
         return tau_sampled, sampled_marks
 
 
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.subtask_name](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -483,7 +456,7 @@ class LLMTPPModel(BasicModel):
               How many interpretive numbers we have between an event interval?
         '''
         
-
+        '''
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -494,83 +467,11 @@ class LLMTPPModel(BasicModel):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, std, mask_next)
-
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std)
-
-        '''
-        We show how porobability distribution goes on two sampled sequences, one following the event-time routine, and the other following
-        the time-event routine.
-        '''
-        time_history_for_sampling_event_time, events_history_for_sampling_event_time, sampled_mask_event_time \
-            = self.sample_event_time(1, self.end_time - self.start_time, mean, std)
-                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
-
-        sampled_time_history_event_time, sampled_time_next_event_time = self.divide_history_and_next(time_history_for_sampling_event_time)
-                                                                               # 2 * [batch_size, seq_len]
-        sampled_events_history_event_time, sampled_events_next_event_time = self.divide_history_and_next(events_history_for_sampling_event_time)
-                                                                               # 2 * [batch_size, seq_len]
-        sampled_mask_history_event_time, sampled_mask_next_event_time = self.divide_history_and_next(sampled_mask_event_time)
-                                                                               # 2 * [batch_size, seq_len]
-
-        sampled_data_event_time, sampled_timestamp_event_time \
-            = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, opt.resolution, mean, std, sampled_mask_next_event_time)
-
-
-        time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(1, self.end_time - self.start_time, mean, std)
-                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
-
-        sampled_time_history_time_event, sampled_time_next_time_event = self.divide_history_and_next(time_history_for_sampling_time_event)
-                                                                               # 2 * [batch_size, seq_len]
-        sampled_events_history_time_event, sampled_events_next_time_event = self.divide_history_and_next(events_history_for_sampling_time_event)
-                                                                               # 2 * [batch_size, seq_len]
-        sampled_mask_history_time_event, sampled_mask_next_time_event = self.divide_history_and_next(sampled_mask_time_event)
-                                                                               # 2 * [batch_size, seq_len]
-
-        sampled_data_time_event, sampled_timestamp_time_event \
-            = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, opt.resolution, mean, std, sampled_mask_next_time_event)
-
-
-        '''
-        Append additional info into the data dict.
-        '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
-        data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
-        data['f1_before_time_pred'] = f1_2
-        data['top_k'] = top_k
-        data['probability_sum'] = probability_sum
-        data['tau_pred_all_event'] = tau_pred_all_event
-        data['mae_before_event'] = mae
-        data['maes_after_event_avg'] = maes_avg
-        data['maes_after_event'] = maes
-        
-        '''
-        Show the event sequence sampled from p(t) and p(m|t)
-        '''
-        data['sampled_events_next_event_time'] = sampled_events_next_event_time
-        data['sampled_time_next_event_time'] = sampled_time_next_event_time
-        data['sampled_mask_next_event_time'] = sampled_mask_next_event_time
-        data['sampled_timestamp_event_time'] = sampled_timestamp_event_time
-        data['sampled_subprobability_event_time'] = sampled_data_event_time['expand_probability_for_each_event']
-        '''
-        Show the event sequence sampled from p(m) and p(t|m)
-        '''
-        data['sampled_events_next_time_event'] = sampled_events_next_time_event
-        data['sampled_time_next_time_event'] = sampled_time_next_time_event
-        data['sampled_mask_next_time_event'] = sampled_mask_next_time_event
-        data['sampled_timestamp_time_event'] = sampled_timestamp_time_event
-        data['sampled_subprobability_time_event'] = sampled_data_time_event['expand_probability_for_each_event']
-
+        data = {}
         plots = plot_debug(data, timestamp, opt)
 
         return plots
-
+        '''
 
     '''
     Evaluation over the entire dataset.
@@ -596,7 +497,6 @@ class LLMTPPModel(BasicModel):
     
     def get_mae_e_and_f1(self, input_data, opt):
         return NotImplementedError('LLMTPP directly generates the next patch, so searching for the time prediction given mark is impossible.')
-
 
 
     '''
