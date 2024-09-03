@@ -26,17 +26,23 @@ parser.add_argument('--model', type = str, help = 'We use this model name to sel
 parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The number of tasks we should run in parallel. In GPU mode this number should not bigger than the number of available GPUs. \
                                                                              The default value, -1, will automatically use all GPUs, one GPU for one task. \
                                                                              This argument is mandatory when executing tasks on CPU.')
+parser.add_argument('--slurm', action  ='store_true', help = 'Experimental')
 
 # Preprocess
 opt = parser.parse_args()
 use_gpu = False
 if opt.GPU is not None:
-    gpu_pool = [int(gpu_id) for gpu_id in opt.GPU]
-    if len([gpu_id for gpu_id in gpu_pool if gpu_id < 0]) == 0:
-        assert opt.num_task_parallel <= len(gpu_pool)
+    if not opt.slurm:
+        gpu_pool = [int(gpu_id) for gpu_id in opt.GPU]
+        if len([gpu_id for gpu_id in gpu_pool if gpu_id < 0]) == 0:
+            assert opt.num_task_parallel <= len(gpu_pool)
+            use_gpu = True
+            if opt.num_task_parallel == -1:
+                opt.num_task_parallel = len(gpu_pool)
+    else:
         use_gpu = True
-        if opt.num_task_parallel == -1:
-            opt.num_task_parallel = len(gpu_pool)
+        gpu_pool = [int(gpu_id) for gpu_id in opt.GPU] * opt.num_task_parallel
+
 
 if not use_gpu:
     gpu_pool = []
@@ -112,7 +118,7 @@ else:
         generated_tasks.append(' '.join(task))
     
 
-failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir)
+failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm)
 
 # Report the execution sumamry:
 logger.warning('==========================================')

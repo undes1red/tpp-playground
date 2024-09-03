@@ -74,6 +74,10 @@ class Evaluator:
             # Fix module behaviours during evaluation.
             self.model.eval()
             self.task()
+        
+        
+    def finish_task(self):
+        pass
 
 
     def task(self):

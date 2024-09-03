@@ -1,16 +1,30 @@
-import copy, math, subprocess, time, os
+import copy, math, subprocess, time, os, submitit
 from src.taskhost import get_logger
 
 
 logger = get_logger(__name__)
 
+slurm_kwargs = {
+    'slurm_partition': 'SCT',
+    'slurm_job_name': 'slurm_task',
+    'slurm_cpus_per_task': 8,
+    'slurm_mem': '32GB',
+    'slurm_gres': 'gpu:1',
+    'slurm_qos': 'normal'
+}
 
 monitor_frequency = 10
-def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir):        
-    if use_gpu:
-        return monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
+def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir, use_slurm):  
+    if use_slurm:
+        if use_gpu:
+            return monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir)
+        else:
+            return monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir)
     else:
-        return monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
+        if use_gpu:
+            return monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
+        else:
+            return monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
 
 
 def task_generator_worker(hyperparameter_list, iterate_style):
@@ -252,6 +266,128 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
                 
                 task['stdout'].close()
                 gpu_pool.add(task["gpu_id"])
+                ticket_pool.add(ticket)
+                running_tasks[ticket] = {}
+                
+        # If all GPUs are free again and the task id is bigger than the the number of tasks, quit the loop.
+        if len(gpu_pool) == number_of_gpus and all_task_executed:
+            break
+
+        time.sleep(1/monitor_frequency)
+    
+    return failed_tasks
+
+
+def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir):
+    number_of_tasks = len(tasks)
+
+    def run_task(task, task_id):
+        task_list = task.split(' ')
+
+        # Replace this command with your actual task command
+        logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
+        logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
+
+        executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        executor.update_parameters(**slurm_kwargs)
+        function = submitit.helpers.CommandFunction(task_list)
+        job = executor.submit(function)
+
+        return job
+
+
+    task_id = 1
+    running_tasks = []
+    number_of_running_tasks = 0
+    completed_tasks = set()
+    all_task_executed = False
+    failed_tasks = {}
+
+    while True:
+        if task_id > number_of_tasks:
+            all_task_executed = True
+
+        if number_of_running_tasks < num_task_parallel and not all_task_executed:
+            command = tasks[task_id - 1]
+            job = run_task(command, task_id)
+            running_tasks.append({'task_id': task_id, 'command': command, 'job': job, 'slurm_id': job.job_id})
+            task_id += 1
+            number_of_running_tasks += 1
+
+        # Check if one task has finished. If so, do some housekeeping 
+        # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
+        for task in running_tasks:
+            if task["task_id"] not in completed_tasks and task['job'].done() == True:
+                if 'Submitted job triggered an exception' in task['job'].stderr():
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} failed!. <----')
+                    failed_tasks[task["task_id"]] = task["command"]
+                else:
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} completed!. <----')
+                
+                completed_tasks.add(task['task_id'])
+                number_of_running_tasks -= 1
+        
+        # If the task id is bigger than the the number of tasks, quit the loop.
+        if all_task_executed and len(completed_tasks) == number_of_tasks:
+            break
+
+        time.sleep(1/monitor_frequency)
+
+    return failed_tasks
+
+
+
+def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir):        
+    # I don't quite understand how GPU allocation works in slurm.
+    # Temporarily disable gpu_pool in this function.
+    gpu_pool = list(available_gpus)
+    ticket_pool = set(range(num_task_parallel))
+    number_of_gpus = len(gpu_pool)
+    number_of_tasks = len(tasks)
+
+    def run_task(task, task_id, gpu_id):
+        task_list = task.split(' ') + ['--cuda', '--cuda_device', f'{gpu_id}']
+
+        logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
+        logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
+        executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        executor.update_parameters(**slurm_kwargs)
+        function = submitit.helpers.CommandFunction(task_list)
+        job = executor.submit(function)
+
+        return job
+
+    unique_task_id = 1
+    running_tasks = {}
+    all_task_executed = False
+    failed_tasks = {}
+    logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while the automatic result checking is impossible.')
+    logger.warning(f'You have to check the result and find out failed tasks by yourself.')
+
+    while True:
+        if unique_task_id > number_of_tasks:
+            all_task_executed = True
+
+        if len(gpu_pool) != 0 and len(ticket_pool) != 0 and not all_task_executed:
+            available_gpu = gpu_pool.pop()
+            ticket = ticket_pool.pop()
+            command = tasks[unique_task_id - 1]
+            job = run_task(command, unique_task_id, available_gpu)
+            running_tasks[ticket] = {'task_id': unique_task_id, 'gpu_id': available_gpu, 'command': command, 'job': job, 'slurm_id': job.job_id}
+            unique_task_id += 1
+
+        # Check if one task has finished. If so, get the result and do some housekeeping 
+        # Add the allocated gpu_id and ticket back to the gpu_pool and ticket pool, saying we can start a new task if the GPU resources are sufficient.
+        for ticket, task in running_tasks.items():
+            if task != {} and task['job'].done() == True:
+                if 'Submitted job triggered an exception' in task['job'].stderr():
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} failed!. <----')
+                    failed_tasks[task["task_id"]] = task['command']
+                else:
+                    logger.warning(f'----> Task No.{task["task_id"]}/{number_of_tasks} completed!. <----')
+                
+                gpu_pool.append(task["gpu_id"])
+                # gpu_pool.add(task["gpu_id"])
                 ticket_pool.add(ticket)
                 running_tasks[ticket] = {}
                 
