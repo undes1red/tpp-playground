@@ -22,7 +22,7 @@ def check_tensor(x, positive = True, inf = True, nan = True, break_out = True):
 
     if_inf = False
     if inf:
-        if_inf = torch.isfinite(x).any().item()
+        if_inf = not torch.isfinite(x).any().item()
 
     if_nan = False
     if nan:
