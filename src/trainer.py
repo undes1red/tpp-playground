@@ -97,8 +97,8 @@ class Trainer:
         We load the required model by get_model()
         '''
         self.model_class = self.get_model(self.opt)
-        self.model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
-            **model_param
+        self.model = self.model_class(
+            device = self.opt.device, opt = self.opt, **model_param
         )
         self.opt.__dict__.update(model_param)
 

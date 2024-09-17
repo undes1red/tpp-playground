@@ -27,16 +27,16 @@ class FullyNNModel(BasicModel):
                  dropout,
                  history_module_layers,
                  mlp_layers,
-                 info_dict,
+                 opt,
                  device,
                  epsilon = 1e-20,
                  history_module = 'LSTM', survival_loss_during_training = True,
                  mae_step = 16, mae_e_step = 16, sample_rate = 32):
         super(FullyNNModel, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate

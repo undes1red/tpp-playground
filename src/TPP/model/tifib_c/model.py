@@ -18,7 +18,7 @@ class TIFIBCModel(BasicModel):
                  d_intensity,
                  dropout,
                  mlp_layers,
-                 info_dict,
+                 opt,
                  device, d_hidden, n_layers,
                  removes_tail, tanh_parameter,
                  n_head, d_qk, d_v,
@@ -26,9 +26,9 @@ class TIFIBCModel(BasicModel):
                  mae_e_step = 8, survival_loss_during_training = True):
         super(TIFIBCModel, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate

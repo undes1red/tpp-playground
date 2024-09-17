@@ -4,7 +4,7 @@ import seaborn as sns
 from scipy.stats import spearmanr
 from einops import pack, repeat
 
-from src.TPP.model.utils import move_from_tensor_to_ndarray, L1_distance_between_two_funcs
+from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.TPP.resources.syn_tpp_utils import expand_true_probability
 
 large_graph_length = 18

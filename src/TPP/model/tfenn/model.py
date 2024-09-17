@@ -27,7 +27,7 @@ class TFENNModel(BasicModel):
                  mlp_layers,
                  d_hidden, n_layers,
                  n_head, d_qk, d_v, 
-                 info_dict, device,
+                 opt, device,
                  survival_loss_during_training = True, 
                  sample_rate = 32, mae_step = 32, mae_e_step = 32):
         '''
@@ -35,9 +35,9 @@ class TFENNModel(BasicModel):
         '''
         super(TFENNModel, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step

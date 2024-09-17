@@ -1,27 +1,38 @@
-import torch
 import torch.nn as nn
 from einops import repeat
 
-from src.ehd.model.ehd_perplexity.layers import TransformerDecoder
-from src.ehd.model.ehd_perplexity.utils import *
-from src.ehd.model.ehd_perplexity.position import PositionalEmbedding
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
+from src.toolbox.transformer import TransformerLayer
 
 
 class Transformer(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
-
-    def __init__(self, device, d_input, d_rnn, d_hidden, n_layers_encoder, n_layers_decoder, n_head, d_qk, d_v, dropout):
+    def __init__(self, seq_len_x, seq_len_h, num_events, d_input, d_rnn, \
+                 d_hidden, n_layers_encoder, n_layers_decoder, n_head, d_qk, d_v, dropout, device):
         super(Transformer, self).__init__()
         self.device = device
-        self.transformer_module = TransformerModule(
-            d_input = d_input, d_hidden = d_hidden, n_layers_encoder = n_layers_encoder, \
-            n_layers_decoder = n_layers_decoder, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device
-        )
+        self.num_events = num_events
+        self.seq_len_h = seq_len_h
+        self.seq_len_x = seq_len_x
+
+        self.embedding = nn.Embedding(num_events + 1, d_input, padding_idx = num_events, device = self.device)
+        self.position_embedding = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
+
+        self.encoder = nn.ModuleList([
+                TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, \
+                                 d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device) for _ in range(n_layers_encoder)
+            ])
+
+        self.decoder = nn.ModuleList([
+                TransformerDecoderLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, \
+                                 d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device) for _ in range(n_layers_decoder)
+            ])
+
         # OPTIONAL recurrent layer, this sometimes helps
         self.rnn = RNN_layers(d_input, d_rnn, device = self.device)
 
 
-    def forward(self, input_x):
+    def forward(self, events_history, events_future, time_history, time_future, mask_history, mask_future):
         """
         Return intensity functions' values for all events and time and events, if possible, predictions.
         Args:
@@ -29,47 +40,49 @@ class Transformer(nn.Module):
         2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
         3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
         """
+        events_history_embedding = self.embedding(events_history)              # [batch_size, seq_len_h, d_input]
+        events_future_embedding = self.embedding(events_future)                # [batch_size, seq_len_x, d_input]
 
-        enc_output = self.transformer_module(input_x)                          # [batch_size, seq_len, d_input]
-        enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
+        time_history_embedding = self.position_embedding(self.seq_len_h, time_history)
+                                                                               # [batch_size, seq_len_h, d_input]
+        time_future_embedding = self.position_embedding(self.seq_len_x, time_future, position_start_index = self.seq_len_h)
+                                                                               # [batch_size, seq_len_x, d_input]
 
-        return enc_output
+        history_embedding = events_history_embedding + time_history_embedding  # [batch_size, seq_len_h, d_input]
+        future_embedding = events_future_embedding + time_future_embedding     # [batch_size, seq_len_x, d_input]
+        
+        for enc_layer in self.encoder:
+            future_embedding, _ = enc_layer(future_embedding)                  # [batch_size, seq_len_x, d_input]
+        
+        for dec_layer in self.decoder:
+            history_embedding = dec_layer(history_embedding, future_embedding) # [batch_size, seq_len_h, d_input]
+
+        outputs = self.rnn(history_embedding)                                  # [batch_size, seq_len_h, d_input]
+
+        return outputs
 
 
-class TransformerModule(nn.Module):
-    """ A encoder model with self attention mechanism. """
-    def __init__(self, d_input, d_hidden, n_layers_encoder, n_layers_decoder, n_head, d_qk, d_v, dropout, device):
-        super(TransformerModule, self).__init__()
+
+class TransformerDecoderLayer(nn.Module):
+    def __init__(self, d_input, d_hidden, n_head, d_qk, d_v, dropout, device):
+        super(TransformerDecoderLayer, self).__init__()
         self.device = device
-        self.d_input = d_input
 
-        # position vector, used for temporal encoding
-        # FIXME: set max_len during runtime, current max_len = 4096
-        self.position_emb = PositionalEmbedding(d_input, max_len = 4096, device = self.device)
-
-        self.decoder = TransformerDecoder(d_input, d_hidden, n_head, d_qk, d_v, \
-                                          n_layers_decoder, device = self.device, dropout = dropout)
+        # Do self-attention on the representation of following events.
+        self.self_attention = TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
+        # Do cross-attention on the representation of following events and historical events.
+        self.cross_attention = TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head, d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
 
 
-    def forward(self, input_x):
-        """
-        Encode event sequences via masked self-attention.
-        Args:
-        1. event_type: 
-        2. event_time: input time intervals. shape: [batch_size, seq_len]
-        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
-        """
-        # prepare attention masks
-        # self_attn_mask is where we cannot look, i.e., the future and the padding
-        # Until now, we do not use any self attention masks.
-
-        emb_input_x = self.position_emb(input_x)                               # [batch_size, seq_len, d_input]
-        input_x = input_x + emb_input_x                                        # [batch_size, seq_len, d_input]
-        output = self.decoder(input_x, non_pad_mask = None, self_attn_mask = None)
-                                                                               # [batch_size, seq_len, d_input]
-
+    def forward(self, history_representation, future_representation):
+        # Unlike the vanilla transformer, here we do not need any masks.
+        # All attention modules can freely access all input events. 
+        history, _ = self.self_attention(history_representation)               # [batch_size, seq_len_h, d_input]
+        output, _ = self.cross_attention(q = history, k = future_representation, v = future_representation)
+                                                                               # [batch_size, seq_len_h, d_input]
+        
         return output
-
+    
 
 class RNN_layers(nn.Module):
     """
@@ -83,6 +96,7 @@ class RNN_layers(nn.Module):
 
         self.rnn = nn.LSTM(d_model, d_rnn, num_layers=1, batch_first=True, device = self.device)
         self.projection = nn.Linear(d_rnn, d_model, device = self.device)
+
 
     def forward(self, data):
         out = self.rnn(data)[0]                                                # [batch_size, seq_len, d_rnn]

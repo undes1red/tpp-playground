@@ -70,8 +70,8 @@ if __name__ == '__main__':
         'TPP_evaluate',
 
         # Explainable History Distillation.
-        # 'ehd_train',
-        # 'ehd_evaluate',
+        'ehd_train',
+        'ehd_evaluate',
 
         # Long-horizon Temporal point process
         # 'TPP_patch_train',

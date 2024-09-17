@@ -13,12 +13,12 @@ from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper
 
 
 class MarkedLogNormMixWrapper(BasicModel):
-    def __init__(self, info_dict: dict, device, context_size: int = 32, mark_embedding_size: int = 32, \
+    def __init__(self, opt, device, context_size: int = 32, mark_embedding_size: int = 32, \
                  num_mix_components: int = 16, rnn_type: str = "LSTM", \
                  survival_loss_during_training = True):
         super(MarkedLogNormMixWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
+        self.num_events = opt.info_dict['num_events']
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.bisect_early_stop_threshold = 1e-5

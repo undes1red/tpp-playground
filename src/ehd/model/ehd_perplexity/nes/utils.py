@@ -1,30 +1,23 @@
 import torch
 
 
-def check_tensor(x, positive = True, inf = True, nan = True):
-    '''
-    Ensure that the input tensor does not contain: negative numbers, inf, and nan.
-    
-    Args:
-    * x  type: torch.tensor shape: any shape
-         the input tensor.
+def regenerate_batch(input_seqs, the_number_of_events, num_of_samples_mask):
+    distilled_features, left_features = input_seqs
+    the_number_of_distilled_event, the_number_of_left_event = the_number_of_events
 
-    Outputs:
-      No outputs available.
-    '''
-    if positive:
-        assert (x < 0).any() == False, 'Negative numbers detected!'
-
-    if inf:
-        assert torch.isfinite(x).all() == True, 'inf detected in input!'
-
-    if nan:
-        assert torch.isnan(x).any() == False, 'Nan detected in input!'
-
-
-def regenerate_batch(input_seq, the_number_of_remained_event):
-    output_padded_seqs = torch.tensor_split(input_seq, the_number_of_remained_event.flatten().cumsum(dim = -1).cpu(), dim = 0)[:-1]
+    distilled_features = torch.tensor_split(distilled_features, the_number_of_distilled_event.flatten().cumsum(dim = -1).tolist(), dim = 0)[:-1]
                                                                                # (num_of_samples_mask * batch_size) * (*)
-    output_padded_seqs = torch.nn.utils.rnn.pad_sequence(output_padded_seqs, batch_first = True)
-                                                                               # [num_of_samples_mask * batch_size, padded_seq_len]
-    return output_padded_seqs
+    left_features = torch.tensor_split(left_features, the_number_of_left_event.flatten().cumsum(dim = -1).tolist(), dim = 0)[:-1]
+                                                                               # (num_of_samples_mask * batch_size) * (*)
+    output_padded_distilled_seqs = []
+    output_padded_left_seqs = []
+    
+    batch_size = len(distilled_features) // num_of_samples_mask
+    for num_of_batch in range(num_of_samples_mask):
+        output_padded_distilled_seqs.append(torch.nn.utils.rnn.pad_sequence(
+            distilled_features[batch_size*num_of_batch:batch_size*(num_of_batch + 1)], batch_first = True))
+                                                                               # [batch_size, padded_seq_len]
+        output_padded_left_seqs.append(torch.nn.utils.rnn.pad_sequence(
+            left_features[batch_size*num_of_batch:batch_size*(num_of_batch + 1)], batch_first = True))
+                                                                               # [batch_size, padded_seq_len]
+    return output_padded_distilled_seqs, output_padded_left_seqs

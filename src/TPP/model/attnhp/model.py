@@ -14,14 +14,14 @@ from src.TPP.model.utils import *
 
 
 class AttNHPWrapper(BasicModel):
-    def __init__(self, info_dict, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
+    def __init__(self, opt, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32,
                  mae_step = 8, mae_e_step = 8, integration_sample_rate = 10, survival_loss_during_training = True):
         super(AttNHPWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training

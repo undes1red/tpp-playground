@@ -37,7 +37,6 @@ def draw(model, minibatch, desc, batch_idx, opt):
         ...
     }
     '''
-
     plots = model('graph', minibatch, opt)
     
     # Create the plot storing directory if not exist.

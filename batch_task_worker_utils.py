@@ -8,6 +8,7 @@ slurm_kwargs = {
     'slurm_partition': 'SCT',
     'slurm_job_name': 'slurm_task',
     'slurm_cpus_per_task': 8,
+    'slurm_time': 1400,
     'slurm_mem': '32GB',
     'slurm_gres': 'gpu:1',
     'slurm_qos': 'normal'
@@ -303,6 +304,9 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
     all_task_executed = False
     failed_tasks = {}
 
+    logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while automatically detecting if a task errored out is unreliable.')
+    logger.warning(f'You have to check the result and affirm failed tasks by yourself.')
+
     while True:
         if task_id > number_of_tasks:
             all_task_executed = True
@@ -338,8 +342,8 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir):        
-    # I don't quite understand how GPU allocation works in slurm.
-    # Temporarily disable gpu_pool in this function.
+    # I don't quite know how the GPU allocation works in slurm.
+    # Due to this, we temporarily disable gpu_pool in this function.
     gpu_pool = list(available_gpus)
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
@@ -361,8 +365,8 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
     running_tasks = {}
     all_task_executed = False
     failed_tasks = {}
-    logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while the automatic result checking is impossible.')
-    logger.warning(f'You have to check the result and find out failed tasks by yourself.')
+    logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while automatically detecting if a task errored out is unreliable.')
+    logger.warning(f'You have to check the result and affirm failed tasks by yourself.')
 
     while True:
         if unique_task_id > number_of_tasks:

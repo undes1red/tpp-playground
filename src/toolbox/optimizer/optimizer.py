@@ -7,6 +7,7 @@ import torch.optim as optim
 
 logger = get_logger(__name__)
 
+
 def generate_optimizer_scheduler(opt, model):
     if opt.custom_op:
         '''

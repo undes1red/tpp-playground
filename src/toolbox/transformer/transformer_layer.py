@@ -1,8 +1,8 @@
 import torch.nn as nn
-import torch.nn.functional as F
 from einops import rearrange
 
 from src.toolbox.transformer.selfattn import SelfAttn
+from src.toolbox.transformer.ffn import FFN
 
 
 class TransformerLayer(nn.Module):
@@ -15,7 +15,7 @@ class TransformerLayer(nn.Module):
         self.ffn = FFN(d_input = d_input, d_hidden = d_hidden, device = self.device, dropout = dropout)
 
 
-    def forward(self, x, self_attn_mask, non_pad_mask):
+    def forward(self, q, k = None, v = None, self_attn_mask = None, non_pad_mask = None):
         '''
         Args:
         1. x: input tensor. shape: [batch_size, seq_len, d_input]
@@ -23,11 +23,17 @@ class TransformerLayer(nn.Module):
         3. pad_mask: mask out pad items' output values. shape: [batch_size, seq_len, d_attn_input]
         Outputs:
         '''
-        output, attn = self.attn(x, x, x, mask = self_attn_mask)               # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        if k is None and v is None:
+            output, attn = self.attn(q, q, q, mask = self_attn_mask)           # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+        else:
+            output, attn = self.attn(q, k, v, mask = self_attn_mask)           # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+        
+        if non_pad_mask is not None:
+            output *= rearrange(non_pad_mask, '... -> ... 1')                  # [batch_size, seq_len, d_input]
 
         output = self.ffn(output)                                              # [batch_size, seq_len, d_input]
-        output *= rearrange(non_pad_mask, '... -> ... 1')                      # [batch_size, seq_len, d_input]
+        if non_pad_mask is not None:
+            output *= rearrange(non_pad_mask, '... -> ... 1')                  # [batch_size, seq_len, d_input]
 
         return output, attn
 
@@ -99,35 +105,3 @@ class MultiheadAttention(nn.Module):
         output = self.layer_norm(output)                                       # [batch_size, seq_len, d_output]
 
         return output, attn
-
-
-class FFN(nn.Module):
-    '''
-    Feedforward module next to the Transformers layer.
-    '''
-    def __init__(self, d_input, d_hidden, device, dropout = 0.1):
-        super(FFN, self).__init__()
-        self.device = device
-        
-        self.w_1 = nn.Linear(d_input, d_hidden, device = self.device)
-        self.w_2 = nn.Linear(d_hidden, d_input, device = self.device)
-        self.dropout = nn.Dropout(dropout)
-
-        self.norm = nn.LayerNorm(d_input, eps = 1e-6, device = self.device)
-
-    def forward(self, x):
-        '''
-        Args:
-        1. x: input tensor. shape: [..., d_input]
-        Outputs:
-        1. output: result tensor. shape: [..., d_input]
-        '''
-        residual = x
-
-        x = self.norm(x)                                                       # [..., d_input]
-        x = self.dropout(F.gelu(self.w_1(x)))                                  # [..., d_hidden]
-        x = self.dropout(self.w_2(x))                                          # [..., d_input]
-        x += residual
-        x = self.norm(x)                                                       # [..., d_input]
-
-        return x

@@ -16,10 +16,9 @@ class EvaluatorArguments(BasicEvaluatorArguments):
         # self.parser.add_argument('--used_model_config', type=str, default = None, help='The name of model config file used during training.')
         # self.parser.add_argument('--log_time', action='store_true')
 
-
         # plotter specific
         parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\
-                                                  test set(if set), and evaluation set(if set), respectively. So there will be\
+                                                  test set(if set), and evaluation set(if set), respectively. So there will be \
                                                   {enabled_dataset} * figure_count plots when the plotter finish running.')
         parser.add_argument('--plot_type', type=str, choices=['removed_events',], default = 'intensity', help='Temporal point process only.')
         parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
@@ -30,7 +29,7 @@ class EvaluatorArguments(BasicEvaluatorArguments):
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Explainable History Distillation',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Evaluator',
+        self.parser.add_argument('--required_worker', type = str, default = 'Evaluator',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Evaluation',
                             help=argparse.SUPPRESS)

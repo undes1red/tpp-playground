@@ -29,7 +29,9 @@ class TaskHost:
         self.procedure = importlib.import_module('src.' + self.opt.procedure)
         self.opt = getattr(self.procedure, f'{self.opt.required_worker}_postprocess')(self.opt, root_path)
 
-        time.sleep(self.opt.sleep)
+        if self.opt.sleep > 0:
+            logger.info(f'Now, I will take a nap. See you {self.opt.sleep}s later.')
+            time.sleep(self.opt.sleep)
         self.pytorch_warning_dict = getattr(self.procedure, 'pytorch_version_warnings')
     
 

@@ -15,17 +15,17 @@ from src.toolbox.misc import pack_one_value_to_dict
 
 
 class MHPWrapper(BasicModel):
-    def __init__(self, info_dict, device, mode = 'time_mamba', d_input = 64, d_mamba = 64, n_layers = 3,
+    def __init__(self, opt, device, mode = 'time_mamba', d_input = 64, d_mamba = 64, n_layers = 3,
                  dropout = 0.1, beta = 0, kernel_size = 5, expand = 2, sample_rate = 32, 
                  integration_sample_rate = 100, epsilon = 1e-20, mae_step = 32, mae_e_step = 32,
                  survival_loss_during_training = True):
         super(MHPWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
-        self.min_time_interval = info_dict['time_interval_min']
-        self.max_time_interval = info_dict['time_interval_max']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
+        self.min_time_interval = opt.info_dict['time_interval_min']
+        self.max_time_interval = opt.info_dict['time_interval_max']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.integration_sample_rate = integration_sample_rate

@@ -19,16 +19,16 @@ class IFIBCModel(BasicModel):
                  dropout,
                  history_module_layers,
                  mlp_layers,
-                 info_dict,
+                 opt,
                  device,
                  removes_tail, tanh_parameter,
                  history_module = 'LSTM', survival_loss_during_training = True,
                  epsilon = 0.0, sample_rate = 32, mae_step = 32, mae_e_step = 32):
         super(IFIBCModel, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = sample_rate

@@ -15,13 +15,13 @@ from src.TPP.model.utils import *
 
 
 class NaiveMTPPWrapper(BasicModel):
-    def __init__(self, info_dict, device, process_name = 'Poisson', epsilon = 1e-20, sample_rate = 32, \
+    def __init__(self, opt, device, process_name = 'Poisson', epsilon = 1e-20, sample_rate = 32, \
                  mae_step = 4, mae_e_step = 4, integration_sample_rate = 100, survival_loss_during_training = True):
         super(NaiveMTPPWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training

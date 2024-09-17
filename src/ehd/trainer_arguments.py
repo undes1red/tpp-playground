@@ -15,7 +15,7 @@ class TrainerArguments(BasicTrainerArguments):
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Counterfactual History Distillation',
                             help=argparse.SUPPRESS)
-        self.parser.add_argument('--task_category', type = str, default = 'Trainer',
+        self.parser.add_argument('--required_worker', type = str, default = 'Trainer',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_task_category', type = str, default = 'Model Training',
                             help=argparse.SUPPRESS)
