@@ -10,7 +10,7 @@ from src.ehd.model.ehd_perplexity.submodel import EHD_backend
 from src.ehd.model.utils import BasicModule
 
 from src.ehd.model.ehd_perplexity.plot import * 
-from src.ehd.model.ehd_perplexity.nes import NES
+from src.ehd.model.ehd_perplexity.utils import generate_masks, filter
 from src.ehd.utils import suffix
 
 logger = get_logger(__name__)
@@ -25,7 +25,7 @@ class EHD(BasicModule):
                  d_input, d_rnn, d_hidden,
                  n_layers_encoder, n_layers_decoder,
                  n_head, d_qk, d_v, dropout, epsilon_l, epsilon_d, alpha, beta,
-                 epsilon, device, additional_model, samples_for_l_e = 32, training = True):
+                 epsilon, device, additional_model, samples_for_l_e = 16, training = True):
         super(EHD, self).__init__()
         self.device = device
         self.opt = opt
@@ -64,10 +64,6 @@ class EHD(BasicModule):
                                  d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, n_layers_encoder = n_layers_encoder, 
                                  n_layers_decoder = n_layers_decoder, n_head = n_head, d_qk = d_qk, d_v = d_v, 
                                  dropout = dropout, device = device)
-
-        self.nes_module = NES(num_of_samples_mask = self.samples_for_l_e, \
-                              length_of_x = self.seq_len_x, length_of_h = self.seq_len_h, \
-                              epsilon = self.epsilon, tau = 0.1, device = self.device)
 
 
     def load_model(self, training):
@@ -152,9 +148,10 @@ class EHD(BasicModule):
         task_mapper = {
             'train': self.train_procedure,
             'evaluate': self.evaluate_procedure,
-            'lsp_and_lrp': self.get_lsp_and_lrp,
+            'lsp_and_lrp': self.get_unhinged_perplexity_gap,
+            'lsp_and_lrp_compared_with_gs_and_rd': self.lsp_and_lrp_compared_with_gs_and_rd,
             'lsp_and_lrp_trend': self.lsp_and_lrp_trend,
-            'graph': self.plot
+            'removed_events': self.removed_events
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -177,7 +174,6 @@ class EHD(BasicModule):
     def train_procedure(self, input_time, input_events, input_mask, mean, std):
         assert (input_mask == 1).all()
 
-
         (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
             = self.divide_history_and_future(input_time, input_events, input_mask)
                                                                                # ([batch_size, seq_len_h + 1], [batch_size, seq_len_x + 1]) * 3
@@ -186,26 +182,54 @@ class EHD(BasicModule):
         cum_input_time = input_time.cumsum(dim = -1)                           # [batch_size, seq_len]
         batch_size = input_time.shape[0]
 
-        log_p_h_f_x_o = self.mtpp_model('ehd_perplexity', input_time, input_events,
-                                        events_embeddings, input_mask, 
-                                        self.seq_len_x, mean, std)             # [batch_size]
+        # Here, mask = 1: important. Removing them would cause counterfactual results.
+        #       mask = 0: noises or unrelated events. Keeping them makes no benefit for modeling the future.
+        input_probability = self.model(events_history, events_future, time_history, time_future, mask_history, mask_future)
+                                                                               # [batch_size, length_of_h + 1, 2]
+        check_tensor(input_probability)
+        '''
+        Tell the average gap between p(y = 1|x, H) and p(y = 0|x, H). Bigger probability gap means the model
+        is more certain about the result.
+        '''
+        gap_between_p_1_and_p_0 = input_probability[:, :, 1] - input_probability[:, :, 0]
+                                                                               # [batch_size, length_of_h + 1]
+        gap_sum = torch.abs(gap_between_p_1_and_p_0.detach() * mask_history).sum()
+        L_g = gap_sum / number_of_events
 
-        (L_n, L_g), _, \
+        repeated_input_probability = repeat(input_probability, '... -> n ...', n = self.samples_for_l_e)
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2]
+        '''
+        Generate the history mask and corresponding filter mask.
+        '''
+        history_mask, filter_mask = generate_masks(repeated_input_probability, self.seq_len_x)
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2] + [samples_for_l_e, batch_size, length_of_h + length_oF_x + 2, 2]
+        '''
+        L_n, optimize the length of essential events.
+        '''
+        selected_mask = history_mask[..., 1:, 1]
+        L_n = torch.linalg.norm(selected_mask.float(), ord = 1, dim = -1) / (self.seq_len_h - 1)
+                                                                               # [num_of_samples_mask, batch_size]
+        L_n = L_n.mean()
+
+        '''
+        L_e, optimize the quality of distilled events.
+        '''
         (padded_distilled_events, padded_distilled_masks), (padded_distilled_times, padded_distilled_event_embeddings), \
         (padded_left_events, padded_left_masks), (padded_left_times, padded_left_event_embeddings) \
-            = self.nes_module(self.model, (events_history, events_future, time_history, time_future, mask_history, mask_future), \
-                              mask_history, number_of_events, \
-                              discrete_inputs = (input_events, input_mask), \
-                              continuous_inputs = (cum_input_time, events_embeddings))
-                                                                               # [samples_for_l_e * batch_size, *]
+            = filter((input_events, input_mask), (cum_input_time, events_embeddings), filter_mask, evaluate = False)
+                                                                               # num_of_samples_mask * [batch_size, seq_len, ...]
+        log_p_h_f_x_o = self.mtpp_model('ehd_perplexity', input_time, input_events, events_embeddings, input_mask, 
+                                        self.seq_len_x, mean, std)             # [batch_size]
+
         packed_data = zip(padded_distilled_events, padded_distilled_masks, padded_distilled_times, padded_distilled_event_embeddings, \
                           padded_left_events, padded_left_masks, padded_left_times, padded_left_event_embeddings)
         L_e = 0
+        start_val = torch.zeros(batch_size, 1, device = self.device)
         for padded_distilled_events_one_batch, padded_distilled_masks_one_batch, padded_distilled_times_one_batch, padded_distilled_event_embeddings_one_batch, \
             padded_left_events_one_batch, padded_left_masks_one_batch, padded_left_times_one_batch, padded_left_event_embeddings_one_batch in packed_data:
-            padded_distilled_times_one_batch = torch.diff(padded_distilled_times_one_batch, dim = -1, prepend = torch.zeros(batch_size, 1, device = self.device))
+            padded_distilled_times_one_batch = torch.diff(padded_distilled_times_one_batch, dim = -1, prepend = start_val)
                                                                                # [batch_size, seq_distilled_len]
-            padded_left_times_one_batch = torch.diff(padded_left_times_one_batch, dim = -1, prepend = torch.zeros(batch_size, 1, device = self.device))
+            padded_left_times_one_batch = torch.diff(padded_left_times_one_batch, dim = -1, prepend = start_val)
                                                                                # [batch_size, seq_left_len]
             # Loss for asking the model to find the most important events.
             # rebuild the original history for H_{o,t_l} - H_{s,o,t_l} based on history_mask.
@@ -219,7 +243,8 @@ class EHD(BasicModule):
 
             L_e += F.relu(log_p_h_f_x_o - log_p_h_l_x_o + self.epsilon_l).mean()
             L_e += F.relu(log_p_h_d_x_o - log_p_h_f_x_o + self.epsilon_d).mean()
-    
+        
+        L_e /= self.samples_for_l_e
         Loss = self.alpha * L_n + self.beta * L_e
 
         return Loss, L_n, L_e, L_g
@@ -240,18 +265,45 @@ class EHD(BasicModule):
         cum_input_time = input_time.cumsum(dim = -1)                           # [batch_size, seq_len]
         batch_size = input_time.shape[0]
 
-        log_p_h_f_x_o = self.mtpp_model('ehd_perplexity', input_time, input_events,
-                                        events_embeddings, input_mask, 
-                                        self.seq_len_x, mean, std)             # [batch_size]
-        
-        (L_n, L_g), history_mask, \
+        # Here, mask = 1: important. Removing them would cause counterfactual results.
+        #       mask = 0: noises or unrelated events. Keeping them makes no benefit for modeling the future.
+        input_probability = self.model(events_history, events_future, time_history, time_future, mask_history, mask_future)
+                                                                               # [batch_size, length_of_h + 1, 2]
+        check_tensor(input_probability)
+
+        '''
+        Tell the average gap between p(y = 1|x, H) and p(y = 0|x, H). Bigger probability gap means the model
+        is more certain about the result.
+        '''
+        gap_between_p_1_and_p_0 = input_probability[:, :, 1] - input_probability[:, :, 0]
+                                                                               # [batch_size, length_of_h + 1]
+        gap_sum = torch.abs(gap_between_p_1_and_p_0.detach() * mask_history).sum()
+        L_g = gap_sum / number_of_events
+
+        repeated_input_probability = rearrange(input_probability, '... -> () ...')
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2]
+        '''
+        Generate the history mask and corresponding filter mask.
+        '''
+        history_mask, filter_mask = generate_masks(repeated_input_probability, self.seq_len_x, evaluate = True)
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2] + [samples_for_l_e, batch_size, length_of_h + length_oF_x + 2, 2]
+        '''
+        L_n, optimize the length of essential events.
+        '''
+        selected_mask = history_mask[..., 1:, 1]
+        L_n = torch.linalg.norm(selected_mask.float(), ord = 1, dim = -1) / (self.seq_len_h - 1)
+                                                                               # [num_of_samples_mask, batch_size]
+        L_n = L_n.mean()
+
+        '''
+        L_e, optimize the quality of distilled events.
+        '''
         (padded_distilled_events, padded_distilled_masks), (padded_distilled_times, padded_distilled_event_embeddings), \
         (padded_left_events, padded_left_masks), (padded_left_times, padded_left_event_embeddings) \
-            = self.nes_module(self.model, (events_history, events_future, time_history, time_future, mask_history, mask_future), \
-                              mask_history, number_of_events, \
-                              discrete_inputs = (input_events, input_mask), \
-                              continuous_inputs = (cum_input_time, events_embeddings), evaluate = True)
-
+            = filter((input_events, input_mask), (cum_input_time, events_embeddings), filter_mask, evaluate = True)
+                                                                               # num_of_samples_mask * [batch_size, seq_len, ...]
+        log_p_h_f_x_o = self.mtpp_model('ehd_perplexity', input_time, input_events, events_embeddings, input_mask, 
+                                        self.seq_len_x, mean, std)             # [batch_size]
         packed_data = zip(padded_distilled_events, padded_distilled_masks, padded_distilled_times, padded_distilled_event_embeddings, \
                           padded_left_events, padded_left_masks, padded_left_times, padded_left_event_embeddings)
         L_e, L_l_without_hinge, L_d_without_hinge = 0, 0, 0
@@ -285,120 +337,12 @@ class EHD(BasicModule):
         Evaluation part.
         '''
         # How many events are left in \history_l ?
-        the_number_of_left_events = history_mask[..., :-1, 0].detach().sum(dim = -1).float().mean()
+        the_number_of_left_events = history_mask[..., 1:, 0].detach().sum(dim = -1).float().mean()
 
         return Loss, L_n, L_e, L_g, the_number_of_left_events, L_l_without_hinge, L_d_without_hinge
 
 
-    def filter(self, input_time, input_events, events_embeddings, input_mask, filter_mask, evaluate = False, output_removed_events = False):
-        '''
-        Now, filter() should provide \\mathcal{H}_{s,o,t_l} and \\mathcal{H}_{r,o,t_l} when evaluate = True.
-        filter still only provide \\mathcal{H}_{r,o,t_l} when evaluate = False.
-        '''
-        '''
-        Please be careful: the mean and std should come from the training dataset!
-        '''
-        assert filter_mask is not None, "You want to filter the existing history following the filter mask, but filter mask is unavailable!"
-        assert torch.is_tensor(filter_mask), "The filter mask has to be a pytorch tensor!"
-        if not evaluate:
-            assert filter_mask.requires_grad, "The filter mask must be differentiable!"
-        samples_for_l_e, batch_size = filter_mask.shape[0], filter_mask.shape[1]
-
-        '''
-        Dealing with time.
-        We select the time whose history[:, :, 0] == 1(meaning this event will remain).
-        '''
-        filter_mask_for_nominated = filter_mask[..., 1 if output_removed_events else 0]
-                                                                               # [samples_for_l_e, batch_size, seq_len]
-
-        '''
-        Why this works?
-        We generate the history_mark with Gumbel-softmax trick with zero temperature.
-        That enforce the possible values of history_mark is either 1 or 0, although the data type is float.
-        We use discrete_history_mask_for_nominated for data selection after we multiply history_mask_for_nominated
-        with the input sequence data to introduce the gradient of mask to the selected data sequence.
-        Caveat: We convert the float tensor history_mask_for_nominated to LongTensor because we ensure this tensor only contains
-        0 and 1. DO NOT do this if your float tensor contains non-integers!
-        '''
-        discrete_filter_mask_for_nominated = filter_mask[..., 1 if output_removed_events else 0].detach().int()
-                                                                               # [samples_for_l_e, batch_size, seq_len]
-        the_number_of_remained_event = discrete_filter_mask_for_nominated.sum(dim = -1)
-                                                                               # [samples_for_l_e, batch_size]
-                
-        repeated_input_time = repeat(input_time, '... -> n ...', n = samples_for_l_e)
-                                                                               # [samples_for_l_e, batch_size, seq_len]
-        repeated_input_events = repeat(input_events, '... -> n ...', n = samples_for_l_e)
-                                                                               # [samples_for_l_e, batch_size, seq_len]
-        repeated_events_embeddings = repeat(events_embeddings, '... -> n ...', n = samples_for_l_e)
-                                                                               # [samples_for_l_e, batch_size, seq_len, d_history]
-        repeated_input_mask = repeat(input_mask, '... -> n ...', n = samples_for_l_e)
-                                                                               # [samples_for_l_e, batch_size, seq_len]
-        
-        repeated_cumsum_time = repeated_input_time.cumsum(dim = -1)            # [samples_for_l_e, batch_size, seq_len]
-        
-        # select the remained events from the original input.
-        selected_time = repeated_cumsum_time * filter_mask_for_nominated       # [samples_for_l_e, batch_size, seq_len]
-        selected_time = selected_time[discrete_filter_mask_for_nominated == 1] # [...]
-        selected_input_events = repeated_input_events[discrete_filter_mask_for_nominated == 1]
-                                                                               # [...]
-        selected_events_embeddings = repeated_events_embeddings * filter_mask_for_nominated.unsqueeze(dim = -1)
-                                                                               # [samples_for_l_e, batch_size, seq_len, d_history]
-        selected_events_embeddings = selected_events_embeddings[discrete_filter_mask_for_nominated == 1]
-                                                                               # [..., d_history]
-        selected_input_mask = repeated_input_mask[discrete_filter_mask_for_nominated == 1]
-                                                                               # [...]
-        
-        data_start_index = 0
-        all_reshaped_time, all_reshaped_input_events, all_reshaped_events_embeddings, all_reshaped_input_mask \
-            = [], [], [], []
-        for the_number_of_remained_event_per_batch in the_number_of_remained_event:
-            '''
-            Padding the selected timestamps.
-            '''
-            reshaped_time, reshaped_input_events, reshaped_events_embeddings, reshaped_input_mask \
-                = [], [], [], []
-            for the_number_of_remained_event_per_batch_per_seq in the_number_of_remained_event_per_batch:
-                reshaped_time.append(selected_time[data_start_index:data_start_index + the_number_of_remained_event_per_batch_per_seq])
-                reshaped_input_events.append(selected_input_events[data_start_index:data_start_index + the_number_of_remained_event_per_batch_per_seq])
-                reshaped_events_embeddings.append(selected_events_embeddings[data_start_index:data_start_index + the_number_of_remained_event_per_batch_per_seq, :])
-                reshaped_input_mask.append(selected_input_mask[data_start_index:data_start_index + the_number_of_remained_event_per_batch_per_seq])
-
-                data_start_index += the_number_of_remained_event_per_batch_per_seq
-                        
-            padded_reshaped_time = torch.nn.utils.rnn.pad_sequence(reshaped_time, batch_first = True)
-                                                                               # [batch_size, padded_seq_len]
-            padded_input_events = torch.nn.utils.rnn.pad_sequence(reshaped_input_events, batch_first = True)
-                                                                               # [batch_size, padded_seq_len]
-            padded_events_embeddings = torch.nn.utils.rnn.pad_sequence(reshaped_events_embeddings, batch_first = True)
-                                                                               # [batch_size, padded_seq_len, d_history]
-            padded_input_mask = torch.nn.utils.rnn.pad_sequence(reshaped_input_mask, batch_first = True)
-                                                                               # [batch_size, padded_seq_len]
-            
-            padded_reshaped_time = padded_reshaped_time.diff(dim = -1, prepend = torch.zeros(batch_size, 1, device = self.device))
-                                                                               # [batch_size, padded_seq_len]
-            all_reshaped_time.append(padded_reshaped_time)
-            all_reshaped_input_events.append(padded_input_events)
-            all_reshaped_events_embeddings.append(padded_events_embeddings)
-            all_reshaped_input_mask.append(padded_input_mask)
-
-            del reshaped_time, reshaped_input_events, reshaped_events_embeddings, reshaped_input_mask
-            del padded_reshaped_time, padded_input_events, padded_events_embeddings, padded_input_mask
-        
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        return all_reshaped_time, all_reshaped_input_events, all_reshaped_events_embeddings, all_reshaped_input_mask
-
-
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'removed_events': self.removed_events
-        }
-    
-        return plot_type_to_functions[opt.plot_type](minibatch, opt)
-
-
-    def extract_plot_data(self, minibatch):
+    def extract_minibatch(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
         Caution: dataloader won't add the end dummy event during evaluation!
@@ -436,7 +380,7 @@ class EHD(BasicModule):
         '''
         Extract data from the input minibatch.
         '''
-        input_time, input_events, input_mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_events, input_mask, mean, std = self.extract_minibatch(input_data)
 
         assert (input_mask == 1).all()
         (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
@@ -620,9 +564,81 @@ class EHD(BasicModule):
 
 
         return plots
-    
 
-    def get_lsp_and_lrp(self, input_data, opt, fast = False):
+
+    def get_unhinged_perplexity_gap(self, input_data, opt):
+        input_time, input_events, input_mask, mean, std = self.extract_minibatch(input_data)
+
+        assert (input_mask == 1).all()
+        (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
+            = self.divide_history_and_future(input_time, input_events, input_mask)
+                                                                               # ([batch_size, seq_len_h + 1], [batch_size, seq_len_x + 1]) * 3
+
+        number_of_events = mask_history.sum().item()
+        events_embeddings = self.mtpp_model('ehd_event_emb', input_events)     # [batch_size, seq_len, d_history]
+        cum_input_time = input_time.cumsum(dim = -1)                           # [batch_size, seq_len]
+        batch_size = input_time.shape[0]
+
+        # Here, mask = 1: important. Removing them would cause counterfactual results.
+        #       mask = 0: noises or unrelated events. Keeping them makes no benefit for modeling the future.
+        input_probability = self.model(events_history, events_future, time_history, time_future, mask_history, mask_future)
+                                                                               # [batch_size, length_of_h + 1, 2]
+        check_tensor(input_probability)
+
+        repeated_input_probability = rearrange(input_probability, '... -> () ...')
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2]
+        '''
+        Generate the history mask and corresponding filter mask.
+        '''
+        history_mask, filter_mask = generate_masks(repeated_input_probability, self.seq_len_x, evaluate = True)
+                                                                               # [samples_for_l_e, batch_size, length_of_h + 1, 2] + [samples_for_l_e, batch_size, length_of_h + length_oF_x + 2, 2]
+        '''
+        L_n, optimize the length of essential events.
+        '''
+        selected_mask = history_mask[..., 1:, 1]
+        L_n = torch.linalg.norm(selected_mask.float(), ord = 1, dim = -1) / (self.seq_len_h - 1)
+                                                                               # [num_of_samples_mask, batch_size]
+        L_n = L_n.mean()
+
+        '''
+        L_e, optimize the quality of distilled events.
+        '''
+        (padded_distilled_events, padded_distilled_masks), (padded_distilled_times, padded_distilled_event_embeddings), \
+        (padded_left_events, padded_left_masks), (padded_left_times, padded_left_event_embeddings) \
+            = filter((input_events, input_mask), (cum_input_time, events_embeddings), filter_mask, evaluate = True)
+                                                                               # num_of_samples_mask * [batch_size, seq_len, ...]
+        log_p_h_f_x_o = self.mtpp_model('ehd_perplexity', input_time, input_events, events_embeddings, input_mask, 
+                                        self.seq_len_x, mean, std)             # [batch_size]
+        packed_data = zip(padded_distilled_events, padded_distilled_masks, padded_distilled_times, padded_distilled_event_embeddings, \
+                          padded_left_events, padded_left_masks, padded_left_times, padded_left_event_embeddings)
+        L_l_without_hinge, L_d_without_hinge = 0, 0
+        for padded_distilled_events_one_batch, padded_distilled_masks_one_batch, padded_distilled_times_one_batch, padded_distilled_event_embeddings_one_batch, \
+            padded_left_events_one_batch, padded_left_masks_one_batch, padded_left_times_one_batch, padded_left_event_embeddings_one_batch in packed_data:
+
+            padded_distilled_times_one_batch = torch.diff(padded_distilled_times_one_batch, dim = -1, prepend = torch.zeros(batch_size, 1, device = self.device))
+                                                                               # [batch_size, seq_distilled_len]
+            padded_left_times_one_batch = torch.diff(padded_left_times_one_batch, dim = -1, prepend = torch.zeros(batch_size, 1, device = self.device))
+                                                                               # [batch_size, seq_left_len]
+            # Loss for asking the model to find the most important events.
+            # rebuild the original history for H_{o,t_l} - H_{s,o,t_l} based on history_mask.
+            # You should be really careful to implement this part for not accidentally dropping any gradients.
+            log_p_h_d_x_o = self.mtpp_model('ehd_perplexity', padded_distilled_times_one_batch, padded_distilled_events_one_batch,
+                                            padded_distilled_event_embeddings_one_batch, padded_distilled_masks_one_batch,
+                                            self.seq_len_x, mean, std)         # [batch_size]
+            log_p_h_l_x_o = self.mtpp_model('ehd_perplexity', padded_left_times_one_batch, padded_left_events_one_batch,
+                                            padded_left_event_embeddings_one_batch, padded_left_masks_one_batch,
+                                            self.seq_len_x, mean, std)         # [batch_size]
+            
+            L_l_without_hinge = (log_p_h_f_x_o - log_p_h_l_x_o).mean()
+            L_d_without_hinge = (log_p_h_f_x_o - log_p_h_d_x_o).mean()
+        
+        the_number_of_left_events = history_mask[..., 1:, 0].detach().sum(dim = -1).float().mean()
+
+
+        return the_number_of_left_events, L_l_without_hinge, L_d_without_hinge
+
+
+    def lsp_and_lrp_compared_with_gs_and_rd(self, input_data, opt):
         '''
         Since we removed all sequence shorter than seq_len_x + seq_len_h.
         We do not need to worry about the input_mask anymore.
@@ -636,147 +652,16 @@ class EHD(BasicModule):
         '''
         Extract data from the input minibatch.
         '''
-
-        input_time, input_events, input_mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_events, input_mask, mean, std = self.extract_minibatch(input_data)
 
         assert (input_mask == 1).all()
         (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
             = self.divide_history_and_future(input_time, input_events, input_mask)
                                                                                # ([batch_size, seq_len_h + 1], [batch_size, seq_len_x + 1]) * 3
-        if fast:
-            start = time.time()
-
-            # Here, mask = 1: important. Removing them would cause counterfactual results.
-            #       mask = 0: noises or unrelated events. Keeping them makes no benefit for modeling the future.
-            generated_mask_probability = self.model(time_history, time_future, events_history, events_future, \
-                                                    mask_history, mask_future, mean, std)
-                                                                               # [batch_size, seq_len_h + 1, 2]
-            check_tensor(generated_mask_probability)
-
-            # Loss 3 for asking the model to find the best sequence to remove.
-            # Since we don't need gradient during evaluation, we simply use argmax() here to generate history_mask.
-            history_mask = F.one_hot(torch.argmax(generated_mask_probability, dim = -1), num_classes = 2)
-                                                                               # [batch_size, seq_len_h + 1, 2]
-            history_mask[:, 0] = 1
-            check_tensor(history_mask)
-
-            future_mask = torch.ones(*mask_future.shape, 2, device = self.device)
-                                                                               # [batch_size, seq_len_x + 1, 2]
-
-            filter_mask, _ = pack((history_mask, future_mask), 'b * m')        # [batch_size, seq_len_h + seq_len_x + 2, 2]
-            filter_mask = repeat(filter_mask, 'b l m -> n b l m', n = 1)       # [1, batch_size, seq_len_h + seq_len_x + 2, 2]
-
-            events_embeddings = self.mtpp_model('ehd_event_emb', input_events) # [batch_size, seq_len, d_history]
-            padded_filtered_time, padded_filtered_events, padded_filtered_event_embeddings, padded_filtered_masks \
-                = self.filter(input_time = input_time, input_events = input_events, events_embeddings = events_embeddings, \
-                              input_mask = input_mask, filter_mask = filter_mask, evaluate = True)
-                                                                               # [1, batch_size, seq_len_h + seq_len_x + 2] * 2 + [samples_for_l_e, batch_size, seq_len_h + seq_len_x + 2, d_history] + [samples_for_l_e, batch_size, seq_len_h + seq_len_x + 2]
-
-            padded_filtered_removed_time, padded_filtered_removed_events, padded_filtered_event_removed_embeddings, padded_filtered_removed_masks \
-                = self.filter(input_time = input_time, input_events = input_events, events_embeddings = events_embeddings, \
-                              input_mask = input_mask, filter_mask = filter_mask, evaluate = True, output_removed_events = True)
-                                                                               # [1, batch_size, seq_len_h + seq_len_x + 2] * 2 + [samples_for_l_e, batch_size, seq_len_h + seq_len_x + 2, d_history] + [samples_for_l_e, batch_size, seq_len_h + seq_len_x + 2]
-
-            # Loss 3 for asking the model to find the most important events.
-            # rebuild the original history for H_{o,t_l} - H_{s,o,t_l} based on history_mask.
-            # You should be really careful to implement this part for not accidentally dropping any gradients.
-            log_p_h_o_t_l_x_o_mean = self.mtpp_model('ehd_perplexity', input_time, input_events, events_embeddings, input_mask, self.seq_len_x, mean, std)
-                                                                               # [batch_size]
-        
-            log_p_h_r_o_t_l_x_o_mean = []
-            for padded_filtered_time_per_sample, padded_filtered_events_per_sample, \
-                padded_filtered_event_embeddings_per_sample, padded_filtered_masks_per_sample in \
-                zip(padded_filtered_time, padded_filtered_events, padded_filtered_event_embeddings, padded_filtered_masks):
-                log_p_h_r_o_t_l_x_o_mean.append(self.mtpp_model('ehd_perplexity', padded_filtered_time_per_sample, padded_filtered_events_per_sample,
-                                                           padded_filtered_event_embeddings_per_sample, padded_filtered_masks_per_sample, 
-                                                           self.seq_len_x, mean, std))
-                                                                               # [batch_size]
-            log_p_h_r_o_t_l_x_o_mean = torch.stack(log_p_h_r_o_t_l_x_o_mean, dim = 0)
-                                                                               # [1, batch_size]
-
-            '''
-            Evaluation part.
-            '''
-            # part 1: How many percents of events are left?
-            discrete_remained_mask = history_mask[..., 0].detach().int()
-            the_number_of_remained_events = discrete_remained_mask.sum(dim = -1)
-            the_number_of_total_events = mask_history.sum(dim = -1)
-    
-            # part 2: What is the value of log_p_h_s_o_t_l_x_o_mean?
-            log_p_h_s_o_t_l_x_o_mean = []
-            for padded_filtered_removed_time_per_sample, padded_filtered_removed_events_per_sample, \
-                padded_filtered_removed_event_embeddings_per_sample, padded_filtered_removed_masks_per_sample in \
-                zip(padded_filtered_removed_time, padded_filtered_removed_events, padded_filtered_event_removed_embeddings, padded_filtered_removed_masks):
-                log_p_h_s_o_t_l_x_o_mean.append(self.mtpp_model('ehd_perplexity', padded_filtered_removed_time_per_sample, padded_filtered_removed_events_per_sample,
-                                                           padded_filtered_removed_event_embeddings_per_sample, padded_filtered_removed_masks_per_sample, 
-                                                           self.seq_len_x, mean, std))
-                                                                               # [batch_size]
-            log_p_h_s_o_t_l_x_o_mean = torch.stack(log_p_h_s_o_t_l_x_o_mean, dim = 0)
-                                                                               # [1, batch_size]
-
-            L_rp = log_p_h_o_t_l_x_o_mean.unsqueeze(dim = 0) - log_p_h_r_o_t_l_x_o_mean
-            L_sp = log_p_h_o_t_l_x_o_mean.unsqueeze(dim = 0) - log_p_h_s_o_t_l_x_o_mean
-
-            end = time.time()
-            time_ehd_mtpp = end - start
-            
-            percentage_remained_events = the_number_of_remained_events.float().mean().item()
-            L_sp = L_sp.item()
-            L_rp = L_rp.item()
-            the_number_of_total_events = mask_history.sum(dim = -1)
-            # Comparison with random removal.
-            # we i.i.d. sample the mask multiple times to eliminate serendipity.
-
-            start = time.time()
-            number_of_sampled_sequence = 16
-            for the_number_of_remained_events_per_seq, the_number_of_historical_events_per_seq \
-                in zip(the_number_of_remained_events, mask_history.sum(dim = -1)):
-                # baseline 1, random removal.
-                rand_mat = torch.rand(number_of_sampled_sequence, self.seq_len_h, device = self.device)
-                                                                               # [number_of_sampled_sequence, seq_len_h]
-                k_th_quant = torch.topk(rand_mat, the_number_of_remained_events_per_seq - 1, largest = False)[0][:,-1:]
-                                                                               # [number_of_sampled_sequence, 1]
-                if the_number_of_remained_events_per_seq == 1:
-                    mask = torch.ones_like(rand_mat, device = self.device).long()
-                                                                               # [number_of_sampled_sequence, seq_len_h]
-                else:
-                    mask = (rand_mat > k_th_quant).long()                      # [number_of_sampled_sequence, seq_len_h]
-                generated_mask_probability_random = F.one_hot(mask, num_classes = 2)
-                                                                               # [number_of_sampled_sequence, seq_len_h, 2]
-                check_tensor(generated_mask_probability_random)
-
-                # Since we don't need gradient during evaluation, we simply use argmax() here to generate history_mask.
-                history_mask_random = F.one_hot(torch.argmax(generated_mask_probability_random, dim = -1), num_classes = 2)
-                                                                               # [number_of_sampled_sequence, seq_len_h, 2]
-                history_mask_random, _ = pack((torch.ones(number_of_sampled_sequence, 1, 2, device = self.device), history_mask_random), 'nss * m')
-                                                                               # [number_of_sampled_sequence, seq_len_h, 2]
-                check_tensor(history_mask_random)
-            
-                future_mask_random = torch.ones(number_of_sampled_sequence, self.seq_len_x + 1, 2, device = self.device)
-                                                                               # [number_of_sampled_sequence, seq_len_x + 1, 2]
-        
-                filter_mask_random, _ = pack((history_mask_random, future_mask_random), 'nss * m')
-                                                                               # [number_of_sampled_sequence, seq_len_h + seq_len_x + 2, 2]
-                filter_mask_random = repeat(filter_mask_random, 'n l m -> n b l m', b = 1)
-                                                                               # [number_of_sampled_sequence, batch_size, seq_len_h + seq_len_x + 2, 2]
-
-                L_sp_r, L_rp_r = self.get_metric_values(input_events, input_time, input_mask, filter_mask_random, mean, std)
-    
-                mask = torch.zeros_like(mask_history, device = self.device) * mask_history
-                                                                               # [batch_size, seq_len_h + 1]
-            end = time.time()
-            time_baseline_1_given_percentage = end - start
-            time_baseline_1_given_percentage_to_ehd = time_baseline_1_given_percentage / time_ehd_mtpp
-
-            return percentage_remained_events, L_sp, L_sp_r, L_rp, L_rp_r, time_baseline_1_given_percentage_to_ehd, \
-                   history_mask.tolist(), time_history.tolist(), time_future.tolist(), \
-                   events_history.tolist(), events_future.tolist()
-
         '''
         Evaluation part.
         '''
         # part 1: How many percents of events are left?
-
         start = time.time()
         percentage_remained_events, L_sp, L_rp = self.evaluate_procedure(input_time, input_events, input_mask, mean, std, percentage = False)[-3:]
         end = time.time()
@@ -1000,11 +885,99 @@ class EHD(BasicModule):
                time_baseline_1_given_percentage_to_ehd, time_baseline_1_to_ehd, time_baseline_2_to_ehd, time_greedy_given_percentage_to_ehd
 
 
+    def get_unhinged_perplexity_gap_full_curve(self, input_data, opt):
+        '''
+        Given the number of distilled events, this function will sort the probability then assign 1 to events with the top-N highest probability.
+        Because the theoretical best is nearly impossible to calculate for the insanely huge search space, we only expect to perform comparison on
+        several selected sequences.
+        '''
+        input_time, input_events, _, input_mask, _, _, _, _, mean, var = self.extract_minibatch(input_data)
+
+        assert (input_mask == 1).all()
+        (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \
+            = self.divide_history_and_future(input_time, input_events, input_mask)
+                                                                               # ([batch_size, seq_len_h + 1], [batch_size, seq_len_x + 1]) * 3
+        
+        # Here, mask = 1: important. Removing them would cause counterfactual results.
+        #       mask = 0: noises or unrelated events. Keeping them makes no benefit for modeling the future.
+        generated_mask_probability = self.model(time_history, time_future, events_history, events_future, \
+                                                mask_history, mask_future, mean, var)
+                                                                               # [batch_size, seq_len_h + 1, 2]
+        batch_size = generated_mask_probability.shape[0]
+        check_tensor(generated_mask_probability)
+        probability_of_distilled = generated_mask_probability[..., 1:, 1]      # [batch_size, seq_len_h]
+        sorted_index = torch.argsort(probability_of_distilled)                 # [batch_size, seq_len_h]
+        sorted_index = torch.cat((torch.zeros(batch_size, 1), sorted_index + 1), dim = -1)
+                                                                               # [batch_size, seq_len_h + 1]
+        # Generate the history_mask based on sorted_index.
+        history_mask = torch.zeros((batch_size, self.seq_len_h, self.seq_len_h), device = self.device)
+                                                                               # [batch_size, number_of_sampled_sequence, seq_len_h]
+        for batch_idx in range(batch_size):
+            for diagonal in range(-self.seq_len_h + 1, self.seq_len_h):
+                history_mask[batch_idx] += torch.diagnal(sorted_index[batch_idx][:self.seq_len_h - 1 - abs(diagonal)], diagonal = diagonal)
+        
+        history_mask = rearrange(history_mask, 'b nss sqh -> nss b sqh')       # [number_of_sampled_sequence, batch_size, seq_len_h]
+
+        the_number_of_remained_events = range(1, self.seq_len_h + 1)           # [batch_size, seq_len_h]
+        all_mask = []
+        gap = []
+        L_sp_model = []
+        L_rp_model = []
+
+        # Initial state
+        mask = torch.ones(batch_size, self.seq_len_h, device = self.device)    # [batch_size, seq_len_h]
+        generated_mask_probability = F.one_hot(mask.to(torch.int64), num_classes = 2)
+                                                                               # [batch_size, seq_len_h, 2]
+        history_mask = F.one_hot(torch.argmax(generated_mask_probability, dim = -1), num_classes = 2)
+                                                                               # [batch_size, seq_len_h, 2]
+        history_mask, _ = pack((torch.ones(batch_size, 1, 2, device = self.device), history_mask), 'bs * m')
+                                                                               # [batch_size, seq_len_h, 2]
+        future_mask = torch.ones(batch_size, self.seq_len_x + 1, 2, device = self.device)
+                                                                               # [batch_size, seq_len_x + 1, 2]
+        filter_mask, _ = pack((history_mask, future_mask), 'bs * m')           # [batch_size, seq_len_h + seq_len_x + 2, 2]
+        filter_mask = repeat(filter_mask, 'b l m -> n b l m', n = 1)           # [number_of_sampled_sequence, batch_size, seq_len_h + seq_len_x + 2, 2]
+
+        L_sp_m, L_rp_m = self.get_metric_values(input_events, input_time, input_mask, filter_mask, mean, var)
+        all_mask.append(filter_mask.tolist())
+        gap.append(L_sp_m - L_rp_m)
+        L_sp_model.append(L_sp_m)
+        L_rp_model.append(L_rp_m)
+
+        for the_number_of_remained_events_per_seq in the_number_of_remained_events:
+            mask = torch.zeros(batch_size, self.seq_len_h, device = self.device)
+                                                                               # [batch_size, seq_len_h]
+            selected_index = sorted_index[..., the_number_of_remained_events_per_seq:]
+                                                                               # [batch_size, seq_len_h]
+            mask.scatter_(dim = -1, index = selected_index, src = torch.ones_like(mask))
+                                                                               # [batch_size, seq_len_h]
+            generated_mask_probability = F.one_hot(mask.to(torch.int64), num_classes = 2)
+                                                                               # [batch_size, seq_len_h, 2]
+
+            # Since we don't need gradient during evaluation, we simply use argmax() here to generate history_mask.
+            history_mask = F.one_hot(torch.argmax(generated_mask_probability, dim = -1), num_classes = 2)
+                                                                               # [batch_size, seq_len_h, 2]
+            history_mask, _ = pack((torch.ones(batch_size, 1, 2, device = self.device), history_mask), 'bs * m')
+                                                                               # [batch_size, seq_len_h, 2]
+            future_mask = torch.ones(batch_size, self.seq_len_x + 1, 2, device = self.device)
+                                                                               # [batch_size, seq_len_x + 1, 2]
+            filter_mask, _ = pack((history_mask, future_mask), 'bs * m')       # [batch_size, seq_len_h + seq_len_x + 2, 2]
+            filter_mask = repeat(filter_mask, 'b l m -> n b l m', n = 1)       # [number_of_sampled_sequence, batch_size, seq_len_h + seq_len_x + 2, 2]
+
+            L_sp_m, L_rp_m = self.get_metric_values(input_events, input_time, input_mask, filter_mask, mean, var)
+
+            all_mask.append(filter_mask.tolist())
+            gap.append(L_sp_m - L_rp_m)
+            L_sp_model.append(L_sp_m)
+            L_rp_model.append(L_rp_m)
+
+        return all_mask, gap, L_sp_model, L_rp_model, list(the_number_of_remained_events)
+
+
     def lsp_and_lrp_trend(self, input_data, opt):
         '''
         So this function verifies the assumption 1.
         '''
-        input_time, input_events, input_mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_events, input_mask, mean, std = self.extract_minibatch(input_data)
 
         assert (input_mask == 1).all()
         (time_history, time_future), (events_history, events_future), (mask_history, mask_future) \

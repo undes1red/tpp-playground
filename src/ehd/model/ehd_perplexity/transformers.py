@@ -1,5 +1,4 @@
 import torch.nn as nn
-from einops import repeat
 
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
 from src.toolbox.transformer import TransformerLayer
@@ -60,8 +59,6 @@ class Transformer(nn.Module):
         outputs = self.rnn(history_embedding)                                  # [batch_size, seq_len_h, d_input]
 
         return outputs
-
-
 
 class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_input, d_hidden, n_head, d_qk, d_v, dropout, device):

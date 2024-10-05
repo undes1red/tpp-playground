@@ -1046,7 +1046,7 @@ class FENNModel(BasicModel):
                                                                                # [batch_size, seq_len_x]
         # -\\frac{1}{N} \\log p(\\mathbf{x}_o|\\mathcal{H})
         log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
-
+        
         return log_perplexity
 
 
@@ -1063,7 +1063,7 @@ class FENNModel(BasicModel):
                        contains [time_seq, event_seq, score, mask]
         '''
         model.train()
-    
+
         [time_seq, event_seq, score, mask], (mean, std) = minibatch
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model(         
                 task_name = 'train', input_time = time_seq, \

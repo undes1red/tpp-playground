@@ -5,10 +5,9 @@ def regenerate_batch(input_seqs, the_number_of_events, num_of_samples_mask):
     distilled_features, left_features = input_seqs
     the_number_of_distilled_event, the_number_of_left_event = the_number_of_events
 
-    distilled_features = torch.tensor_split(distilled_features, the_number_of_distilled_event.flatten().cumsum(dim = -1).tolist(), dim = 0)[:-1]
+    distilled_features = distilled_features.split(the_number_of_distilled_event, dim = 0)
                                                                                # (num_of_samples_mask * batch_size) * (*)
-    left_features = torch.tensor_split(left_features, the_number_of_left_event.flatten().cumsum(dim = -1).tolist(), dim = 0)[:-1]
-                                                                               # (num_of_samples_mask * batch_size) * (*)
+    left_features = left_features.split(the_number_of_left_event, dim = 0)     # (num_of_samples_mask * batch_size) * (*)
     output_padded_distilled_seqs = []
     output_padded_left_seqs = []
     

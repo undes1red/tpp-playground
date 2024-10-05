@@ -23,7 +23,7 @@ class NES(nn.Module):
 
 
     def forward(self, probability_model, model_args, mask_history, number_of_events, \
-                discrete_inputs, continuous_inputs, evaluate = False):
+                discrete_inputs, continuous_inputs, evaluate = False, output_probability_instead_of_mask = False):
         '''
         By default, we treat the events with mark 1, which means input_probability[1] > input_probability[0] as
         essential events.
@@ -43,14 +43,14 @@ class NES(nn.Module):
         input_probability = probability_model(*model_args)                     # [batch_size, length_of_h + 1]
         check_tensor(input_probability)
         batch_size = input_probability.shape[-3]
-        
+
         '''
         Tell the average gap between p(y = 1|x, H) and p(y = 0|x, H). Bigger probability gap means the model
         is more certain about the result.
         '''
         gap_between_p_1_and_p_0 = input_probability[:, :, 1] - input_probability[:, :, 0]
                                                                                # [batch_size, length_of_h + 1]
-        gap_sum = torch.abs(gap_between_p_1_and_p_0 * mask_history).sum()
+        gap_sum = torch.abs(gap_between_p_1_and_p_0.detach() * mask_history).sum()
         gap_mean = gap_sum / number_of_events
 
         repeated_input_probability = repeat(input_probability, '... -> n ...', n = num_of_samples_mask)
@@ -82,7 +82,7 @@ class NES(nn.Module):
             = self.filter(discrete_inputs, continuous_inputs, filter_mask = filter_mask, \
                           evaluate = evaluate)                                 # [num_of_samples_mask, batch_size, length_of_h + length_of_x + ?] * 2 + [num_of_samples_mask, batch_size, length_of_h + length_of_x + 2, d_history] + [num_of_samples_mask, batch_size, length_of_h + length_of_x + 2]
         
-        return (L_n, gap_mean), history_mask, \
+        return (L_n, gap_mean), input_probability if output_probability_instead_of_mask else history_mask , \
                padded_distilled_discrete_inputs, padded_distilled_continuous_inputs, \
                padded_left_discrete_inputs, padded_left_continuous_inputs
 
@@ -118,9 +118,9 @@ class NES(nn.Module):
                                                                                # [num_of_samples_mask, batch_size, seq_len]
         discrete_filter_mask_for_distilled_events = filter_mask[..., 1].detach().int()
                                                                                # [num_of_samples_mask, batch_size, seq_len]
-        the_number_of_distilled_event = discrete_filter_mask_for_distilled_events.sum(dim = -1)
+        the_number_of_distilled_event = discrete_filter_mask_for_distilled_events.sum(dim = -1).flatten().tolist()
                                                                                # [num_of_samples_mask, batch_size]
-        the_number_of_left_event = discrete_filter_mask_for_left_events.sum(dim = -1)
+        the_number_of_left_event = discrete_filter_mask_for_left_events.sum(dim = -1).flatten().tolist()
                                                                                # [num_of_samples_mask, batch_size]
         def repeat_n_times(x):
             return repeat(x, '... -> n ...', n = num_of_samples_mask)          # [num_of_samples_mask, batch_size, seq_len]
@@ -148,8 +148,8 @@ class NES(nn.Module):
 
         # select the remained events from the original input.
         continuous_inputs = map(gradient_attachment, continuous_inputs)        # [num_of_samples_mask, batch_size, seq_len, (...)] * n
-        selected_discrete_inputs = map(select_events_by_mask, discrete_inputs) # [(...) * 2] * m
-        selected_continuous_inputs = map(select_events_by_mask, continuous_inputs)
+        selected_discrete_inputs = list(map(select_events_by_mask, discrete_inputs)) # [(...) * 2] * m
+        selected_continuous_inputs = list(map(select_events_by_mask, continuous_inputs))
                                                                                # [(...) * 2] * n
         padded_distilled_discrete_inputs = []
         padded_left_discrete_inputs = []
