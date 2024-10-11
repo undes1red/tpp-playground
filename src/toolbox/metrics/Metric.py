@@ -24,18 +24,41 @@ class Metric():
     def compare(self, input_metric):
         assert len(input_metric) == len(self.mask)
         tmp = list_mul(input_metric, self.mask)
-        output = True
+        result = True
 
         for input_number, recorded in zip(tmp, self.best_metric):
-            if check_number(input_number, positive = False) and input_number > recorded:
-                output = False
+            if check_number(input_number, positive = False, break_out = False) and input_number > recorded:
+                result = False
                 break
         
-        if output:
+        if result:
             self.best_metric = input_metric
         
-        return output
+        return result
     
     
     def show(self):
         return self.best_metric
+
+
+if __name__ == '__main__':
+    metric_number = 4
+    metric = Metric(metric_number)
+    
+    first_metric = [1] * 4
+    result = metric.compare(first_metric)
+    assert result == True, 'Why do not accept the first group of metric values?'
+    assert metric.show() == [1, 1, 1, 1], 'We stored the wrong metric values!'
+    print(metric.show())
+    
+    second_metric = [0.5] * 4
+    result = metric.compare(second_metric)
+    assert result == True, 'This one should be better!'
+    assert metric.show() == [0.5, 0.5, 0.5, 0.5], 'We stored the wrong metric values!'
+    print(metric.show())
+
+    third_metric = [0.75] * 4
+    result = metric.compare(third_metric)
+    assert result == False, 'Metric judgement is wrong!'
+    assert metric.show() == [0.5, 0.5, 0.5, 0.5], 'We stored the wrong metric values!'
+    print(metric.show())

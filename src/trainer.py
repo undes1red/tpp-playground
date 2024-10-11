@@ -119,10 +119,6 @@ class Trainer:
         if self.opt.cuda:
             self.model = DP(self.model, device_ids = [self.opt.cuda_device, ])
 
-        self.model = torch.compile(self.model, \
-                                   options = {'triton.cudagraphs': True, 'max_autotune': True, 'shape_padding': True, 'epilogue_fusion': True}, \
-                                   disable = True)
-
         self.task()
     
     

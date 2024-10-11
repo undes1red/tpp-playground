@@ -72,7 +72,7 @@ class TaskHost:
 
         # Limit the number of executing thread when running code on CPU.
         if not self.opt.cuda:
-            torch.set_num_threads(14)
+            torch.set_num_threads(12)
 
         '''
         Please read documentations and check if you have used any operations which don't have a deterministic implementation before
@@ -94,6 +94,11 @@ class TaskHost:
         Might benefit the Dataloader.
         '''
         torch.multiprocessing.set_sharing_strategy('file_system')
+        
+        '''
+        Do not break the CUDA graph from "tensor.item()".
+        '''
+        torch._dynamo.config.capture_scalar_outputs = True
 
     
     def cuda(self):

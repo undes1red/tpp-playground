@@ -26,7 +26,7 @@ class RMTPP(BasicModel):
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
         self.model = RMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 

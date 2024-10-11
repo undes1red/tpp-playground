@@ -53,6 +53,11 @@ class SAHP(nn.Module):
                                                   dropout = dropout)
 
 
+    @torch.compile
+    def get_cell_states(self, mu, eta, gamma, duration_t):
+        return torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))    # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+
+
     def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
         '''
         mu, eta, gamma: shape: [batch_size, seq_len, d_hidden]
@@ -69,7 +74,7 @@ class SAHP(nn.Module):
                                                                                # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
         duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))  # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+        cell_t = self.get_cell_states(mu, eta, gamma, duration_t)              # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
         return cell_t
 

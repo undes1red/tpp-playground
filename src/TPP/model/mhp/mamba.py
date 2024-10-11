@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.toolbox.position_embedding import BiasedPositionalEmbedding
-
 # The original mamba does not support custom timestamps which is required by mamba hawkes process.
 # So we need a new mamba implementation for this usecase.
 

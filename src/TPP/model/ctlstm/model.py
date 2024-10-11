@@ -17,7 +17,7 @@ from src.TPP.model.utils import *
 class CTLSTMWrapper(BasicModel):
     def __init__(self, opt, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
-                 integration_sample_rate = 100, survival_loss_during_training = True):
+                 integration_sample_rate = 100, survival_loss_during_training = True, patch_length = 5):
         super(CTLSTMWrapper, self).__init__()
         self.device = device
         self.num_events = opt.info_dict['num_events']
@@ -29,13 +29,13 @@ class CTLSTMWrapper(BasicModel):
         self.sample_time_rate = 32
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
         self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                             d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
-                            integration_sample_rate = integration_sample_rate)
+                            integration_sample_rate = integration_sample_rate, patchify = False, patch_length = patch_length)
     
 
     def divide_history_and_next(self, input):
@@ -371,7 +371,7 @@ class CTLSTMWrapper(BasicModel):
     
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample_time(sampling_approach = 'thinning', task = 'tm',
+        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
                                      number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]

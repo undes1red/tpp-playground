@@ -3,7 +3,7 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, compile_model
 from src.toolbox.metrics import L1_distance_between_two_funcs
 from src.toolbox.integration import approximate_integration
 
@@ -44,12 +44,14 @@ class FENNModel(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
         self.model = FENN(d_history = d_history, d_intensity = d_intensity, num_events = self.num_events,
                           dropout = dropout, history_module = history_module, history_module_layers = history_module_layers,
                           mlp_layers = mlp_layers, device = device)
+        
+        # self.model = compile_model(self.model, opt.compile)
 
 
     def divide_history_and_next(self, input):

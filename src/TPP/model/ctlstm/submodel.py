@@ -8,11 +8,13 @@ from scipy.stats import spearmanr
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.integration import approximate_integration
+from src.toolbox.patchifier import Patchifier
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
 class CTLSTM(nn.Module):
     def __init__(self, device, num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
-                 history_encoder_layers, dropout, integration_sample_rate):
+                 history_encoder_layers, dropout, integration_sample_rate, patchify, patch_length):
         '''
         A CTLSTM implementation, based on existing SAHP codes.
         '''
@@ -20,6 +22,7 @@ class CTLSTM(nn.Module):
         self.num_events = num_events
         self.device = device
         self.integration_sample_rate = integration_sample_rate
+        self.patchify = patchify
 
         self.gelu = nn.GELU()
 
@@ -43,18 +46,22 @@ class CTLSTM(nn.Module):
             nn.Linear(d_input, self.num_events, bias = True, device = self.device),
             nn.Softplus(beta = 1.)
         )
-
-        # mark embedding layer.
+        
+        # Mark embedding layer.
         self.events_embedding = nn.Embedding(num_events + 1, d_mark_embedding, padding_idx = num_events, device = device)
+        # Time embedding layer
+        self.position_emb = BiasedPositionalEmbedding(d_mark_embedding, max_len = 4096, device = self.device)
+
+        if self.patchify:
+            self.patchifier = Patchifier(d_mark_embedding, patch_length = patch_length, device = self.device)
 
         # History encoder.
         self.history_encoder = getattr(nn, history_module_name)(device = self.device, \
-                                       input_size = d_mark_embedding + 1, hidden_size = d_hidden, \
+                                       input_size = d_mark_embedding, hidden_size = d_hidden, \
                                        dropout = dropout, num_layers = history_encoder_layers, batch_first = True)
-        
         self.history_mapper = nn.Linear(d_hidden, d_input, device = self.device)
-
-
+    
+    
     def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
         '''
         mu, eta, gamma: shape: [batch_size, seq_len, d_hidden]
@@ -77,9 +84,14 @@ class CTLSTM(nn.Module):
 
 
     def forward(self, time_history, time_next, events_history, num_dimension_prior_batch = 0):
+        seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
 
+        if self.patchify:
+            history = self.patchifier(history)                                 # [batch_size, seq_len, d_hidden]
+            
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
 

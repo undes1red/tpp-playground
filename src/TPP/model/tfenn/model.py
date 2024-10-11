@@ -41,7 +41,7 @@ class TFENNModel(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.epsilon = 1e-20
         self.survival_loss_during_training = survival_loss_during_training
         self.max_step = 50

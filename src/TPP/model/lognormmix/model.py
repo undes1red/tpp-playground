@@ -21,7 +21,7 @@ class LogNormMixWrapper(BasicModel):
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
         self.max_step = 50
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
 
         self.model = LogNormMix(
             self.num_events + 1,

@@ -63,30 +63,6 @@ class LLMTPP(nn.Module):
         )
 
 
-    def patchify(self, events_history, time_history, mask_history):
-        # Split the input sequence into several patches.
-        seq_len = events_history.shape[-1]
-        free_events_size = seq_len % self.patch_size
-        num_of_patches = int(seq_len / self.patch_size) + (1 if free_events_size > 0 else 0)
-        p1d = (0, (self.patch_size - free_events_size) % self.patch_size)
-
-        events_history = torch.nn.functional.pad(events_history, p1d, 'constant', 0)
-                                                                               # [batch_size, num_of_patches * self.patch_size]
-        time_history = torch.nn.functional.pad(time_history, p1d, 'constant', 0)
-                                                                               # [batch_size, num_of_patches * self.patch_size]
-        mask_history = torch.nn.functional.pad(mask_history, p1d, 'constant', 0)
-                                                                               # [batch_size, num_of_patches * self.patch_size]
-        
-        events_history = rearrange(events_history, 'b (np ps) -> b np ps', np = num_of_patches)
-                                                                               # [batch_size, num_of_patches, self.patch_size]
-        time_history = rearrange(time_history, 'b (np ps) -> b np ps', np = num_of_patches)
-                                                                               # [batch_size, num_of_patches, self.patch_size]
-        mask_history = rearrange(mask_history, 'b (np ps) -> b np ps', np = num_of_patches)
-                                                                               # [batch_size, num_of_patches, self.patch_size]
-        
-        return events_history, time_history, mask_history
-
-
     def forward(self, mode, *args, **kwargs):
         task_mapper = {
             'train': self.model_forward,

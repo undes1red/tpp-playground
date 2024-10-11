@@ -11,18 +11,6 @@ suffix_shortcut_dict = {
 }
 
 
-# extract dataset name from the input string
-# eg: 'dataset_name_new_v2'
-def restore_dataset_name(name):
-    name = name.strip('v123456789')
-    name = name[:-1]
-    if name.endswith('_new'):
-        name = name[:-4]
-    if name.endswith('_continuous'):
-        name = name[:-11]
-    return name
-
-
 # Help construct the output dir name using model hyperparameters.
 def suffix(opt, *args):
     output = []

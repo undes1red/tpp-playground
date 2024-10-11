@@ -29,7 +29,7 @@ class SAHPWrapper(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
         self.model = SAHP(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, d_hidden = d_hidden, \

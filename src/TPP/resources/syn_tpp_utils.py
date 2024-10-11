@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from src.TPP.utils import restore_dataset_name
 from operator import itemgetter
 
 
@@ -9,7 +8,7 @@ def expand_true_intensity(time, intensity, opt):
     Entry function of calculating the true intensity functions.
     '''
     try:
-        return true_intensity_dict[restore_dataset_name(opt.dataset_name)](time, intensity, opt, device = opt.device)
+        return true_intensity_dict[opt.info_dict['dataset_name']](time, intensity, opt, device = opt.device)
                                                                                # [batch_size, seq_len, resolution]
     except:
         return [None] * intensity.shape[0]                                     # [batch_size]
@@ -20,7 +19,7 @@ def expand_true_probability(time, intensity, opt):
     Entry function of calculating the true probability distribution.
     '''
     try:
-        functions = true_probability_dict[restore_dataset_name(opt.dataset_name)]
+        functions = true_probability_dict[opt.info_dict['dataset_name']]
     except:
         return [None] * intensity.shape[0]                                     # [batch_size]
         

@@ -29,7 +29,7 @@ class M2HPWrapper(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-5
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
         self.mode = mode
         assert self.mode in ['pure_mamba', 'mamba_block', 'time_mamba']

@@ -1,4 +1,4 @@
-import copy, math, subprocess, time, os, submitit
+import copy, math, subprocess, time, os
 from src.taskhost import get_logger
 
 
@@ -280,6 +280,8 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir):
+    import submitit
+    
     number_of_tasks = len(tasks)
 
     def run_task(task, task_id):

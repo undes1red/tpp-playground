@@ -3,49 +3,40 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
-from src.toolbox.misc import check_tensor
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, compile_model
 from src.toolbox.integration import approximate_integration
+from src.toolbox.metrics import L1_distance_between_two_funcs
 
-from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
-from src.TPP.model.odetpp.plot import *
 from src.toolbox.misc import pack_one_value_to_dict
-from src.TPP.model.odetpp.submodel import ODETPP
+from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel, its_lower_bound, its_upper_bound
+from src.TPP.model.tppllm.plot import *
+from src.TPP.model.tppllm.submodel import TPPLLM
 from src.TPP.model.utils import *
 
 
-class ODETPPWrapper(BasicModel):
-    def __init__(self, info_dict, device, hidden_dims = 64, epsilon = 1e-20, sample_rate = 32, ode_method = 'rk4',
-                 mae_step = 4, mae_e_step = 4, integration_sample_rate = 20, survival_loss_during_training = True):
-        super(ODETPPWrapper, self).__init__()
+class TPPLLMWrapper(BasicModel):
+    def __init__(self, opt, device, LLM_name, d_input = 64, d_rnn = 64,
+                 beta = 0, sample_rate = 32, integration_sample_rate = 100, epsilon = 1e-20, 
+                 mae_step = 32, mae_e_step = 32, survival_loss_during_training = True):
+        super(TPPLLMWrapper, self).__init__()
         self.device = device
-        self.num_events = info_dict['num_events']
-        self.start_time = info_dict['t_0']
-        self.end_time = info_dict['T']
-        self.integration_sample_rate = integration_sample_rate
+        self.num_events = opt.info_dict['num_events']
+        self.start_time = opt.info_dict['t_0']
+        self.end_time = opt.info_dict['T']
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
+        self.integration_sample_rate = integration_sample_rate
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
-        self.model = ODETPP(num_events = self.num_events, hidden_dims = hidden_dims, 
-                            ode_method = ode_method, integration_sample_rate = integration_sample_rate, device = self.device)
-    
+        self.model = TPPLLM(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, LLM_name = LLM_name, \
+                            beta = beta, integration_sample_rate = integration_sample_rate, device = device)
+        
 
     def divide_history_and_next(self, input):
-        '''
-        What divide_history_and_next should do?
-        [a, b, c, d, e, pad, pad, pad]
-        [1, 1, 1, 1, 1, 0,   0,   0]
-                    |
-                    |
-                    |
-                    \/
-        [a, b, c, d, e, pad, pad], [b, c, d, e, pad, pad, pad]
-        [1, 1, 1, 1, 1, 0,   0  ], [1, 1, 1, 1, 0,   0,   0  ]
-        '''
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
 
@@ -62,7 +53,7 @@ class ODETPPWrapper(BasicModel):
             mask_without_dummy[idx] = mask_without_dummy_per_seq
         
         return mask_without_dummy
-    
+
 
     def forward(self, task_name, *args, **kwargs):
         '''
@@ -97,62 +88,23 @@ class ODETPPWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            'graph': self.plot,
-            'mae_and_f1_imputated_events': self.get_mae_and_f1_of_imputated_data,
+            'which_event_occurs_first': self.get_which_event_first,
+            'samples_from_et': self.samples_from_et,
 
-            # Functions for the EHD task.
-            'ehd_perplexity': self.ehd_perplexity,
-            'ehd_event_emb': self.get_event_embedding,
+            # Figure Drawing.
+            'intensity': self.figure_intensity,
+            'integral': self.figure_integral,
+            'probability': self.figure_probability,
+            'debug': self.figure_debug
         }
 
         return task_mapper[task_name](*args, **kwargs)
 
 
     '''
-    Functions for model training.
+    Functions for model propagation and evaluation
     '''
     def train_procedure(self, time, events, mask, mean, std):
-        '''
-        Check if events data is present.
-        Now, we assume that no event data is available.
-        Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-        3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
-        '''
-
-        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
-        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
-        _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len] * 2
-
-        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
-
-        integral_intensity, intensity = self.model(events_history, time_history, time_next)
-                                                                               # [batch_size, seq_len, num_events] * 2
-        the_number_of_events = mask_next_without_dummy.sum().item()
-
-        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
-        log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
-             integral_all_events = integral_intensity, intensity_all_events = intensity, \
-             events_next = events_next, mask_next = mask_next_without_dummy)
-
-        loss_survival = 0
-        if self.survival_loss_during_training:
-            # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
-            dummy_event_index = mask_next.sum(dim = -1) - 1                    # [batch_size]
-            integral_survival = integral_intensity.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
-                                                                               # [batch_size, 1]
-            loss_survival = integral_survival.sum()
- 
-        loss = log_likeli_loss_without_dummy + loss_survival
-
-        return loss, log_likeli_loss_without_dummy, torch.tensor(marker_loss_without_dummy), the_number_of_events
-
-
-    '''
-    Functions for model evaluation
-    '''
-    def evaluate_procedure(self, time, events, mask, mean, std):
         '''
         Check if events data is present.
         Now, we assume that no event data is available.
@@ -166,65 +118,108 @@ class ODETPPWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len] * 2
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
-        event_next_without_dummy = (mask_next_without_dummy * events_next).long()
-                                                                               # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        mae, f1 = self.mean_absolute_error_and_f1(time_history = time_history, time_next = time_next, \
-                                                  events_history = events_history, events_next = events_next, \
-                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, \
-                                                  mean = mean, std = std)      # [batch_size, seq_len] * 2
+        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
+                                                                               # [batch_size, seq_len, num_events]
+        # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
+        neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.negative_log_likelihood_and_event_loss(
+             intensity_all_events = intensity_all_events, integral_all_events = integral_all_events,\
+             events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
+        )
+
+        loss_survival = 0
+        if self.survival_loss_during_training:
+            # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
+            dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
+            integral_survival = integral_all_events.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+                                                                                   # [batch_size, 1]
+            loss_survival = integral_survival.sum()
+        
+        loss = neg_log_likeli_loss_without_dummy + loss_survival
+
+        return loss, neg_log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
+
+
+    '''
+    Functions for model propagation and evaluation
+    '''
+    @torch.no_grad()
+    def evaluate_procedure(self, time, events, mask, mean, std):
+        '''
+        Check if events data is present.
+        Now, we assume that no event data is available.
+        Args:
+        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
+        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
+        3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
+        '''
+        time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+        the_number_of_events = mask_next_without_dummy.sum().item()
+
+        '''
+        Event loss. This loss should not be counted into the backward loss
+        '''
+        mae, f1_pred = self.mean_absolute_error_and_f1(events_history, time_history, 
+                                                       events_next, time_next, 
+                                                       mask_history, mask_next_without_dummy, mean, std)
         mae = mae.sum().item() / the_number_of_events
 
-        integral_all_events_time_next, intensity_all_events_time_next = self.model(events_history, time_history, time_next)
+        integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
-        # NLL loss and event loss at time_next
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
-        log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.loss_function(
-             integral_all_events = integral_all_events_time_next, intensity_all_events = intensity_all_events_time_next, \
-             events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
+        log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.negative_log_likelihood_and_event_loss(
+             intensity_all_events = intensity_all_events_time_next, integral_all_events = integral_all_events_time_next,\
+             events_next = events_next_without_dummy, mask_next = mask_next_without_dummy
         )
-        # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
+
+        # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         integral_survival = integral_all_events_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
-        loss_survival = integral_survival.mean()
-
+        loss_survival = integral_survival.sum()
 
         return log_likeli_loss_time_next_without_dummy, loss_survival, marker_loss_time_next_without_dummy, \
-               mae, f1, the_number_of_events
+               mae, f1_pred, the_number_of_events
 
 
     '''
-    Loss functions
+    Calculate the NLL and cross-entropy loss.
     '''
-    def loss_function(self, integral_all_events, intensity_all_events, events_next, mask_next):
+    def negative_log_likelihood_and_event_loss(self, intensity_all_events, integral_all_events, events_next, mask_next):
         """ Log-likelihood of sequence. """
-        type_mask = F.one_hot(events_next, num_classes = self.num_events)      # [batch_size, seq_len, num_events]
+        type_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
+
         '''
         MTPP loss function
         '''
-        selected_intensity = (intensity_all_events * type_mask).sum(dim = -1)  # [batch_size, seq_len]
-        log_intensity = torch.log(selected_intensity + self.epsilon)           # [batch_size, seq_len]
-        nll = -log_intensity + integral_all_events.sum(dim = -1)               # [batch_size, seq_len]
-    
-        mtpp_loss = torch.sum(nll * mask_next)
+        intensity = torch.sum(intensity_all_events * type_mask, dim = -1)      # [batch_size, seq_len]
+        log_intensity = torch.log(intensity + self.epsilon) * mask_next        # [batch_size, seq_len]
+        intensity_integral = integral_all_events.sum(dim = -1)                 # [batch_size, seq_len]
+        ll = -log_intensity + intensity_integral                               # [batch_size, seq_len]
+        mtpp_nll_loss = torch.sum(ll)
 
         '''
-        Event loss function. Only for evaluation, do NOT use this loss as a part of the training loss.
+        Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
         '''
         events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
         events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
-        reshaped_events_prediction_probability = rearrange(events_prediction_probability, 'b s ne -> b ne s')
+        events_prediction_probability = rearrange(events_prediction_probability, 'b s ne -> b ne s')
                                                                                # [batch_size, num_events, seq_len]
-        events_loss = F.cross_entropy(input = reshaped_events_prediction_probability, target = events_next, reduction = 'none')
+        events_loss = F.cross_entropy(input = events_prediction_probability, target = events_next.long(), reduction = 'none')
                                                                                # [batch_size, seq_len]
         events_loss = (events_loss * mask_next).sum()
 
-        return mtpp_loss, events_loss
+        return mtpp_nll_loss, events_loss
     
 
     @torch.no_grad()
@@ -251,16 +246,15 @@ class ODETPPWrapper(BasicModel):
         }
 
         return dict_apparoch_for_tasks[task](*args, **kwargs)
-
+    
 
     def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m, resolution,
                                number_of_total_samples, step, inf_val, mean, std, autoregressive = False):
-        # Preprocess
         sample_rate_list = step_split(number_of_total_samples, step)
 
         def evaluate_all_event(taus):
             expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch = 1)
+                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution)
                                                                                # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
             expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                                # [sample_rate, batch_size, seq_len, num_events, resolution]
@@ -275,17 +269,18 @@ class ODETPPWrapper(BasicModel):
             probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
             return probability
-    
+
         def bisect_target(taus, probability_threshold):
             p_mt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
             p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events]
             p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
 
             return p_gap
-
+        
         tau_pred = []
         batch_size, seq_len = time_history.shape
         p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
+
         for sub_sample_rate in sample_rate_list:
             probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
@@ -295,7 +290,7 @@ class ODETPPWrapper(BasicModel):
                                               bisect_target, probability_threshold, r_val = inf_val))
                                                                                # [sample_rate, batch_size, seq_len, num_events]
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
-        
+
         return tau_pred
 
 
@@ -305,16 +300,13 @@ class ODETPPWrapper(BasicModel):
 
         def bisect_target(taus, probability_threshold):
             '''
-            Args:
-            1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-            2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-            3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
+            MTPP loss function
             '''
-            expanded_integral_all_events, _, = self.model(events_history, time_history, taus)
+            integral_all_events, _ = self.model(time_history, taus, events_history, mask_history)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
-            expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
-
-            return expanded_integral + torch.log(1 - probability_threshold)
+            gap = integral_all_events.sum(dim = -1) + torch.log(1 - probability_threshold)
+                                                                               # [sample_rate, batch_size, seq_len]
+            return gap
 
         tau_pred = []
         for sub_sample_rate in sample_rate_list:
@@ -326,7 +318,7 @@ class ODETPPWrapper(BasicModel):
                                               bisect_target, probability_threshold))
                                                                                # [sample_rate, batch_size, seq_len]
         tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
-
+        
         return tau_pred
 
 
@@ -338,32 +330,74 @@ class ODETPPWrapper(BasicModel):
 
         return dict_apparoch_for_tasks[task](*args, **kwargs)
     
-    
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                     time_history = time_history, events_history = events_history, mask_history = mask_history,
-                                     number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
+
+    def sampling_by_thinning_for_mt(self, *args, **kwargs):
+        raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
+
+
+    def sampling_by_thinning_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step,
+                                    mean, std, autoregressive = False):
+        sample_rate_list = step_split(number_of_total_samples, step)
+        batch_size, seq_len = time_history.shape
+        maximum_thinning_loops = 50
+        max_sample_time_limit = mean + 10 * std
+
+        def get_intensity(tau, time_history, events_history, mask_history):
+            return self.model(time_history, tau, events_history, mask_history)[-1].sum(dim = -1)
+        
+        def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history, mask_history):
+            _, intensity_between_interval_left_and_right, _ \
+                = self.model.integral_intensity_time_next_2d(events_history, time_history, interval_right, mask_history, \
+                                                             self.integration_sample_rate, time_next_start = interval_left)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate, num_events]
+            intensity_between_interval_left_and_right = intensity_between_interval_left_and_right.sum(dim = -1)
+                                                                               # [sample_rate, batch_size, seq_len, integration_sample_rate]
+
+            return intensity_between_interval_left_and_right.max(dim = -1)[0]
+        
+        sampled_time = []
+        for each_step in sample_rate_list:
+            sampled_time.append(thinning_sampling(maximum_thinning_loops, max_sample_time_limit, (each_step, batch_size, seq_len), self.device, \
+                                                  get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history, mask_history))
                                                                                # [sample_rate, batch_size, seq_len]
+        
+        sampled_time = torch.cat(sampled_time, dim = 0)
+        return sampled_time
 
-        pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
-        mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
 
-        _, intensity_all_events = self.model(events_history, time_history, pred_time)
+    @torch.no_grad()
+    def evaluate_f1(self, intensity_all_events, events_next, mask_next):
+        events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
+                                                                               # [batch_size, seq_len, num_events]
+        events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
                                                                                # [batch_size, seq_len, num_events]
 
-        predicted_events = torch.argmax(intensity_all_events, dim = -1)[mask_next == 1]
-        events_true = events_next[mask_next == 1]
-        predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
-        f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
+        pred_events = predict_event(events_prediction_probability)[mask_next == 1]
+        true_events = events_next[mask_next == 1]
+        pred_events, true_events = move_from_tensor_to_ndarray(pred_events, true_events)
 
-        return mae, f1
+        f1 = f1_score(y_pred = pred_events, y_true = true_events, average = 'macro')
+        
+        return f1
 
 
+    @torch.no_grad()
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
+        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+                                events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
+        pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
+        mae = torch.abs(time_next - pred_time) * mask_next                     # [batch_size, seq_len]
+        
+        _, intensity_all_events_pred = self.model(time_history, pred_time, events_history, mask_history)
+                                                                               # 2 * [batch_size, seq_len, num_events]
+        f1_pred = self.evaluate_f1(intensity_all_events_pred, events_next, mask_next)
+        
+        return mae, f1_pred
+
+
+    @torch.no_grad()
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = True):
-        '''
-        The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
-        be recorded as part of the output.
-        '''
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
         the memory_ceiling.
@@ -371,33 +405,34 @@ class ODETPPWrapper(BasicModel):
         inf_val, resolution_inf, resolution_between_events \
             = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
-
+                                                                               # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
-                                                                               # 2 * [batch_size, seq_len, resolution_inf, num_events]
-
-        expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)
-                                                                               # [batch_size, seq_len, resolution_inf, 1]
-        expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(-expanded_integral_sum_over_events_to_inf)
-                                                                               # [batch_size, seq_len, resolution_inf, num_events]
+                                                                               # 2 * [batch_size, seq_len, resolution, num_events]
+        expanded_probability_inf = \
+            torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
+                                                                               # [batch_size, seq_len, resolution, num_events]
         probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_integral = True)
                                                                                # [batch_size, seq_len, num_events]
         probability_integral_sum = probability_integral_to_inf.sum(dim = -1)   # [batch_size, seq_len]
         predicted_events = torch.argmax(probability_integral_to_inf, dim = -1) # [batch_size, seq_len]
 
-        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, self.num_events, probability_integral_to_inf)
+        # F1 value and top_k_acc are only avaliable when batch_size = 1
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_to_inf, mask_next, self.num_events)
 
-        tau_pred_all_event = self.prediction_with_all_event_types(events_history, time_history, \
-                                                                  mask_history, probability_integral_to_inf, \
-                                                                  resolution_between_events, inf_val, mean, std, return_mean)
-                                                                               # [batch_size, seq_len, num_events]
-
+        # F1:        [batch_size]
+        # top_k_acc: [batch_size, num_events]
+        tau_pred_all_event = self.sample_time('its', 'mt', 
+                                              events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_rate, step = self.mae_e_step, inf_val = inf_val, 
+                                              mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         event_next_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-    
+
         if return_mean:
+            tau_pred_all_event = tau_pred_all_event.mean(dim = 0)              # [batch_size, seq_len, num_events]
             mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predicted_event_mask).sum(dim = -1) - time_next) * mask_next
                                                                                # [batch_size, seq_len]
             mae_per_event_with_event_next = torch.abs((tau_pred_all_event * event_next_mask).sum(dim = -1) - time_next) * mask_next
@@ -430,68 +465,6 @@ class ODETPPWrapper(BasicModel):
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
-    def prediction_with_all_event_types(self, events_history, time_history, mask_history, p_x, resolution, inf_val, mean, std, return_mean):
-        '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
-        '''
-        # Preprocess
-        sample_rate_list = step_split(self.sample_rate, self.mae_e_step)
-
-        def evaluate_all_event(taus):
-            expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-                self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch = 1)
-                                                                               # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
-            expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-            intensity_event_mask = torch.diag(torch.ones(self.num_events, device = self.device))
-                                                                               # [num_events, num_events]
-            intensity_event_mask = rearrange(intensity_event_mask, f'ne ne1 -> {"() " * (len(expanded_intensity_across_events.shape) - 3)}ne () ne1')
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
-            expanded_intensity_per_event = (expanded_intensity_across_events * intensity_event_mask).sum(dim = -1)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-            expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
-                                                                               # [sample_rate, batch_size, seq_len, num_events, resolution]
-            probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            return probability
-    
-        def bisect_target(taus, probability_threshold):
-            p_xt = evaluate_all_event(taus)                                    # [sample_rate, batch_size, seq_len, num_events]
-            p_t_x = p_xt / p_x                                                 # [sample_rate, batch_size, seq_len, num_events]
-            p_gap = p_t_x - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
-
-            return p_gap
-
-        tau_pred = []
-        batch_size, seq_len = time_history.shape
-        p_x = p_x.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-        for sub_sample_rate in sample_rate_list:
-            probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                              bisect_target, probability_threshold, r_val = inf_val))
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
-        if return_mean:
-            tau_pred = tau_pred.mean(dim = 0)                                  # [batch_size, seq_len, num_events]
-        
-        return tau_pred
-
-
-    def plot(self, minibatch, opt):
-        plot_type_to_functions = {
-            'intensity': self.intensity,
-            'integral': self.integral,
-            'probability': self.probability,
-            'debug': self.debug
-        }
-    
-        return plot_type_to_functions[opt.subtask_name](minibatch, opt)
-
-
     def extract_plot_data(self, minibatch):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
@@ -518,9 +491,10 @@ class ODETPPWrapper(BasicModel):
         mean, std = minibatch[1]
 
         return input_time, input_events, input_intensity, mask, mean, std
+    
 
-
-    def intensity(self, input_data, opt):
+    @torch.no_grad()
+    def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -530,8 +504,6 @@ class ODETPPWrapper(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -542,7 +514,6 @@ class ODETPPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -554,12 +525,13 @@ class ODETPPWrapper(BasicModel):
             'expand_intensity': expand_intensity,
             'input_intensity': input_intensity
             }
-        plots = plot_intensity(data, timestamp, opt)
+        plots = generate_intensity_figure(data, timestamp, opt)
         
         return plots
 
 
-    def integral(self, input_data, opt):
+    @torch.no_grad()
+    def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -569,8 +541,6 @@ class ODETPPWrapper(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -581,7 +551,6 @@ class ODETPPWrapper(BasicModel):
         expand_integral, expand_intensity, timestamp = \
             self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
-        
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         assert expand_intensity.shape == expand_integral.shape
@@ -593,11 +562,12 @@ class ODETPPWrapper(BasicModel):
             'expand_integral': expand_integral,
             'input_intensity': input_intensity
             }
-        plots = plot_integral(data, timestamp, opt)
+        plots = generate_integral_figure(data, timestamp, opt)
         return plots
 
 
-    def probability(self, input_data, opt):
+    @torch.no_grad()
+    def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
 
@@ -607,8 +577,6 @@ class ODETPPWrapper(BasicModel):
         * resolution  type: int shape: N/A
                       How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -624,7 +592,6 @@ class ODETPPWrapper(BasicModel):
         assert expand_intensity.shape == expand_integral.shape
         expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim = -1, keepdim = True))
                                                                                # [batch_size, seq_len, resolution, num_events]
-
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -632,11 +599,12 @@ class ODETPPWrapper(BasicModel):
             'expand_probability': expand_probability,
             'input_intensity': input_intensity
             }
-        plots = plot_probability(data, timestamp, opt)
-        return plots
+        
+        generate_probability_figure(data, timestamp, opt)
 
 
-    def debug(self, input_data, opt):
+    @torch.no_grad()
+    def figure_debug(self, input_data, opt):
         '''
         Args:
         time: [batch_size(always 1), seq_len + 1]
@@ -644,8 +612,6 @@ class ODETPPWrapper(BasicModel):
         resolution: int
               How many interpretive numbers we have between an event interval?
         '''
-        
-
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -653,11 +619,9 @@ class ODETPPWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_history, mask_next, opt.resolution)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
 
@@ -676,14 +640,13 @@ class ODETPPWrapper(BasicModel):
         data['maes_after_event_avg'] = maes_avg
         data['maes_after_event'] = maes
 
-        plots = plot_debug(data, timestamp, opt)
-
-        return plots
+        generate_debug_figure(data, timestamp, opt)
 
 
     '''
     Evaluation over the entire dataset.
     '''
+    @torch.no_grad()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -714,9 +677,8 @@ class ODETPPWrapper(BasicModel):
             spearman_per_seq = \
                 spearmanr(expand_probability_per_seq[:seq_len, :].flatten(), true_probability_per_seq[:seq_len, :].flatten())[0]
 
-            l1_per_seq = L1_distance_between_two_funcs(
-                                        x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
-                                        timestamp = timestamp_per_seq, resolution = opt.resolution)
+            l1_per_seq = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+                                                       timestamp = timestamp_per_seq)
             spearman += spearman_per_seq
             l1 += l1_per_seq
 
@@ -727,6 +689,7 @@ class ODETPPWrapper(BasicModel):
         return spearman, l1
     
 
+    @torch.no_grad()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -741,72 +704,8 @@ class ODETPPWrapper(BasicModel):
 
         return mae, f1_1
 
-
-    def random_mask(self, start_with_dummy, end_with_dummy, mask_rate, **kwargs):
-        pad_values = {
-            'input_time': 0.0,
-            'input_events': self.num_events,
-            'input_mask': 0,
-        }
-        end_of_a_sequence = kwargs['input_mask'].sum(dim = -1)                 # [batch_size]
-
-        dummy_pad = (int(start_with_dummy), int(end_with_dummy), 0, 0)
-        seq_len_shift = int(start_with_dummy) + int(end_with_dummy)
-        batch_size, seq_len = list(kwargs.values())[0].shape
-        if len(kwargs) > 1:
-            for item in kwargs.values():
-                assert item.shape == (batch_size, seq_len)
-
-        imputation_mask = torch.ones((batch_size, seq_len - seq_len_shift), device = self.device)
-                                                                               # [batch_size, seq_len - seq_len_shift]
-        torch.nn.init.uniform_(imputation_mask)                                # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = (imputation_mask > 1 - mask_rate).int()              # [batch_size, seq_len - seq_len_shift]
-        imputation_mask = torch.nn.functional.pad(imputation_mask, dummy_pad, 'constant', value = 0)
-                                                                               # [batch_size, seq_len]
-        # Make sure the mask of dummy events is always 0, i.e. not affected.
-        for batch_index, seq_index in enumerate(end_of_a_sequence):
-            if end_with_dummy:
-                imputation_mask[batch_index][seq_index - 1] = 0
-
-        def mask_tensor(key, value):
-            return value.masked_fill(imputation_mask.bool(), pad_values[key])  # [batch_size, seq_len]
-
-        if len(kwargs) == 1:
-            tmp_results = mask_tensor(**kwargs)
-        else:
-            tmp_results = []
-            for key, object in kwargs.items():
-                tmp_results.append(mask_tensor(key, object))
-            
-        return tmp_results
-
-
-    def get_mae_and_f1_of_imputated_data(self, input_data, opt):
-        input_time, input_events, input_intensity, input_mask, mean, std = self.extract_plot_data(input_data)
-
-        damaged_input_time, damaged_input_events, damaged_input_mask \
-            = self.random_mask(True, True, mask_rate = opt.mask_rate, input_time = input_time, input_events = input_events, input_mask = input_mask)
-                                                                               # [batch_size, seq_len] * 3
-        damaged_input_time = (damaged_input_time - mean) / std                 # [batch_size, seq_len]
-        
-        damaged_time_history, _ = self.divide_history_and_next(damaged_input_time)
-                                                                               # [batch_size, seq_len]
-        _, time_next = self.divide_history_and_next(input_time)
-                                                                               # [batch_size, seq_len]
-        damaged_events_history, _ = self.divide_history_and_next(damaged_input_events)
-                                                                               # [batch_size, seq_len]
-        _, events_next = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
-        damaged_mask_history, damaged_mask_next = self.divide_history_and_next(damaged_input_mask)
-                                                                               # [batch_size, seq_len]
-        
-        mae, f1_1 = self.mean_absolute_error_and_f1(damaged_events_history, damaged_time_history, events_next, \
-                                                    time_next, damaged_mask_history, 1 - damaged_mask_next, mean, std)
-        mae = mae[damaged_mask_next == 0]
-        mae = move_from_tensor_to_ndarray(mae)
-
-        return mae, f1_1
-
     
+    @torch.no_grad()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -818,48 +717,90 @@ class ODETPPWrapper(BasicModel):
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_history, mask_next, mean, std)
         
-        _, maes, probability_sum = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes, probability_sum, events_next, = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
 
         return maes, f1_2, probability_sum, events_next
 
 
-    def get_event_embedding(self, input_events):
-        return self.model.get_event_embedding(input_events)                     # [batch_size, seq_len, d_history]
+    @torch.no_grad()
+    def get_which_event_first(self, input_data, opt):
+        '''
+        Hyperparameters
+        '''
+        the_number_of_samples = 10000
+        substep = 1000
+
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+
+        inf_val, resolution_inf, resolution_between_events \
+            = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
+        time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
+                                                                               # [batch_size, seq_len]
+        expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+                                                                               # 2 * [batch_size, seq_len, resolution, num_events]
+        expanded_probability_inf = \
+            torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_integral = True)
+                                                                               # [batch_size, seq_len, num_events] 
+        # step 2: get the time prediction for that kind of event
+        tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
+                                              events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = the_number_of_samples, step = substep, inf_val = inf_val, 
+                                              mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
+
+        sampled_times_mean = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
+        predicted_time, predicted_mark = sampled_times_mean.min(dim = -1)      # [batch_size, seq_len] + [batch_size, seq_len]
+        maes = torch.abs(time_next - predicted_time) * mask_next               # [batch_size, seq_len]
+
+        events_pred_index = predicted_mark[mask_next == 1]
+        events_true = events_next[mask_next == 1]
+        events_true, events_pred_index = move_from_tensor_to_ndarray(events_true, events_pred_index)
+        f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
+
+        maes = move_from_tensor_to_ndarray(maes)
+
+        return maes, f1
 
 
-    def ehd_perplexity(self, padded_filtered_time, padded_filtered_events, padded_filtered_event_embeddings, padded_filtered_masks, seq_len_x, mean, std):
-        padded_filtered_time_history, padded_filtered_time_next = self.divide_history_and_next(padded_filtered_time)
-                                                                               # 2 * [batch_size, filtered_seq_len - 1]
-        padded_filtered_events_history, padded_filtered_events_next = self.divide_history_and_next(padded_filtered_events)
-                                                                               # 2 * [batch_size, filtered_seq_len- 1]
-        padded_filtered_events_embeddings_history, padded_filtered_events_embeddings_next \
-            = self.divide_history_and_next(padded_filtered_event_embeddings)   # 2 * [batch_size, filtered_seq_len- 1, d_history]
-        padded_filtered_mask_history, padded_filtered_mask_next = self.divide_history_and_next(padded_filtered_masks)
-                                                                               # [batch_size, filtered_seq_len - 1]
-        the_number_of_events_per_sequence = padded_filtered_mask_next.sum(dim = -1)
-                                                                               # [batch_size]
-        # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
-        padded_filtered_intensity_integral_from_t_o_to_t, \
-            padded_filtered_intensity_at_t = self.model(padded_filtered_time_history, padded_filtered_time_next, \
-                                                        padded_filtered_events_embeddings_history, padded_filtered_mask_history, \
-                                                        custom_events_history = True)
-                                                                               # [batch_size, filtered_seq_len - 1, num_events]
-        padded_filtered_mask_next_without_dummy = self.remove_dummy_event_from_mask(padded_filtered_mask_next)
-                                                                               # [batch_size, filtered_seq_len - 1]
-        padded_filtered_events_next_without_dummy = padded_filtered_events_next * padded_filtered_mask_next_without_dummy
-                                                                               # [batch_size, filtered_seq_len - 1]
-        event_mask = torch.nn.functional.one_hot(padded_filtered_events_next_without_dummy, num_classes = self.num_events)
-                                                                               # [batch_size, filtered_seq_len - 1, num_events]
-        padded_filtered_intensity_at_t = (padded_filtered_intensity_at_t * event_mask).sum(dim = -1)
-                                                                               # [batch_size, filtered_seq_len - 1]
-        log_probability = torch.log(padded_filtered_intensity_at_t + self.epsilon) - padded_filtered_intensity_integral_from_t_o_to_t.sum(dim = -1)
-                                                                               # [batch_size, filtered_seq_len - 1]
-        log_probability_x = pick_log_probability(log_probability, the_number_of_events_per_sequence, seq_len_x)
-                                                                               # [batch_size, seq_len_x]
-        # -\\frac{1}{N} \\log p(\\mathbf{x}_o|\\mathcal{H})
-        log_perplexity = -log_probability_x.mean(dim = -1)                     # [batch_size]
+    def samples_from_et(self, input_data, opt):
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        the_number_of_samples = 3000
+        substep = 1000
 
-        return log_perplexity
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+
+        inf_val, resolution_inf, resolution_between_events \
+            = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
+        time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
+                                                                               # [batch_size, seq_len]
+        expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+                                                                               # 2 * [batch_size, seq_len, resolution, num_events]
+        expanded_probability_inf = \
+            torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
+                                                                               # [batch_size, seq_len, resolution, num_events]
+        probability_integral_to_inf = approximate_integration(expanded_probability_inf, timestamp, dim = -2, only_integral = True)
+                                                                               # [batch_size, seq_len, num_events]   
+        # step 2: get the time prediction for that kind of event
+        tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
+                                              events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = the_number_of_samples, step = substep, inf_val = inf_val, 
+                                              mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
+
+        return tau_pred_all_event, probability_integral_to_inf
 
 
     '''
@@ -873,38 +814,27 @@ class ODETPPWrapper(BasicModel):
         Maybe need another function to extract data from minibatches.
         Currently, we don't acquire any prediction loss to assist the model training.  
         '''
-        (time, events, score, mask), (mean, std) = minibatch                   # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        '''
-        log_likeli_loss, marker_loss, the_number_of_events
-        '''
-        loss, time_loss_without_dummy, events_loss, the_number_of_events \
-            = model('train', time, events, mask, mean, std)
-
+        (time, events, fact, mask), (mean, std) = minibatch                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
+        loss, neg_log_likeli_loss, marker_loss, the_number_of_events = model('train', time, events, mask, mean, std)
         loss.backward()
+
+        tpp_loss, mark_loss = neg_log_likeli_loss.item() / the_number_of_events, marker_loss.item() / the_number_of_events
+        fact = fact.sum() / the_number_of_events
     
-        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
-        events_loss = events_loss.item() / the_number_of_events
-        fact = score.sum().item() / the_number_of_events
-        
-        return time_loss_without_dummy, fact, events_loss
-    
+        return tpp_loss, fact, mark_loss
+
 
     def evaluation_step(model, minibatch, device):
         ''' Epoch operation in evaluation phase '''
-    
         model.eval()
-        '''
-        log_likeli_loss_time_next, marker_loss_time_next, f1_time_next, log_likeli_loss_pred_time, \
-                       marker_loss_pred_time, f1_pred_time, mae, the_number_of_events
-        '''
-        (time, events, score, mask), (mean, std) = minibatch                   # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
-        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events \
-            = model('evaluate', time, events, mask, mean, std)
+
+        (time, events, fact, mask), (mean, std) = minibatch                    # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
+        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events = model('evaluate', time, events, mask, mean, std)
 
         time_loss = time_loss.item() / the_number_of_events
         loss_survival = loss_survival.item()
         events_loss = events_loss.item() / the_number_of_events
-        fact = score.sum().item() / the_number_of_events
+        fact = fact.sum().item() / the_number_of_events
         
         return time_loss, loss_survival, fact, events_loss, mae, f1
 
