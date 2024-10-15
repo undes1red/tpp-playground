@@ -93,40 +93,6 @@ class LLMTPPModel(BasicModel):
         return mask_without_dummy
 
 
-    def pad_sequences(self, patch_len, *args):
-        result = []
-        for original_tensor in args:
-            seq_len = original_tensor.shape[-1]
-            target_pred_seq_length = self.patch_size * patch_len
-            p1d = (0, target_pred_seq_length - seq_len)
-            padded_mask_next = torch.nn.functional.pad(original_tensor, p1d, 'constant', 0)
-                                                                                   # [batch_size, target_pred_seq_length]
-            result.append(padded_mask_next)
-        
-
-        if len(result) == 1:
-            return result[0]
-        else:
-            return result
-
-
-    @torch.no_grad()
-    def sample_time(self, sampling_approach, task = 'mt', *args, **kwargs):
-        '''
-        number_of_total_samples: how many samples do we need to predict one next event.
-        step: we output "step" samples to reduce memory comsumption during inference.
-        sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
-        task: 'mt' for mark first time second, 'tm' for time first mark second.
-        '''
-
-        dict_sampling_apparoch = {
-            'its': self.sampling_by_its,
-            'thinning': self.sampling_by_thinning
-        }
-
-        return dict_sampling_apparoch[sampling_approach](task = task, *args, **kwargs)
-
-
     def train_procedure(self, input_time, input_events, input_score, input_mask, mean, std):
         time_history, time_next = self.divide_history_and_next(input_time)     # 2 * [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -244,6 +210,84 @@ class LLMTPPModel(BasicModel):
         return mae, f1
 
 
+    def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, std, return_mean = True):
+        '''
+        MAE-E evaluation module.
+
+        Args:
+        * events_history  type: torch.tensor shape: [batch_size, seq_len]
+                          Historical event sequences. Commonly, this sequence is a slice of 
+                          the original event sequence from 0 to seq_len - 1(included).
+        * events_next     type: torch.tensor shape: [batch_size, seq_len]
+                          The mark of the events that we need to predict.
+        * time_history    type: torch.tensor shape: [batch_size, seq_len]
+                          Historical time sequences. Similar to events_history, we always generate
+                          this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
+                          When the next event actually happens. 
+        * mask_next       type: torch.tensor shape: [batch_size, seq_len]
+                          Needed mask to mask out unneeded loss values.
+        * mean            type: float shape: N/A
+                          The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
+                          this value if needed.
+        * std             type: float shape: N/A
+                          The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
+                          this value if needed.
+        Outputs:
+        * mae             type: torch.tensor shape: [batch_size, seq_len]
+                          MAE(Mean Absolute Error) between predicted time and ground truth.
+        * tau_pred        type: torch.tensor shape: [batch_size, seq_len]
+                          Time predicted by the sum of all intensity functions $ \\lambda^*(m, t) $ over $ m $.
+        '''
+
+        tau_pred_all_event, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, seq_len, num_events] * 2
+        predict_index = torch.argmax(pred_event_prob, dim = -1)                # [batch_size, seq_len]
+        probability_integral_sum = torch.sum(pred_event_prob, dim = -1)        # [batch_size, seq_len]
+        
+        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, pred_event_prob, mask_next, self.num_events)
+
+        predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
+        events_next_one_hot_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
+
+        if return_mean:
+            tau_pred_all_event = tau_pred_all_event.mean(dim = 0)              # [batch_size, seq_len, num_events]
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot_mask).sum(dim = -1) - time_next) * mask_next
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot_mask).sum(dim = -1) - time_next) * mask_next
+                                                                               # [batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+        else:
+            mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+            mae_per_event_with_event_next = torch.abs((tau_pred_all_event * events_next_one_hot_mask.unsqueeze(dim = 0)).sum(dim = -1) - time_next) * mask_next.unsqueeze(dim = 0)
+                                                                               # [sample_rate, batch_size, seq_len]
+    
+            mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim = -1) / mask_next.sum(dim = -1)
+                                                                               # [sample_rate, batch_size]
+            
+            # Calculate mean
+            mae_per_event_with_predict_index = mae_per_event_with_predict_index.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_event_next = mae_per_event_with_event_next.mean(dim = 0)
+                                                                               # [batch_size, seq_len]
+            mae_per_event_with_predict_index_avg = mae_per_event_with_predict_index_avg.mean(dim = 0)
+                                                                               # [batch_size]
+            mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
+                                                                               # [batch_size]
+
+        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, \
+               (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+               (mae_per_event_with_predict_index, mae_per_event_with_event_next)
+
+
     def sample_event_seq(self, number_of_sampled_sequences, end_time, mean, std):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
@@ -251,7 +295,6 @@ class LLMTPPModel(BasicModel):
         1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
         2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
         '''
-
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
         events_history_for_sampling = torch.ones(number_of_sampled_sequences, 1, device = self.device, dtype = torch.int32) * self.num_events
@@ -472,7 +515,19 @@ class LLMTPPModel(BasicModel):
 
     
     def get_mae_e_and_f1(self, input_data, opt):
-        return NotImplementedError('LLMTPP directly generates the next patch, so searching for the time prediction given mark is impossible.')
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+
+        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+            = self.mean_absolute_error_e(events_history, events_next, time_history, \
+                                               time_next, mask_history, mask_next, mean, std)
+                                                                               # [batch_size, seq_len]
+        mae, probability_sum, events_next = move_from_tensor_to_ndarray(mae, probability_sum, events_next)
+
+        return maes, f1_2, probability_sum, events_next
 
 
     '''

@@ -44,7 +44,7 @@ class Evaluator:
         self.param_names = list(model_param.keys())
         logger.info(f'The input model hyperparameters are {model_param}.')
         self.model_class = self.get_model(self.opt)
-        model = self.model_class(device = self.opt.device, info_dict = self.opt.info_dict,
+        model = self.model_class(device = self.opt.device, opt = self.opt,
             **model_param
         )
         self.opt.__dict__.update(model_param)

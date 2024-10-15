@@ -383,7 +383,7 @@ class SAHPWrapper(BasicModel):
 
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample_time(sampling_approach = 'thinning', task = 'tm',
+        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                 time_history = time_history, events_history = events_history, mask_history = mask_history,
                                 number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]

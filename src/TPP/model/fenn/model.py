@@ -515,7 +515,7 @@ class FENNModel(BasicModel):
         * f1                    type: int shape: N/A
                                 macro-F1 value between events predicted at \(t_p\) and the ground truths.
         '''
-        pred_time = self.sample_time(sampling_approach = 'thinning', task = 'tm',
+        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
                                      number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]
