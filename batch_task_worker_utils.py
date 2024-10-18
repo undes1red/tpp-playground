@@ -343,7 +343,8 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
 
 
 
-def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir):        
+def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir):
+    import submitit
     # I don't quite know how the GPU allocation works in slurm.
     # Due to this, we temporarily disable gpu_pool in this function.
     gpu_pool = list(available_gpus)
