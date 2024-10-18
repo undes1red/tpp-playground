@@ -224,6 +224,7 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.no_grad()
+    @torch.compile()
     def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
         '''
         number_of_total_samples: how many samples do we need to predict one next event.
@@ -416,9 +417,9 @@ class CTLSTMWrapper(BasicModel):
         f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_to_inf, mask_next, self.num_events)
 
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
-                                         events_history = events_history, time_history = time_history,
-                                         p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_time_rate, step = self.mae_e_step, inf_val = inf_val, 
-                                         mean = mean, std = std)               # [sample_rate, batch_size, seq_len, num_events]
+                                              events_history = events_history, time_history = time_history,
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_time_rate, step = self.mae_e_step, inf_val = inf_val, 
+                                              mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
         tau_pred_all_event = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
  
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)

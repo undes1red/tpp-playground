@@ -236,6 +236,7 @@ class SAHPWrapper(BasicModel):
 
 
     @torch.no_grad()
+    @torch.compile()
     def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
         '''
         number_of_total_samples: how many samples do we need to predict one next event.

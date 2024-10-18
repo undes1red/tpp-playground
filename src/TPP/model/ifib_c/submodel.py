@@ -4,7 +4,7 @@ from scipy.stats import spearmanr
 import numpy as np
 from einops import rearrange, repeat, reduce, pack, unpack
 
-from src.toolbox.misc import move_from_tensor_to_ndarray, round_preserve_gradients
+from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.nonneg_mlp import NonNegLinear
 from src.toolbox.activations import scaled_tanh
@@ -116,21 +116,35 @@ class IFIBC(nn.Module):
         output = time_embedding + hidden_history                               # [..., batch_size, seq_len, num_events, d_intensity]
         output_zero = time_zero_embedding + hidden_history                     # [..., batch_size, seq_len, num_events, d_intensity]
 
-        for _, layer in enumerate(self.mlp):
+        for layer_idx, layer in enumerate(self.mlp):
             output = layer(output)                                             # [..., batch_size, seq_len, num_events, d_intensity]
             output = self.layer_activation(output)                             # [..., batch_size, seq_len, num_events, d_intensity]
 
             output_zero = layer(output_zero)                                   # [..., batch_size, seq_len, num_events, d_intensity]
             output_zero = self.layer_activation(output_zero)                   # [..., batch_size, seq_len, num_events, d_intensity]
 
+            if layer_idx == 0:
+                output_max = torch.ones_like(output) * self.tanh_parameter     # [..., batch_size, seq_len, num_events, d_intensity]
+            else:
+                output_max = layer(output_max)                                 # [..., batch_size, seq_len, num_events, d_intensity]
+                output_max = self.layer_activation(output_max)                 # [..., batch_size, seq_len, num_events, d_intensity]
+
         probability_integral_from_t_to_inf = self.nonneg_integral(-self.aggregate(output))
                                                                                # [..., batch_size, seq_len, num_events, 1]
         probability_integral_from_tl_to_inf = self.nonneg_integral(-self.aggregate(output_zero))
                                                                                # [..., batch_size, seq_len, num_events, 1]
-
-        regularized_probability_integral_from_t_to_inf = round_preserve_gradients(probability_integral_from_t_to_inf)
+        probability_integral_minimal = self.nonneg_integral(-self.aggregate(output_max))
                                                                                # [..., batch_size, seq_len, num_events, 1]
-        regularized_probability_integral_from_tl_to_inf = round_preserve_gradients(probability_integral_from_tl_to_inf) + self.epsilon
+
+        if self.removes_tail:
+            regularized_probability_integral_from_t_to_inf = (probability_integral_from_t_to_inf - probability_integral_minimal)
+                                                                               # [..., batch_size, seq_len, num_events, 1]
+            regularized_probability_integral_from_tl_to_inf = (probability_integral_from_tl_to_inf - probability_integral_minimal) + self.epsilon
+                                                                               # [..., batch_size, seq_len, num_events, 1]
+        else:
+            regularized_probability_integral_from_t_to_inf = probability_integral_from_t_to_inf
+                                                                               # [..., batch_size, seq_len, num_events, 1]
+            regularized_probability_integral_from_tl_to_inf = probability_integral_from_tl_to_inf + self.epsilon
                                                                                # [..., batch_size, seq_len, num_events, 1]
 
         probability_integral_from_t_to_inf = rearrange(regularized_probability_integral_from_t_to_inf, '... 1 -> ...')

@@ -220,7 +220,7 @@ class NaiveMTPPWrapper(BasicModel):
 
 
     @torch.no_grad()
-    def sample(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
+    def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
         '''
         number_of_total_samples: how many samples do we need to predict one next event.
         step: we output "step" samples to reduce memory comsumption during inference.
@@ -368,9 +368,9 @@ class NaiveMTPPWrapper(BasicModel):
     
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
-        pred_time = self.sample(sampling_approach = 'its', task = 'tm',
-                                events_history = events_history, time_history = time_history,
-                                number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
+        pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+                                     events_history = events_history, time_history = time_history,
+                                     number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
                                                                                # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
@@ -412,7 +412,7 @@ class NaiveMTPPWrapper(BasicModel):
 
         f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, probability_integral_to_inf, mask_next, self.num_events)
 
-        tau_pred_all_event = self.sample(sampling_approach = 'its', task = 'mt', 
+        tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
                                          events_history = events_history, time_history = time_history,
                                          p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_rate, step = self.mae_e_step, inf_val = inf_val, 
                                          mean = mean, std = std)               # [sample_rate, batch_size, seq_len, num_events]

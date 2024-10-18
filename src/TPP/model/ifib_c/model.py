@@ -225,7 +225,7 @@ class IFIBCModel(BasicModel):
         time_loss_wihtout_dummy = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
         # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau} = -\\log(1 - P(t)) = -log(\\sum_{m}{IFIB-C(m, t)}).
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
-        probability_survival = probability_for_each_event_at_time_next.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
+        probability_survival = probability_integral_from_time_next_to_infinite.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
         time_loss_survival = -torch.log(probability_survival + self.epsilon).mean()
 
@@ -411,7 +411,6 @@ class IFIBCModel(BasicModel):
         )[0]                                                                   # [batch_size, seq_len, num_events]
         time_next_pred.requires_grad = False                                   # [batch_size, seq_len, num_events]
 
-        
         events_pred_index = predict_event(probability_for_each_event)[mask_next == 1]
         events_true = events_next[mask_next == 1]
         events_pred_index, events_true = move_from_tensor_to_ndarray(events_pred_index, events_true)
