@@ -53,7 +53,7 @@ class SAHP(nn.Module):
                                                   dropout = dropout)
 
 
-    @torch.compile
+    # @torch.compile()
     def get_cell_states(self, mu, eta, gamma, duration_t):
         return torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))    # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 

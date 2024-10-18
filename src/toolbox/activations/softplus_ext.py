@@ -5,7 +5,7 @@ from src.toolbox.misc import check_tensor
 '''
 This softplus function can accept beta as a vector.
 '''
-@torch.compile
+# @torch.compile()
 def softplus_ext(input, beta, threshold = 20):
     '''
     This softplus function allows beta being a vector.
