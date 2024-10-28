@@ -120,9 +120,10 @@ class CTLSTM(nn.Module):
         if time_next_start is None:
             time_next_start = torch.zeros_like(time_next)                      # [batch_size, seq_len]
 
+        seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
-        history = torch.cat((events_embeddings, time_history.unsqueeze(dim = -1)), dim = -1)
-                                                                               # [batch_size, seq_len, d_mark_embedding + 1]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
         
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
@@ -146,8 +147,10 @@ class CTLSTM(nn.Module):
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate, num_dimension_prior_batch = 0):
+        seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
         
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
@@ -170,9 +173,11 @@ class CTLSTM(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_next, integration_sample_rate):
+        seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
-        history, history_ps = pack([events_embeddings, time_history], 'b s *') # [batch_size, seq_len, d_mark_embedding + 1]
-        
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]        
+
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)
                                                                                # [batch_size, seq_len, d_input]

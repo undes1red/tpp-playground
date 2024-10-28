@@ -109,13 +109,11 @@ def generate_debug_figure(data, timestamp, opt):
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    expand_intensity = data['expand_intensity_for_each_event']                 # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-    expand_integral = data['expand_integral_for_each_event']                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+    expand_probability = data['expand_probability_for_each_event']             # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
     expand_timestamp = timestamp                                               # [batch_size, seq_len, resolution]
 
-    packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp))
-    for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_intensity_per_seq, \
-              expand_integral_per_seq, timestamp_per_seq) in enumerate(packed_data):
+    packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_probability, expand_timestamp))
+    for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_probability_per_seq, timestamp_per_seq) in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
         start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
         timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
@@ -133,24 +131,15 @@ def generate_debug_figure(data, timestamp, opt):
 
         event_list = [f'Mark {i}' for i in range(num_events)]
     
-        df_intensity = pd.DataFrame.from_dict(
+        df_probability = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(), 
-                 'Mark': event_list * (seq_len * resolution)}
-            )
-        df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Integral': expand_integral_per_seq[:seq_len, :, :].flatten(),
+                 'Probability': expand_probability_per_seq[:seq_len, :, :].flatten(), 
                  'Mark': event_list * (seq_len * resolution)}
             )
         
-        fig1 = draw_intensity_integral_per_mark(df_intensity, df_event, 'Intensity', color_palette, num_events)
-        save_fig(fig1, opt.plot_store_dir_for_this_batch, f'mark_wise_intensity_{idx}.pdf')
-        logger.info(f'mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
-
-        fig2 = draw_intensity_integral_per_mark(df_integral, df_event, 'Integral', color_palette, num_events)
-        save_fig(fig2, opt.plot_store_dir_for_this_batch, f'mark_wise_integral_{idx}.pdf')
-        logger.info(f'mark_wise_integral_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
+        fig1 = draw_intensity_integral_per_mark(df_probability, df_event, 'Probability', color_palette, num_events)
+        save_fig(fig1, opt.plot_store_dir_for_this_batch, f'mark_wise_probability_{idx}.pdf')
+        logger.info(f'mark_wise_probability_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
 
     '''

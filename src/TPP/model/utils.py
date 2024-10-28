@@ -215,6 +215,20 @@ def draw_intensity_integral_and_probability(df, df_event, annotation, figure_typ
     return fig
 
 
+def legend_format(num_events):
+    import math
+    
+    format_parameter = {'ncol': 1, 'fontsize': 18}
+
+    if num_events > 10:
+        format_parameter['ncol'] = 2
+
+    num_events_per_column = math.ceil(num_events / format_parameter['ncol'])
+    format_parameter['fontsize'] = format_parameter['fontsize'] * (-0.1 * max(num_events_per_column - 5, 0) + 1)
+    
+    return format_parameter
+
+
 def draw_intensity_integral_per_mark(df, df_event, figure_type, color_palette, num_events, figure_kwargs = {}):
     figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
 
@@ -229,7 +243,8 @@ def draw_intensity_integral_per_mark(df, df_event, figure_type, color_palette, n
 
         handles, labels = ax.get_legend_handles_labels()
         lineplot_legend = ax.legend(handles = [(handles[idx], handles[idx + num_events]) for idx in range(num_events)], 
-                                    labels = labels[:num_events], handler_map = {tuple: mpl.legend_handler.HandlerTuple(ndivide = None)})
+                                    labels = labels[:num_events], **legend_format(num_events),
+                                    handler_map = {tuple: mpl.legend_handler.HandlerTuple(ndivide = None)})
         lineplot_legend.set_title('Mark')
 
     return fig

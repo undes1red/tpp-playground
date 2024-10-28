@@ -18,6 +18,7 @@ class Evaluator:
         # Store required initial information.
         self.opt = opt
         self.opt.replace_index = ['',] if opt.replace else possible_checkpoint_detect(opt, opt.model_identifier)
+        logger.info(f'Available replace_index: {self.opt.replace_index}.')
 
         # load the model.
         self.get_model = getattr(procedure, 'get_model')
