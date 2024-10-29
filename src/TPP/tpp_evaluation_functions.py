@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from tqdm import tqdm
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt, flatten
+from src.toolbox.misc import get_logger, mkdir_if_not_exist, dump_to_pkl, write_to_txt, flatten, write_yaml
 
 
 logger = get_logger(name = __file__)
@@ -22,6 +22,9 @@ def spearman_and_l1_postprocess(all_evaluation_results, desc, opt):
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average spearman coefficient is {spearman} and average L1 distance is {l1}.'
     write_to_txt(strings, result_file)
 
+    result_dist_file = os.path.join(opt.store_dir, f'{desc}_spearman_and_l1_result.pkl')
+    dump_to_pkl({'spearman': spearman, 'l1': l1}, result_dist_file, compression = 'bz2')
+
 
 def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     '''
@@ -38,6 +41,8 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.'
     write_to_txt(strings, result_file)
+    result_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_and_f1_result.pkl')
+    dump_to_pkl({'mae': mean_mae, 'f1': f1}, result_dist_file, compression = 'bz2')
 
     '''
     Dump the detailed distribution of mae for further usage.
@@ -93,6 +98,8 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(m) is {mean_probability_sum}.'
     write_to_txt(strings, result_file)
+    result_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_f1_result.pkl')
+    dump_to_pkl({'mae_e': mean_mae_e, 'f1': f1}, result_dist_file, compression = 'bz2')
 
 
 def mae_e_and_f1_by_time_event_postprocess(all_evaluation_results, desc, opt):
@@ -107,6 +114,8 @@ def mae_e_and_f1_by_time_event_postprocess(all_evaluation_results, desc, opt):
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1_by_time_event.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}'
     write_to_txt(strings, result_file)
+    result_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_f1_by_time_event_result.pkl')
+    dump_to_pkl({'mae_e': mean_mae_e, 'f1': f1}, result_dist_file, compression = 'bz2')
 
     '''
     Dump the detailed distribution of mae-e for further usage.
@@ -130,6 +139,8 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     result_file = os.path.join(opt.store_dir, f'{desc}_which_event_first.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae} and average macro-F1 is {f1}.'
     write_to_txt(strings, result_file)
+    result_dist_file = os.path.join(opt.store_dir, f'{desc}_which_event_occurs_first_result.pkl')
+    dump_to_pkl({'mae': mean_mae, 'f1': f1}, result_dist_file, compression = 'bz2')
 
     '''
     Dump the detailed distribution of mae-e for further usage.
@@ -147,6 +158,19 @@ def samples_from_et_postprocess(all_evaluation_results, desc, opt):
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_samples_for_every_point.pkl')
     data = {'samples': samples, 'p_ms': p_ms}
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
+
+def generate_hypro_dataset_postprocess(all_evaluation_results, desc, opt):
+    '''
+    Dump the detailed distribution of mae-e for further usage.
+    '''
+    input_time, input_events, tau_sampled, events_sampled = all_evaluation_results
+
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_hypro_sample.pkl')
+    data = {'input_time': input_time, 'input_events': input_events, 'tau_sampled': tau_sampled, 'events_sampled': events_sampled}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+    write_yaml({**opt.info_dict, 'hypro_length': opt.number_of_events_hypro, 'hypro_negative_samples': opt.number_of_negative_samples}, 
+               opt.store_dir, 'dataset_card.yml')
 
 
 def mae_and_f1_of_imputated_events(model, dataset, desc, opt, early_offload):
@@ -198,7 +222,8 @@ desc_funcs = {
     'mae_e_and_f1': {'desc_string': 'MAE-E and macro-f1 for {0}', 'postprocess_func': mae_e_and_f1_postprocess},
     'mae_e_and_f1_by_time_event': {'desc_string': 'MAE-E and macro-f1 for {0} following NER', 'postprocess_func': mae_e_and_f1_by_time_event_postprocess},
     'which_event_occurs_first': {'desc_string': 'Predict the next event by finding which event occurs first for {0}', 'postprocess_func': which_event_occurs_first_postprocess},
-    'samples_from_et': {'desc_string': f'Samples of {0} for each mark', 'postprocess_func': samples_from_et_postprocess},
+    'samples_from_et': {'desc_string': 'Samples of {0} for each mark', 'postprocess_func': samples_from_et_postprocess},
+    'generate_hypro_dataset': {'desc_string': 'Generate HYPRO dataset for {0}', 'postprocess_func': generate_hypro_dataset_postprocess},
 
     # Custom evaluation function.
     'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events
