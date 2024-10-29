@@ -818,7 +818,7 @@ class FENNModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+                                                    time_next, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_next, opt.resolution)

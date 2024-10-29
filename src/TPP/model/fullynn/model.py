@@ -643,7 +643,7 @@ class FullyNNModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -680,7 +680,7 @@ class FullyNNModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -715,7 +715,7 @@ class FullyNNModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -756,7 +756,7 @@ class FullyNNModel(BasicModel):
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_next, mean, std, return_mean = False)
 
         '''
         Append additional info into the data dict.
