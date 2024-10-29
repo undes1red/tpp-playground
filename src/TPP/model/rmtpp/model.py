@@ -14,7 +14,7 @@ from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper
 
 class RMTPP(BasicModel):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, opt, event_toggle, 
-                 output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20,
+                 output_size, limited_history_norm, time_scalar_min = 1e-2, epsilon = 1e-20,
                  survival_loss_during_training = True):
         super(RMTPP, self).__init__()
         self.device = device
@@ -579,7 +579,6 @@ class RMTPP(BasicModel):
         time_loss_survival = time_loss_survival.item()
         fact = score.sum().item() / the_number_of_events
         events_loss_time_next_without_dummy = events_loss_time_next_without_dummy.item() / the_number_of_events
-        mae = mae.sum().item() / the_number_of_events
 
         return time_loss_time_next_without_dummy, time_loss_survival, fact, events_loss_time_next_without_dummy, mae, f1
 

@@ -19,7 +19,7 @@ def prepare_dataloaders(opt, find_dataset):
     available_file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
 
     # find if required dataset files exists.
-    file_names = check_exist(available_file_names, opt.dataset_type, opt.training_data_name, 
+    file_names = check_exist(available_file_names, opt.dataset_type, opt.training_data_name,
                                                                      opt.evaluate_data_name, 
                                                                      opt.test_data_name)
 

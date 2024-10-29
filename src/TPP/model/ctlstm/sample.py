@@ -2,8 +2,10 @@ import torch
 from einops import rearrange, repeat, reduce, pack
 
 from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
-from src.TPP.model.utils import step_split, median_prediction, thinning_sampling
+from src.TPP.model.utils import step_split, median_prediction, thinning_sampling, predict_event
+
 from src.toolbox.integration import approximate_integration
+from src.toolbox.misc import check_should_we_stop_sampling
 
 
 @torch.no_grad()
@@ -98,22 +100,21 @@ def autoregressive_sampling_by_its_for_tm(self, events_history, time_history,
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         '''
         expanded_integral_all_events, _, = \
-            self.model(time_history, taus, events_history, num_dimension_prior_batch = 1)
-                                                                            # [sample_rate, batch_size, seq_len, num_events]
-        expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
+            self.model.sample_for_tm(time_history, taus, events_history)   # [number_of_sampled_sequences, num_events]
+        expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [number_of_sampled_sequences]
 
         return expanded_integral + torch.log(1 - probability_threshold)
 
     tau_pred = []
     for sub_sample_rate in sample_rate_list:
-        probability_threshold = torch.zeros((sub_sample_rate, *time_history.shape), device = self.device)
-                                                                            # [sample_rate, batch_size, seq_len]
+        probability_threshold = torch.zeros((sub_sample_rate), device = self.device)
+                                                                            # [sub_sample_rate]
         torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                            # [sample_rate, batch_size, seq_len]
+                                                                            # [sub_sample_rate]
         tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
                                             bisect_target, probability_threshold))
-                                                                            # [sample_rate, batch_size, seq_len]
-    tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
+                                                                            # [sub_sample_rate]
+    tau_pred = torch.cat(tau_pred, dim = 0)                                 # [sample_rate]
 
     return tau_pred
 
@@ -205,6 +206,24 @@ def sampling_by_its_for_tm(self, events_history, time_history,
     return tau_pred
 
 
+# Sample events from p^*(m, t) using thinning algorithm in a autoregressive manner.
+def autoregressive_sampling_by_thinning(self, task, *args, **kwargs):
+    dict_apparoch_for_tasks = {
+        'mt': autoregressive_sampling_by_thinning_for_mt,
+        'tm': autoregressive_sampling_by_thinning_for_tm
+    }
+
+    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
+
+
+def autoregressive_sampling_by_thinning_for_mt(self):
+    pass
+
+
+def autoregressive_sampling_by_thinning_for_tm(self):
+    pass
+
+
 def sampling_by_thinning(self, task, *args, **kwargs):
     dict_apparoch_for_tasks = {
         'mt': sampling_by_thinning_for_mt,
@@ -245,3 +264,102 @@ def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_to
     
     sampled_time = torch.cat(sampled_time, dim = 0)
     return sampled_time
+
+
+def sample_time_event(self, time_history_for_sampling, events_history_for_sampling, mean, std, \
+                      end_sampling_requirement = 'time', **kwargs):
+    '''
+    This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
+    Steps:
+    1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+    2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
+    '''
+    if time_history_for_sampling is None and events_history_for_sampling is None:
+        number_of_sampled_sequences = kwargs['number_of_sampled_sequences']
+        time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device = self.device)
+                                                                               # [number_of_sampled_sequences, 1]
+        events_history_for_sampling = torch.ones((number_of_sampled_sequences, 1), device = self.device, dtype = torch.int32) * self.num_events
+                                                                               # [number_of_sampled_sequences, 1]
+    else:
+        assert time_history_for_sampling is not None and events_history_for_sampling is not None, 'How is it possible that one input history is not None while another one is?'
+        assert events_history_for_sampling.shape[0] == time_history_for_sampling.shape[0], f'time_history_for_sampling says we will sample {time_history_for_sampling.shape[0]} sequences, while events_history_for_sampling suggests {events_history_for_sampling.shape[0]}. So, how many sequences should we sample?'
+        number_of_sampled_sequences = events_history_for_sampling.shape[0]
+        
+    sampled_mask = None
+    
+    while True:
+        should_we_stop, sampled_mask = \
+            check_should_we_stop_sampling(time_history_for_sampling, end_sampling_requirement, **kwargs)
+        
+        if should_we_stop:
+            break
+        
+        sampled_time = self.sample_time(sampling_approach = 'its', task = 'tm', autoregressive = True,
+                                        events_history = events_history_for_sampling,
+                                        time_history = time_history_for_sampling,
+                                        number_of_total_samples = number_of_sampled_sequences,
+                                        step = number_of_sampled_sequences, mean = mean, std = std)
+                                                                               # [number_of_sampled_sequences]
+        _, intensity_all_events = \
+            self.model.sample_for_tm(time_history_for_sampling, sampled_time, events_history_for_sampling)
+                                                                               # [number_of_sampled_sequences]
+        sampled_marks = predict_event(intensity_all_events, sample = True)     # [number_of_sampled_sequences]
+
+        time_history_for_sampling, _ = pack([time_history_for_sampling, sampled_time], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+        events_history_for_sampling, _ = pack([events_history_for_sampling, sampled_marks], 'nss *')
+                                                                               # [number_of_sampled_sequences, history_length + 1]
+
+
+    return time_history_for_sampling, events_history_for_sampling, sampled_mask
+
+
+def sample_event_time(self, time_history_for_sampling, events_history_for_sampling, mean, std, \
+                      end_sampling_requirement = 'time', **kwargs):
+    '''
+    These two functions will sample a event sequence from the learned p^*(m, t) following the event-time prediction procedure.
+    Steps:
+    1. Sample the mark \\(m_p\\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
+    2. Sample when a new \\(m_p\\) event would happen in the future time by \\(p^*(t|m_p)\\).
+    '''
+    if time_history_for_sampling is None and events_history_for_sampling is None:
+        number_of_sampled_sequences = kwargs['number_of_sampled_sequences']
+        time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device = self.device)
+                                                                            # [number_of_sampled_sequences, 1]
+        events_history_for_sampling = torch.ones((number_of_sampled_sequences, 1), device = self.device, dtype = torch.int32) * self.num_events
+                                                                            # [number_of_sampled_sequences, 1]
+    else:
+        assert time_history_for_sampling is not None and events_history_for_sampling is not None, 'How is it possible that one history is not None while another one is?'
+        assert events_history_for_sampling.shape[0] == time_history_for_sampling.shape[0], f'time_history_for_sampling says we will sample {time_history_for_sampling.shape[0]} sequences, while events_history_for_sampling suggests {events_history_for_sampling.shape[0]}. So, how many sequences should we sample?'
+        number_of_sampled_sequences = events_history_for_sampling.shape[0]
+
+    sampled_mask = None
+
+    while True:
+        should_we_stop, sampled_mask = \
+            check_should_we_stop_sampling(time_history_for_sampling, end_sampling_requirement, **kwargs)
+
+        if should_we_stop:
+            break
+
+        time_next_zero = torch.zeros(number_of_sampled_sequences, self.num_events, device = self.device)
+                                                                            # [number_of_sampled_sequences, num_events]
+        integral_from_zero_to_inf = self.model('sample', events_history_for_sampling, time_history_for_sampling, time_next_zero, mean = mean, std = std)
+                                                                            # [number_of_sampled_sequences, num_events]
+        sampled_marks = predict_event(integral_from_zero_to_inf, sample = True)
+                                                                            # [number_of_sampled_sequences]
+        all_sampled_time = self.sample_time('its', 'mt', True,
+                                            events_history_for_sampling, time_history_for_sampling, integral_from_zero_to_inf,
+                                            number_of_sampled_sequences, number_of_sampled_sequences, 1e6, mean, std)
+                                                                            # [number_of_sampled_sequences, num_events]
+        one_hot_mask_of_sampled_marks = torch.nn.functional.one_hot(sampled_marks, num_classes = self.num_events)
+                                                                            # [number_of_sampled_sequences, num_events]
+        sampled_time = torch.sum(all_sampled_time * one_hot_mask_of_sampled_marks, dim = -1)
+                                                                            # [number_of_sampled_sequences, 1]
+
+        events_history_for_sampling, _ = pack([events_history_for_sampling, sampled_marks], 'nss *')
+                                                                            # [number_of_sampled_sequences, history_length + 1]
+        time_history_for_sampling, _ = pack([time_history_for_sampling, sampled_time], 'nss *')
+                                                                            # [number_of_sampled_sequences, history_length + 1]
+                                                                            
+    return time_history_for_sampling, events_history_for_sampling, sampled_mask

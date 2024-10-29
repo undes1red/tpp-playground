@@ -3,7 +3,8 @@ from src.toolbox.misc.tensor_to_array import move_from_tensor_to_ndarray
 from src.toolbox.misc.stable_palette import stable_palette
 from src.toolbox.misc.get_logger import get_logger
 from src.toolbox.misc.mkdir_if_not_exist import mkdir_if_not_exist
-from src.toolbox.misc.write_data import dump_to_pkl, write_to_txt
+from src.toolbox.misc.write_data import *
+from src.toolbox.misc.load_data import *
 from src.toolbox.misc.version_check import version_check
 from src.toolbox.misc.flatten_nested_nparray import flatten
 from src.toolbox.misc.free_model_from_gpu import free_model_from_gpu
@@ -14,5 +15,6 @@ from src.toolbox.misc.print_args import print_args
 from src.toolbox.misc.pack_unpack_value import pack_one_value_to_dict, only_keep_data
 from src.toolbox.misc.compile_model import compile_model
 from src.toolbox.misc.should_we_stop_sampling import check_should_we_stop_sampling
+from src.toolbox.misc.easy_model_load import easy_model_load
 
 # from src.toolbox.misc.figure_instruction_generator import figure_instruction_generator

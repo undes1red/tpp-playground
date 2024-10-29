@@ -1,9 +1,8 @@
-import importlib
-import os
-import pickle as pkl
-
-
 def dump_to_pkl(data, filepath, compression = None):
+    import importlib
+    import os
+    import pickle as pkl
+    
     dict_compression_algorithms = {
         None: open,
         # Is it a good choice?
@@ -22,6 +21,17 @@ def dump_to_pkl(data, filepath, compression = None):
     f = selected_open_function(filepath, 'wb')
     pkl.dump(data, f)
     f.close()
+
+    return 0
+
+
+def dump_to_npz(filepath, **kwargs):
+    import numpy as np
+
+    '''
+    Add proper suffix to the base file name if compression is not None.
+    '''
+    np.savez(filepath, **kwargs)
 
     return 0
 

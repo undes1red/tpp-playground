@@ -85,6 +85,7 @@ class IFIBCModel(BasicModel):
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'which_event_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
+            'generate_hypro_dataset': self.generate_hypro_dataset,
 
             # Figure Drawing.
             'intensity': self.figure_intensity,
@@ -405,8 +406,8 @@ class IFIBCModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \(t_s\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \(\\lambda^*(m, t_s)\).
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
         '''
         if time_history_for_sampling is None and events_history_for_sampling is None:
             number_of_sampled_sequences = kwargs['number_of_sampled_sequences']
@@ -462,8 +463,8 @@ class IFIBCModel(BasicModel):
         '''
         These two functions will sample a event sequence from the learned p^*(m, t) following the event-time prediction procedure.
         Steps:
-        1. Sample the mark \(m_p\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
-        2. Sample when a new \(m_p\) event would happen in the future time by \(p^*(t|m_p)\).
+        1. Sample the mark \\(m_p\\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
+        2. Sample when a new \\(m_p\\) event would happen in the future time by \\(p^*(t|m_p)\\).
         '''
         if time_history_for_sampling is None and events_history_for_sampling is None:
             number_of_sampled_sequences = kwargs['number_of_sampled_sequences']
@@ -840,6 +841,32 @@ class IFIBCModel(BasicModel):
                                                                                # [sample_rate, batch_size, seq_len, num_events]
 
         return tau_pred_all_event, probability_integral_from_zero_to_infinite
+
+
+    def generate_hypro_dataset(self, input_data, opt):
+        # CAUTION: Only works when batch_size = 1.
+        
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)        
+        
+        if mask.sum(dim = -1) < opt.number_of_events_hypro:
+            '''
+            Sequence too short to perform HYPRO. Considering to make the number_of_events_hypro lower to avoid this.
+            '''
+            return None
+        
+        time_history_for_sampling = repeat(input_time[..., :-opt.number_of_events_hypro], '() ... -> nns ...', nns = opt.number_of_negative_samples)
+                                                                               # [number_of_negative_samples, seq_len - opt.number_of_events_hypro]
+        event_history_for_sampling = repeat(input_events[..., :-opt.number_of_events_hypro], '() ... -> nns ...', nns = opt.number_of_negative_samples)
+                                                                               # [number_of_negative_samples, seq_len - opt.number_of_events_hypro]
+        
+        tau_sampled, events_sampled, _, \
+            = self.sample_event_time(time_history_for_sampling, event_history_for_sampling, mean, std, \
+                                     end_sampling_requirement = 'event_num', max_seq_len = mask.sum(dim = -1))
+                                                                               # [number_of_negative_samples, seq_len]
+        
+        input_time, input_events, tau_sampled, events_sampled = move_from_tensor_to_ndarray(input_time, input_events, tau_sampled, events_sampled)
+        
+        return input_time, input_events, tau_sampled, events_sampled
 
 
     '''

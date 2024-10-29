@@ -374,7 +374,7 @@ def generate_debug_figure(data, timestamp, opt):
             mu = np.expand_dims(mu, axis = 0)
 
             ax.imshow(mu)
-            ax.set_title(r'\(\mathbf{\mu}\)')
+            ax.set_title(r'\\(\mathbf{\mu}\\)')
             ax.set_xticks(np.arange(num_events), labels = event_list)
 
         # Hawkes process
@@ -388,13 +388,13 @@ def generate_debug_figure(data, timestamp, opt):
             beta = np.expand_dims(beta, axis = 0)
 
             sns.heatmap(mu, ax = axes[0], vmin = 0, annot = True, xticklabels = event_list)
-            axes[0].set_title(r'\(\mathbf{\mu}\)')
+            axes[0].set_title(r'\\(\mathbf{\mu}\\)')
 
             sns.heatmap(alpha, ax = axes[1], vmin = 0, annot = True, xticklabels = event_list, yticklabels = event_list)
-            axes[1].set_title(r'\(\mathbf{\alpha}\)')
+            axes[1].set_title(r'\\(\mathbf{\alpha}\\)')
 
             sns.heatmap(beta, ax = axes[2], vmin = 0, annot = True, xticklabels = event_list)
-            axes[2].set_title(r'\(\mathbf{\beta}\)')
+            axes[2].set_title(r'\\(\mathbf{\beta}\\)')
 
         # Unknown process
         else:

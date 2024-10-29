@@ -8,10 +8,11 @@ from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
+from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.TPP.model.ctlstm.plot import *
 from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.ctlstm.submodel import CTLSTM
-from src.TPP.model.ctlstm.sample import sample_time
+from src.TPP.model.ctlstm.sample import sample_time, sample_time_event, sample_event_time
 from src.TPP.model.utils import *
 
 
@@ -36,7 +37,7 @@ class CTLSTMWrapper(BasicModel):
         self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                             d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
-                            integration_sample_rate = integration_sample_rate, patchify = False, patch_length = patch_length)
+                            integration_sample_rate = integration_sample_rate, patch_length = patch_length)
     
 
     def divide_history_and_next(self, input):
@@ -225,6 +226,8 @@ class CTLSTMWrapper(BasicModel):
 
 
     sample_time = sample_time
+    sample_time_event = sample_time_event
+    sample_event_time = sample_event_time
 
 
     @torch.no_grad()
@@ -481,6 +484,11 @@ class CTLSTMWrapper(BasicModel):
                                                           mask_next, opt.resolution)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std,  return_mean = False)
+
+        time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
+            = self.sample_time_event(None, None, mean, std, end_sampling_requirement = 'time_and_event_num', \
+                                     number_of_sampled_sequences = 1, end_time = self.end_time - self.start_time, max_seq_len = 250)
+                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
 
         '''
         Append additional info into the data dict.

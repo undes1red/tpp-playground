@@ -15,7 +15,7 @@ from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling, its_lower_
 
 class MRMTPP(BasicModel):
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, opt, 
-                 output_size, limited_history_norm, time_scalar_min = 1e-4, epsilon = 1e-20, sample_rate = 32, 
+                 output_size, limited_history_norm, time_scalar_min = 1e-2, epsilon = 1e-20, sample_rate = 32, 
                  bisect_early_stop_threshold = 1e-5, survival_loss_during_training = True, mae_step = 32, mae_e_step = 32):
         super(MRMTPP, self).__init__()
         self.device = device

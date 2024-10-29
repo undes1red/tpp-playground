@@ -18,6 +18,8 @@ from src.TPP.dataloader import get_dataloader
 # Evaluation.
 from src.TPP.tpp_evaluation_functions import desc_funcs as get_evaluation_funcs
 
+# Function load_model() will use this function for stable and easy corss-process model loading.
+from src.TPP.utils import easy_model_load
 
 pytorch_version_warnings = {
     '>=2.1.0': [

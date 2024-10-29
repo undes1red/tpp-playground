@@ -56,7 +56,7 @@ def plot_intensity(data, timestamp, opt):
             L1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
+            annotation = fr'r = {r}, \\(\rho\\) = {rho}, \\(L^1\\) = {L1}'
         else:
             df_intensity = pd.DataFrame.from_dict(
                     {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),
@@ -231,7 +231,7 @@ def plot_probability(data, timestamp, opt):
             L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = fr'r = {r}, \(\rho\) = {rho}, \(L^1\) = {L1}'
+            annotation = fr'r = {r}, \\(\rho\\) = {rho}, \\(L^1\\) = {L1}'
         else:
             df = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().cumsum(axis = -1),

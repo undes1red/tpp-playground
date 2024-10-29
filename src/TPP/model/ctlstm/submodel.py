@@ -14,7 +14,7 @@ from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 class CTLSTM(nn.Module):
     def __init__(self, device, num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
-                 history_encoder_layers, dropout, integration_sample_rate, patchify, patch_length):
+                 history_encoder_layers, dropout, integration_sample_rate, patch_length):
         '''
         A CTLSTM implementation, based on existing SAHP codes.
         '''
@@ -22,7 +22,6 @@ class CTLSTM(nn.Module):
         self.num_events = num_events
         self.device = device
         self.integration_sample_rate = integration_sample_rate
-        self.patchify = patchify
 
         self.gelu = nn.GELU()
 
@@ -51,9 +50,6 @@ class CTLSTM(nn.Module):
         self.events_embedding = nn.Embedding(num_events + 1, d_mark_embedding, padding_idx = num_events, device = device)
         # Time embedding layer
         self.position_emb = BiasedPositionalEmbedding(d_mark_embedding, max_len = 4096, device = self.device)
-
-        if self.patchify:
-            self.patchifier = Patchifier(d_mark_embedding, patch_length = patch_length, device = self.device)
 
         # History encoder.
         self.history_encoder = getattr(nn, history_module_name)(device = self.device, \
@@ -88,9 +84,6 @@ class CTLSTM(nn.Module):
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
         history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
-
-        if self.patchify:
-            history = self.patchifier(history)                                 # [batch_size, seq_len, d_hidden]
             
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
@@ -107,11 +100,81 @@ class CTLSTM(nn.Module):
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
-                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, d_input]
         expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
+
+        return integral_all_events, intensity_all_events
+
+
+    def sample_for_tm(self, time_history, time_next, events_history):
+        seq_len = events_history.shape[-1]
+        events_embeddings = self.events_embedding(events_history)              # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+            
+        _, (sampled_history_embedding, _) = self.history_encoder(history)      # [1, number_of_sampled_sequences, d_hidden]
+        sampled_history_embedding = rearrange(sampled_history_embedding, '() bs dh -> bs () dh')
+                                                                               # [number_of_sampled_sequences, 1, d_history]
+        history = self.history_mapper(sampled_history_embedding)               # [number_of_sampled_sequences, 1, d_input]
+
+        eta = self.start_layer(history)                                        # [number_of_sampled_sequences, 1, d_input]
+        mu = self.converge_layer(history)                                      # [number_of_sampled_sequences, 1, d_input]
+        gamma = self.decay_layer(history)                                      # [number_of_sampled_sequences, 1, d_input]
+        
+        time_next = time_next.unsqueeze(dim = -1)                              # [number_of_sampled_sequences, 1]
+        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = 0)
+                                                                               # [number_of_sampled_sequences, 1, d_input]
+        # calculate the intensity.
+        intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [number_of_sampled_sequences, 1, num_events]
+        intensity_all_events = intensity_all_events.squeeze(dim = -2)          # [number_of_sampled_sequences, num_events]
+        # calculate the integral
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [number_of_sampled_sequences, integration_sample_rate]
+        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = 0)
+                                                                               # [number_of_sampled_sequences, 1, integration_sample_rate, d_input]
+        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
+                                                                               # [number_of_sampled_sequences, 1, integration_sample_rate, num_events]
+        integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+        integral_all_events = integral_all_events.squeeze(dim = -2)            # [number_of_sampled_sequences, num_events]
+
+        return integral_all_events, intensity_all_events
+
+
+    def sample_for_mt(self, time_history, time_next, events_history):
+        seq_len = events_history.shape[-1]
+        events_embeddings = self.events_embedding(events_history)              # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+            
+        _, (sampled_history_embedding, _) = self.history_encoder(history)      # [1, number_of_sampled_sequences, d_hidden]
+        sampled_history_embedding = rearrange(sampled_history_embedding, '() bs dh -> bs () dh')
+                                                                               # [number_of_sampled_sequences, 1, d_history]
+        history = self.history_mapper(sampled_history_embedding)               # [number_of_sampled_sequences, 1, d_input]
+
+        eta = self.start_layer(history)                                        # [number_of_sampled_sequences, 1, d_input]
+        mu = self.converge_layer(history)                                      # [number_of_sampled_sequences, 1, d_input]
+        gamma = self.decay_layer(history)                                      # [number_of_sampled_sequences, 1, d_input]
+        
+        time_next = time_next.unsqueeze(dim = -1)                              # [number_of_sampled_sequences, 1]
+        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = 0)
+                                                                               # [number_of_sampled_sequences, 1, d_input]
+        # calculate the intensity.
+        intensity_all_events = self.intensity_layer(hidden_state_at_t)         # [number_of_sampled_sequences, 1, num_events]
+        intensity_all_events = intensity_all_events.squeeze(dim = -2)          # [number_of_sampled_sequences, num_events]
+        # calculate the integral
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [number_of_sampled_sequences, integration_sample_rate]
+        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = 0)
+                                                                               # [number_of_sampled_sequences, 1, integration_sample_rate, d_input]
+        expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
+                                                                               # [number_of_sampled_sequences, 1, integration_sample_rate, num_events]
+        integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [number_of_sampled_sequences, 1, num_events]
+        integral_all_events = integral_all_events.squeeze(dim = -2)            # [number_of_sampled_sequences, num_events]
 
         return integral_all_events, intensity_all_events
 

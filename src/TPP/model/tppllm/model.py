@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, compile_model
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
@@ -15,7 +15,7 @@ from src.TPP.model.utils import *
 
 
 class TPPLLMWrapper(BasicModel):
-    def __init__(self, opt, device, LLM_name, d_input = 64, d_rnn = 64,
+    def __init__(self, opt, device, lm_layers, llm_class_name, full_llm_name, d_input = 64, d_rnn = 64,
                  beta = 0, sample_rate = 32, integration_sample_rate = 100, epsilon = 1e-20, 
                  mae_step = 32, mae_e_step = 32, survival_loss_during_training = True):
         super(TPPLLMWrapper, self).__init__()
@@ -32,8 +32,9 @@ class TPPLLMWrapper(BasicModel):
         self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
-        self.model = TPPLLM(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, LLM_name = LLM_name, \
-                            beta = beta, integration_sample_rate = integration_sample_rate, device = device)
+        self.model = TPPLLM(num_events = self.num_events, d_input = d_input, d_rnn = d_rnn, llm_class_name = llm_class_name, \
+                            full_llm_name = full_llm_name, beta = beta, integration_sample_rate = integration_sample_rate, \
+                            lm_layers = lm_layers, device = device)
         
 
     def divide_history_and_next(self, input):

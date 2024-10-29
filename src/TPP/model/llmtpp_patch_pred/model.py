@@ -272,8 +272,8 @@ class LLMTPPModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \(t_s\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \(\\lambda^*(m, t_s)\).
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
         '''
 
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)

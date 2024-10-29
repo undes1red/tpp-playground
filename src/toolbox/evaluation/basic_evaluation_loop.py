@@ -18,6 +18,9 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
                 for minibatch in progress_bar:
                     results_per_minibatch = model(subtask_name, minibatch, opt)
                     
+                    if results_per_minibatch is None:
+                        continue
+                    
                     if list_output_results is None:
                         result_length = len(results_per_minibatch)
                         list_output_results = [[] for _ in range(result_length)]
@@ -31,6 +34,9 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
         with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
             for minibatch in progress_bar:
                 results_per_minibatch = model(subtask_name, minibatch, opt)
+                
+                if results_per_minibatch is None:
+                    continue
                 
                 if list_output_results is None:
                     result_length = len(results_per_minibatch)

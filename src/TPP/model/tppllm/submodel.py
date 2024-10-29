@@ -14,7 +14,7 @@ from src.TPP.model.tppllm.transformers import TemporalLLM
 
 
 class TPPLLM(nn.Module):
-    def __init__(self, device, num_events, d_input, d_rnn, LLM_name, beta, integration_sample_rate):
+    def __init__(self, device, num_events, d_input, d_rnn, lm_layers, llm_class_name, full_llm_name, beta, integration_sample_rate):
         super(TPPLLM, self).__init__()
         self.device = device
         self.num_events = num_events
@@ -34,8 +34,8 @@ class TPPLLM(nn.Module):
         self.linear = nn.Linear(d_input, num_events, device = self.device)
 
         # the history encoder
-        self.history_encoder = TemporalLLM(num_events = num_events, device = self.device, d_input = d_input, \
-                                           d_rnn = d_rnn, LLM_name = LLM_name)
+        self.history_encoder = TemporalLLM(num_events = num_events, device = self.device, d_input = d_input, d_rnn = d_rnn, \
+                                           lm_layers = lm_layers, llm_class_name = llm_class_name, full_llm_name = full_llm_name)
 
 
     def extract_history_embeddings(self, time, events, mask):

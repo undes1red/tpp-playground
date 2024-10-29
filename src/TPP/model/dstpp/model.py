@@ -159,11 +159,11 @@ class DSTPPWrapper(BasicModule):
         * time_loss             type: torch.tensor shape: [1]
                                 The sum of NLL loss: L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
         * events_loss           type: torch.tensor shape: [1]
-                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} at each predicted time \(t_p\).
+                                The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} at each predicted time \\(t_p\\).
         * mae                   type: torch.tensor shape: [batch_size, seq_len]
-                                Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
+                                Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
         * f1                    type: int shape: N/A
-                                macro-F1 value between events predicted at \(t_p\) and the ground truths.
+                                macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
         * the_number_of_events  type: int shape: N/A
                                 The number of legit events.
         '''
@@ -225,7 +225,7 @@ class DSTPPWrapper(BasicModule):
 
         Args:
         * events_history        type: torch.tensor shape: [batch_size, seq_len]
-                                The event history \\mathcal{H}_{t_l}. We use these history info and time history for \(\\lambda^*(m, t)\) and \(\\Lambda^*(m, t)\).
+                                The event history \\mathcal{H}_{t_l}. We use these history info and time history for \\(\\lambda^*(m, t)\\) and \\(\\Lambda^*(m, t)\\).
         * time_history          type: torch.tensor shape: [batch_size, seq_len]
 
         * events_next           type: torch.tensor shape: [batch_size, seq_len]
@@ -239,9 +239,9 @@ class DSTPPWrapper(BasicModule):
 
         Outputs:
         * mae                   type: torch.tensor shape: [batch_size, seq_len]
-                                Mean Absolute Error(MAE) between predicted times \(t_p\) and ground truths \(t_i\). MAE = |t_p - t_i|.
+                                Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
         * f1                    type: int shape: N/A
-                                macro-F1 value between events predicted at \(t_p\) and the ground truths.
+                                macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
         '''
         
 

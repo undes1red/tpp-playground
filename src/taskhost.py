@@ -72,7 +72,10 @@ class TaskHost:
 
         # Limit the number of executing thread when running code on CPU.
         if not self.opt.cuda:
-            torch.set_num_threads(12)
+            logger.info(f'Setting available CPU threads.')
+            logger.info(f'Available CPU threads: {torch.get_num_threads()}.')
+
+            torch.set_num_threads(torch.get_num_threads())
 
         '''
         Please read documentations and check if you have used any operations which don't have a deterministic implementation before

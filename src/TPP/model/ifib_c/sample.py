@@ -55,7 +55,6 @@ def autoregressive_sampling_by_its_for_mt(self, events_history, time_history, p_
         
     # Preprocess
     tau_pred = []
-    p_m = p_m.unsqueeze(dim = 0)                                               # [sample_rate, 1, num_events]
     for sub_sample_rate in sample_rate_list:
         probability_threshold = torch.zeros((sub_sample_rate, self.num_events), device = self.device)
                                                                                # [sub_sample_rate, num_events]

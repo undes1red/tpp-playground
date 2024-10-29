@@ -3,6 +3,7 @@ import torch.nn as nn
 from einops import rearrange
 
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
+from src.TPP.model.tppllm.transformers_module import lm_module_location
 
 from transformers import AutoModel, AutoConfig
 from peft import LoraConfig, get_peft_model
@@ -10,17 +11,37 @@ from peft import LoraConfig, get_peft_model
 
 class LLMEncoder(nn.Module):
     """ A encoder model with self attention mechanism. """
-    def __init__(self, num_events, d_input, LLM_name, device):
+    def __init__(self, num_events, d_input, llm_class_name, full_llm_name, lm_layers, device):
         super(LLMEncoder, self).__init__()
         self.device = device
         self.d_input = d_input
         self.num_events = num_events
+        self.lm_layers = lm_layers
         
-        LLM_config = AutoConfig.from_pretrained(LLM_name)
+        self.lm = lm_module_location.get(llm_class_name)
+        if self.lm is None:
+            raise Exception('Language model not recorded in dict lm_module_location.')
+        self.config = AutoConfig.from_pretrained(full_llm_name)
+        self.d_lm_embedding = self.config.n_embd
+        self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_attentions = True, attn_implementation = "eager", \
+                                                    output_hidden_states = True, device_map = self.device)
+        self.retrieved_lm.h = self.retrieved_lm.h[:self.lm_layers]
+        
+        # We only train the parameters in FFN and LayerNorm
+        for _, (name, param) in enumerate(self.retrieved_lm.named_parameters()):
+            if 'ln' in name or 'wpe' in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+                
+        LLM_config = AutoConfig.from_pretrained(full_llm_name)
         LLm_hidden_size = LLM_config.hidden_size
+        
+        '''
         LLM = AutoModel.from_pretrained(LLM_name)
-        self.lora_config = LoraConfig(init_lora_weights = "gaussian", use_rslora = True, layers_to_transform = [0, 1, 2, 3])
+        self.lora_config = LoraConfig(init_lora_weights = "gaussian", use_rslora = True, layers_to_transform = [0, 1, 2])
         self.LLM = get_peft_model(LLM, self.lora_config)
+        '''
 
         # position vector, used for temporal encoding
         # FIXME: set max_len during runtime, current max_len = 4096
@@ -54,9 +75,9 @@ class LLMEncoder(nn.Module):
 
         event_emb = time_emb + events_emb                                      # [batch_size, seq_len, d_input]
         output = self.extend(event_emb)                                        # [batch_size, seq_len, LLm_hidden_size]
-        output = self.LLM(inputs_embeds = output, attention_mask = non_pad_mask)
+        output = self.retrieved_lm(inputs_embeds = output, attention_mask = non_pad_mask).last_hidden_state
                                                                                # [batch_size, seq_len, LLm_hidden_size]
-        output = self.shrink(output.last_hidden_state)                         # [batch_size, seq_len, LLm_hidden_size]
+        output = self.shrink(output)                                           # [batch_size, seq_len, d_input]
 
         return output
 
@@ -83,7 +104,7 @@ class RNN_layers(nn.Module):
 
 class TemporalLLM(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
-    def __init__(self, num_events, d_rnn, device, d_input, LLM_name):
+    def __init__(self, num_events, d_rnn, device, d_input, lm_layers, llm_class_name, full_llm_name):
         super(TemporalLLM, self).__init__()
         self.device = device
         self.num_events = num_events if num_events > 0 else 1
@@ -91,7 +112,9 @@ class TemporalLLM(nn.Module):
         self.encoder = LLMEncoder(
             num_events = self.num_events,
             d_input = d_input,
-            LLM_name = LLM_name,
+            lm_layers = lm_layers,
+            llm_class_name = llm_class_name,
+            full_llm_name = full_llm_name,
             device = self.device
         )
 

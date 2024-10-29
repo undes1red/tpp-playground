@@ -530,8 +530,8 @@ class TIFIBCModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \(t_s\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \(\\lambda^*(m, t_s)\).
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
         '''
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]
@@ -587,8 +587,8 @@ class TIFIBCModel(BasicModel):
         '''
         These two functions will sample a event sequence from the learned p^*(m, t) following the event-time prediction procedure.
         Steps:
-        1. Sample the mark \(m_p\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
-        2. Sample when a new \(m_p\) event would happen in the future time by \(p^*(t|m_p)\).
+        1. Sample the mark \\(m_p\\) from p^*(m) = \\int_{t_l}^{+\\infty}{p^*(m, \\tau)d\\tau}.
+        2. Sample when a new \\(m_p\\) event would happen in the future time by \\(p^*(t|m_p)\\).
         '''
         time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device = self.device)
                                                                                # [number_of_sampled_sequences, 1]

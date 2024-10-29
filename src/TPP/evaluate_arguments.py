@@ -16,6 +16,11 @@ class EvaluatorArguments(BasicEvaluatorArguments):
         parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
         parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
         parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
+        
+        # Specfically for the HYPRO dataset preparation.
+        parser.add_argument('--number_of_events_hypro', type=int, default = 1, help = 'The number of events that hypro should predict based on the history.')
+        parser.add_argument('--number_of_negative_samples', type=int, default = 1, help = 'The number of negative samples that each positive sequence has.')
+
 
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',

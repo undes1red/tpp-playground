@@ -3,12 +3,13 @@ import io, os
 
 # Read and convert a YAML file into a dict object.
 def read_yaml(yaml_path):
-    a = None
-    with open(yaml_path, 'r') as f:
-        try:
-            a = yaml.safe_load(f)
-        except yaml.YAMLError as exc:
-            print(exc)
+    a = {}
+    if yaml_path is not None:
+        with open(yaml_path, 'r') as f:
+            try:
+                a = yaml.safe_load(f)
+            except yaml.YAMLError as exc:
+                print(exc)
 
     return a
 
