@@ -754,9 +754,9 @@ class FullyNNModel(BasicModel):
                                                     time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_next, opt.resolution)
+                                                          opt.resolution, mean, std, mask_next)
         f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_next, mean, std, return_mean = False)
+            = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std, return_mean = False)
 
         '''
         Append additional info into the data dict.
