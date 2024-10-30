@@ -53,8 +53,10 @@ def otd_add_remove_event_cost_list(pred_event_seq, pred_time_seq, true_event_seq
         otd = np.ma.masked_invalid(otd).filled(0).mean(axis = 0)
     elif average == 'micro':
         otd = np.sum(otd_foreach_mark, axis = 0) / np.sum(number_of_events_foreach_mark)
+    elif average == 'none':
+        otd = np.sum(otd_foreach_mark, axis = 0)
     else:
-        raise Exception('Average parameter not understood. Expected values are "micro" and "macro".')
+        raise Exception('Average parameter not understood. Expected values are "micro", "macro", and "none".')
     
     return otd
 
@@ -93,8 +95,10 @@ def otd_add_remove_event_cost_number(pred_event_seq, pred_time_seq, true_event_s
         otd = np.mean([otd_one_mark / number_of_events_one_mark for (otd_one_mark ,number_of_events_one_mark) in zip(otd_foreach_mark, number_of_events_foreach_mark)])
     elif average == 'micro':
         otd = np.sum(otd_foreach_mark) / np.sum(number_of_events_foreach_mark)
+    elif average == 'none':
+        otd = np.sum(otd_foreach_mark, axis = 0)
     else:
-        raise Exception('Average parameter not understood. Expected values are "micro" and "macro".')
+        raise Exception('Average parameter not understood. Expected values are "micro", "macro", and "none".')
     
     return otd.item()
 
@@ -242,10 +246,15 @@ if __name__ == "__main__":
                true_event_seq = event_seq2, true_time_seq = time_seq2, \
                num_events = 5, add_remove_event_cost = 1.0, move_event_cost = 1.0, average = 'micro')
     print(otd_)
+
+    otd_ = otd(pred_event_seq = event_seq1, pred_time_seq = time_seq1,\
+               true_event_seq = event_seq2, true_time_seq = time_seq2, \
+               num_events = 5, add_remove_event_cost = 1.0, move_event_cost = 1.0, average = 'none')
+    print(otd_)
     
     distances, total_trans_cost, num_true, num_del, num_ins, num_align = \
         distance_between_event_seq([time_seq2, event_seq2], [time_seq1, event_seq1], del_cost = [1.0,], num_types = 5, trans_cost = 1.0)
-    print(distances)
+    print('Old Distance: ' + str(distances))
     
     otd_ = otd(pred_event_seq = None, pred_time_seq = time_seq1,\
                true_event_seq = None, true_time_seq = time_seq2, \
@@ -262,6 +271,11 @@ if __name__ == "__main__":
                num_events = 5, add_remove_event_cost = np.arange(0.1, 1.1, 0.1), move_event_cost = 1.0, average = 'micro')
     print(otd_)
 
+    otd_ = otd(pred_event_seq = event_seq1, pred_time_seq = time_seq1,\
+               true_event_seq = event_seq2, true_time_seq = time_seq2, \
+               num_events = 5, add_remove_event_cost = np.arange(0.1, 1.1, 0.1), move_event_cost = 1.0, average = 'none')
+    print(otd_)
+
     distances, total_trans_cost, num_true, num_del, num_ins, num_align = \
         distance_between_event_seq([time_seq2, event_seq2], [time_seq1, event_seq1], del_cost = np.arange(0.1, 1.1, 0.1), num_types = 5, trans_cost = 1.0)
-    print(distances)
+    print('Old Distance: ' + str(distances))

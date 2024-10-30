@@ -9,7 +9,6 @@ from src.toolbox.misc import check_should_we_stop_sampling
 
 
 @torch.no_grad()
-# @torch.compile() # Only enable compile() if the environment supports it.
 def sample_time(self, sampling_approach = 'its', task = 'mt', autoregressive = False, *args, **kwargs):
     '''
     number_of_total_samples: how many samples do we need to predict one next event.

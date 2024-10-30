@@ -15,6 +15,9 @@ class BasicEvaluatorArguments:
                             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
         self.parser.add_argument('--fpcounter', action='store_true', 
                             help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.")
+        self.parser.add_argument('--compile', action='store_true', 
+                            help="True: Use torch.compile() to compile models or functions to speed up training and evaluation.\n False: disable torch.compile().")
+
 
         # The number of Dataloader worker
         self.parser.add_argument('--n_worker', default=4, type=int,

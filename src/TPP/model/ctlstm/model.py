@@ -3,11 +3,10 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, conditional_decorator
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
-from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.TPP.model.ctlstm.plot import *
 from src.toolbox.misc import pack_one_value_to_dict
@@ -22,6 +21,7 @@ class CTLSTMWrapper(BasicModel):
                  integration_sample_rate = 100, survival_loss_during_training = True, patch_length = 5):
         super(CTLSTMWrapper, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
@@ -225,7 +225,10 @@ class CTLSTMWrapper(BasicModel):
         return mtpp_loss, events_loss
 
 
-    sample_time = sample_time
+    def sample_time(self, *args, **kwargs):
+        return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
+
+
     sample_time_event = sample_time_event
     sample_event_time = sample_event_time
 

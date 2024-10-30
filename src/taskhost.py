@@ -119,12 +119,11 @@ class TaskHost:
             logger.info(f'We use the CUDA device with id {self.opt.cuda_device}.')
             props = torch.cuda.get_device_properties(self.opt.cuda_device)
             logger.info(f'{props.name} \t Memory: {props.total_memory / (1024**3):.2f}GiB.')
-            self.opt.compile = False
             if props.major > 6:
-                logger.info(f'Device supports CUDA {props.major}.{props.minor} higher than 6.0. We will try torch.compile().')
-                self.opt.compile = True
+                logger.info(f'Device supports CUDA {props.major}.{props.minor} higher than 6.0. torch.compile() is possible.')
             else:
                 logger.info(f'Device supports CUDA {props.major}.{props.minor} not higher than 6.0. torch.compile() is impossible.')
+                self.opt.compile = False
         else:
             logger.warning('We use cpu.')
 

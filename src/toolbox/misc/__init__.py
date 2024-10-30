@@ -1,3 +1,4 @@
+from src.toolbox.misc.conditional_decorator import conditional_decorator
 from src.toolbox.misc.check_tensor import check_tensor, check_number
 from src.toolbox.misc.tensor_to_array import move_from_tensor_to_ndarray
 from src.toolbox.misc.stable_palette import stable_palette
