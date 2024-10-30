@@ -11,7 +11,7 @@ from src.TPP.model.thp.sample import sample_time
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.TPP.model.thp.plot import *
 from src.TPP.model.thp.submodel import THP
-from src.TPP.model.utils import *
+from src.TPP.model.utils import predict_event, decide_resolution_inf_and_resolution_between_events, get_f1_and_top_k_acc_in_mae_e
 
 
 class THPWrapper(BasicModel):
@@ -21,6 +21,7 @@ class THPWrapper(BasicModel):
                  survival_loss_during_training = True):
         super(THPWrapper, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']

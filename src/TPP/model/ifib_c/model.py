@@ -3,15 +3,14 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, check_should_we_stop_sampling
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, check_should_we_stop_sampling, pack_one_value_to_dict, conditional_decorator
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.basic_tpp_model import BasicModel
 from src.TPP.model.ifib_c.submodel import IFIBC
 from src.TPP.model.ifib_c.sample import sample_time
-from src.toolbox.misc import pack_one_value_to_dict
-from src.TPP.model.utils import *
 from src.TPP.model.ifib_c.plot import *
+from src.TPP.model.utils import predict_event, get_f1_and_top_k_acc_in_mae_e, step_split
 
 
 class IFIBCModel(BasicModel):
@@ -27,6 +26,7 @@ class IFIBCModel(BasicModel):
                  epsilon = 0.0, sample_rate = 32, mae_step = 32, mae_e_step = 32):
         super(IFIBCModel, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
@@ -254,7 +254,8 @@ class IFIBCModel(BasicModel):
         return loss
     
     
-    sample_time = sample_time
+    def sample_time(self, *args, **kwargs):
+        return conditional_decorator(torch.compile, False, sample_time)(self, *args, **kwargs)
 
     
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):

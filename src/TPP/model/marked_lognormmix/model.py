@@ -2,14 +2,14 @@ import torch, copy
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, reduce, repeat
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.misc import move_from_tensor_to_ndarray, conditional_decorator, pack_one_value_to_dict
 from src.toolbox.metrics import L1_distance_across_events
 
 from src.TPP.model.marked_lognormmix.log_norm_mix import MarkedLogNormMix
 from src.TPP.model.marked_lognormmix.plot import *
-from src.toolbox.misc import pack_one_value_to_dict
-from src.TPP.model.utils import *
-from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel
+from src.TPP.model.utils import get_f1_and_top_k_acc_in_mae_e
+from src.TPP.model.marked_lognormmix.sample import sample_time
 
 
 class MarkedLogNormMixWrapper(BasicModel):
@@ -18,6 +18,7 @@ class MarkedLogNormMixWrapper(BasicModel):
                  survival_loss_during_training = True):
         super(MarkedLogNormMixWrapper, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.survival_loss_during_training = survival_loss_during_training
         self.sample_rate = 32
@@ -168,87 +169,8 @@ class MarkedLogNormMixWrapper(BasicModel):
         return (-loglik).sum()
 
 
-    @torch.no_grad()
-    def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
-        '''
-        number_of_total_samples: how many samples do we need to predict one next event.
-        step: we output "step" samples to reduce memory comsumption during inference.
-        sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
-        task: 'mt' for mark first time second, 'tm' for time first mark second.
-        '''
-
-        dict_sampling_apparoch = {
-            'its': self.sampling_by_its,
-            'thinning': self.sampling_by_thinning
-        }
-
-        return dict_sampling_apparoch[sampling_approach](task, *args, **kwargs)
-
-
-    def sampling_by_its(self, task, *args, **kwargs):
-        dict_apparoch_for_tasks = {
-            'mt': self.sampling_by_its_for_mt,
-            'tm': self.sampling_by_its_for_tm
-        }
-
-        return dict_apparoch_for_tasks[task](*args, **kwargs)
-    
-
-    def sampling_by_its_for_tm(self, input_events, input_time, input_mask, mean, std):
-        def bisect_target(taus, probability_threshold):
-            probability_sum, _ = self.model.probe_sum_of_cdf(input_events, input_time, input_mask, taus, mean, std)
-                                                                               # [sample_rate, batch_size, seq_len + 1]
-            return probability_sum - probability_threshold
-        
-        probability_threshold = torch.zeros((self.sample_rate, *input_time.shape), device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len]
-        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sample_rate, batch_size, seq_len]
-        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                     bisect_target, probability_threshold)     # [sample_rate, batch_size, seq_len + 1]
-
-        return tau_pred
-
-
-    def sampling_by_its_for_mt(self, input_events, input_time, input_mask, p_m, mean, std):
-        '''
-        The input should be the original minibatch
-        MAE evaluation part, dwg and fullynn exclusive
-        '''
-        def bisect_target(taus, probability_threshold, p_m):
-            p_mt, _ = self.model.probe_cdf(input_events, input_time, input_mask, taus, mean, std)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events]
-            p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events]
-
-            return p_gap
-
-        batch_size, seq_len = input_events.shape
-        probability_threshold = torch.zeros((self.sample_rate, batch_size, seq_len, self.num_events + 1), device = self.device)
-                                                                               # [sample_rate, batch_size, seq_len + 1, num_events + 1]
-        torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-        p_m = p_m.unsqueeze(dim = 0)                                           # [1, batch_size, seq_len, num_events]
-        tau_pred = median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                     bisect_target, probability_threshold, p_m)# [sample_rate, batch_size, seq_len + 1, num_events + 1]
-
-        return tau_pred
-
-
-    def sampling_by_thinning(self, task, *args, **kwargs):
-        dict_apparoch_for_tasks = {
-            'mt': self.sampling_by_thinning_for_mt,
-            'tm': self.sampling_by_thinning_for_tm
-        }
-
-        return dict_apparoch_for_tasks[task](*args, **kwargs)
-    
-
-    def sampling_by_thinning_for_mt(self, *args, **kwargs):
-        raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
-
-
-    def sampling_by_thinning_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std):
-        raise Exception('Marked LogNormMix does not know intensity functions, which thinning algorithm requires. Please use ITS by setting sampling_approach = its.')
+    def sample_time(self, *args, **kwargs):
+        return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
 
 
     @torch.no_grad()

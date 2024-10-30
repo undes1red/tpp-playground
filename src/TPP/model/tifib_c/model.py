@@ -3,14 +3,14 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict, conditional_decorator
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
-from src.TPP.model.basic_tpp_model import BasicModel, its_lower_bound, its_upper_bound
+from src.TPP.model.basic_tpp_model import BasicModel
 from src.TPP.model.tifib_c.submodel import TIFIBC
-from src.toolbox.misc import pack_one_value_to_dict
 from src.TPP.model.utils import *
 from src.TPP.model.tifib_c.plot import *
+from src.TPP.model.tifib_c.sample import sample_time
 
 
 class TIFIBCModel(BasicModel):
@@ -26,6 +26,7 @@ class TIFIBCModel(BasicModel):
                  mae_e_step = 8, survival_loss_during_training = True):
         super(TIFIBCModel, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
@@ -250,143 +251,9 @@ class TIFIBCModel(BasicModel):
         return loss
 
 
-    def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
-        '''
-        number_of_total_samples: how many samples do we need to predict one next event.
-        step: we output "step" samples to reduce memory comsumption during inference.
-        sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
-        task: 'mt' for mark first time second, 'tm' for time first mark second.
-        '''
-
-        dict_sampling_apparoch = {
-            'its': self.sampling_by_its,
-            'thinning': self.sampling_by_thinning
-        }
-
-        return dict_sampling_apparoch[sampling_approach](task, *args, **kwargs)
-
-
-    def sampling_by_its(self, task, *args, **kwargs):
-        dict_apparoch_for_tasks = {
-            'mt': self.sampling_by_its_for_mt,
-            'tm': self.sampling_by_its_for_tm
-        }
-
-        return dict_apparoch_for_tasks[task](*args, **kwargs)
-
-
-    def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m,
-                               number_of_total_samples, step, inf_val, mean, std, autoregressive = False):
-        # Preprocess
-        sample_rate_list = step_split(number_of_total_samples, step)
-
-        def bisect_target(taus, probability_threshold):
-            # \\int_{tau}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
-            if autoregressive:
-                probability_integral_from_t_to_infinite = self.model('sample', events_history, time_history, taus, mask_history, mean = mean, std = std)
-                                                                               # [sample_rate, num_events]
-            else:
-                probability_integral_from_t_to_infinite = self.model('default_forward', events_history, time_history, taus, mask_history, mean = mean, std = std)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            # \\int_{0}^{tau}{p(m, \\tau|\\mathcal{H})d\\tau}
-            p_mt = p_m - probability_integral_from_t_to_infinite               # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
-            p_t_m = p_mt / p_m                                                 # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
-            p_gap = p_t_m - probability_threshold                              # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
-
-            return p_gap
-
-        # Preprocess
-        tau_pred = []
-        batch_size, seq_len = time_history.shape
-        if not autoregressive:
-            p_m = p_m.unsqueeze(dim = 0)                                       # [1, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, 1, num_events]
+    def sample_time(self, *args, **kwargs):
+        return conditional_decorator(torch.compile, False, sample_time)(self, *args, **kwargs)
     
-        for sub_sample_rate in sample_rate_list:
-            if autoregressive:
-                probability_threshold = torch.zeros((sub_sample_rate, self.num_events), device = self.device)
-                                                                               # [sub_sample_rate, num_events]
-            else:
-                probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device = self.device)
-                                                                               # [sub_sample_rate, batch_size, seq_len, num_events]
-            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sub_sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sub_sample_rate, num_events]
-            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                              bisect_target, probability_threshold, r_val = inf_val))
-                                                                               # [sub_sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sub_sample_rate, num_events]
-
-        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
-
-        return tau_pred
-
-
-    def sampling_by_its_for_tm(self, events_history, time_history, mask_history,
-                               number_of_total_samples, step, mean, std, 
-                               autoregressive = False):
-        # Preprocess
-        sample_rate_list = step_split(number_of_total_samples, step)
-
-        def evaluate(taus, probability_threshold, integral_from_zero_to_inf):
-            taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [..., num_events]
-            if autoregressive:
-                probability_integral_from_t_to_inf = self.model('sample', events_history, time_history, taus, mask_history, mean, std)
-                                                                               # [sample_rate, num_events]
-            else:
-                probability_integral_from_t_to_inf = self.model('default_forward', events_history, time_history, taus, mask_history, mean, std)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
-            # P_m(t) = \\int_{0}^{t}{p(t|m, \\mathcal{H})}
-            probability_integral = integral_from_zero_to_inf - probability_integral_from_t_to_inf
-                                                                               # [sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sample_rate, num_events]
-            probability_integral = torch.sum(probability_integral, dim = -1)   # [sample_rate, batch_size, seq_len] if not autoregressive else [sample_rate]
-            
-            return probability_integral - probability_threshold
-
-        tau_pred = []
-        batch_size, seq_len = time_history.shape
-
-        for sub_sample_rate in sample_rate_list:
-            if autoregressive:
-                probability_threshold = torch.zeros(sub_sample_rate, device = self.device)
-                                                                               # [sub_sample_rate]
-            else:
-                probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len), device = self.device)
-                                                                               # [sub_sample_rate, batch_size, seq_len]
-            torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
-                                                                               # [sub_sample_rate, batch_size, seq_len] if not autoregressive else [sub_sample_rate]
-
-            time_next_zero = torch.zeros_like(probability_threshold)           # [sub_sample_rate, batch_size, seq_len] if not autoregressive else [sub_sample_rate]
-            time_next_zero = repeat(time_next_zero, '... -> ... ne', ne = self.num_events)
-                                                                               # [sub_sample_rate, batch_size, seq_len, num_events] if not autoregressive else [sub_sample_rate, num_events]
-            if autoregressive:
-                integral_from_zero_to_inf = self.model('sample', events_history, time_history, time_next_zero, mask_history, mean = mean, std = std)
-                                                                               # [sub_sample_rate, num_events]
-            else:
-                integral_from_zero_to_inf = self.model('default_forward', events_history, time_history, time_next_zero, mask_history, mean = mean, std = std)
-                                                                               # [sub_sample_rate, batch_size, seq_len, num_events]
-
-            tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                              evaluate, probability_threshold, integral_from_zero_to_inf))
-                                                                               # [sub_sample_rate, batch_size, seq_len] if not autoregressive else [sub_sample_rate]
-        tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len] if not autoregressive else [sample_rate]
-
-        return tau_pred
-
-
-    def sampling_by_thinning(self, task, *args, **kwargs):
-        dict_apparoch_for_tasks = {
-            'mt': self.sampling_by_thinning_for_mt,
-            'tm': self.sampling_by_thinning_for_tm
-        }
-
-        return dict_apparoch_for_tasks[task](*args, **kwargs)
-    
-
-    def sampling_by_thinning_for_mt(self, *args, **kwargs):
-        raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
-
-
-    def sampling_by_thinning_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std):
-        raise Exception('IFIB does not know intensity functions, which thinning algorithm requires. Please use ITS by setting sampling_approach = its.')
-
 
     def mean_absolute_error_and_f1(self, events_history, events_next, time_history, time_next, mask_history, mask_next, mean, std):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
