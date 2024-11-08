@@ -2,7 +2,7 @@
 # Just pack numerous tasks and run them one by one automatically.
 
 import os, argparse, importlib, copy
-from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks
+from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks, read_yaml
 from src.taskhost import get_logger
 
 
@@ -17,7 +17,7 @@ parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate',
                                              train: training mode. Execute training tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              evaluate: evaluation mode. Execute Evaluation tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              previous_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_previous_failed_tasks.txt and execute these tasks one by one.')
-parser.add_argument('--procedure_name', type = str, choices = ['TPP'], \
+parser.add_argument('--procedure_name', type = str, choices = ['TPP', 'LH'], \
                                         help = 'You need this argument to select the proper parameter set.')
 parser.add_argument('--GPU', nargs='+', default = None, help='How many GPU you want to use? Tell us the ID of available GPUs, \
                                                               or set it to a negative number or None to go CPU-only.')
@@ -27,10 +27,12 @@ parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The
                                                                              The default value, -1, will automatically use all GPUs, one GPU for one task. \
                                                                              This argument is mandatory when executing tasks on CPU.')
 parser.add_argument('--slurm', action  ='store_true', help = 'Experimental')
+parser.add_argument('--slurm_config', type = str, help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
 
 # Preprocess
 opt = parser.parse_args()
 use_gpu = False
+slurm_arguments = {}
 if opt.GPU is not None:
     if not opt.slurm:
         gpu_pool = [int(gpu_id) for gpu_id in opt.GPU]
@@ -42,6 +44,7 @@ if opt.GPU is not None:
     else:
         use_gpu = True
         gpu_pool = [int(gpu_id) for gpu_id in opt.GPU] * opt.num_task_parallel
+        slurm_arguments = read_yaml(os.path.join(root_path, opt.slurm_config))
 
 
 if not use_gpu:
@@ -118,7 +121,7 @@ else:
         generated_tasks.append(' '.join(task))
     
 
-failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm)
+failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments)
 
 # Report the execution sumamry:
 logger.warning('==========================================')

@@ -1,0 +1,98 @@
+import torch
+import torch.nn as nn
+from einops import rearrange
+
+from src.toolbox.transformer import TransformerLayer
+from src.toolbox.position_embedding import BiasedPositionalEmbedding
+from src.toolbox.subsequent_mask import get_subsequent_mask
+
+
+class Encoder(nn.Module):
+    """ A encoder model with self attention mechanism. """
+    def __init__(self,
+                 num_types, d_input, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout, 
+                 device):
+        super(Encoder, self).__init__()
+        self.device = device
+        self.d_input = d_input
+        self.num_types = num_types
+
+        # position vector, used for temporal encoding
+        # FIXME: set max_len during runtime, current max_len = 4096
+        self.position_emb = BiasedPositionalEmbedding(d_input, max_len = 4096, device = self.device)
+
+        # event type embedding
+        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx = num_types, device = self.device)
+
+        self.layer_stack = nn.ModuleList([
+            TransformerLayer(d_input = d_input, d_hidden = d_hidden, n_head = n_head,\
+                             d_qk = d_qk, d_v = d_v, dropout = dropout, device = self.device)
+            for _ in range(n_layers)])
+
+
+    def forward(self, event_type, event_time, non_pad_mask):
+        """
+        Encode event sequences via masked self-attention.
+        Args:
+        1. event_type: 
+        2. event_time: input time intervals. shape: [batch_size, seq_len]
+        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
+        """
+        # prepare attention masks
+        # self_attn_mask is where we cannot look, i.e., the future and the padding
+        seq_len = event_type.shape[-1]
+        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device).unsqueeze(dim = -3)
+                                                                               # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]
+        self_attn_mask_keypad = rearrange(non_pad_mask, '... s -> ... () s')   # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]
+        self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]
+
+        # Time Embedding
+        time_emb = self.position_emb(seq_len, event_time)                      # [batch_size, 1 + number_of_negative_samples, seq_len, d_input]
+
+        if event_type != None:
+            events_emb = self.event_emb(event_type)                            # [batch_size, 1 + number_of_negative_samples, seq_len, d_input]
+        else:
+            events_emb = torch.zeros_like(time_emb, device = self.device)      # [batch_size, 1 + number_of_negative_samples, seq_len, d_input]
+
+        output = time_emb + events_emb                                         # [batch_size, 1 + number_of_negative_samples, seq_len, d_input]
+        for enc_layer in self.layer_stack:
+            output, _ = enc_layer(
+                output,
+                non_pad_mask = non_pad_mask,
+                self_attn_mask = self_attn_mask)                               # [batch_size, seq_len, d_input]
+        return output
+
+
+class TransformerTPP(nn.Module):
+    """ A sequence to sequence model with attention mechanism. """
+    def __init__(self, num_types, device, d_input, d_hidden,
+                 n_layers, n_head, d_qk, d_v, dropout):
+        super(TransformerTPP, self).__init__()
+        self.device = device
+        self.num_types = num_types if num_types > 0 else 1
+
+        self.encoder = Encoder(
+            num_types = self.num_types,
+            d_input = d_input,
+            d_hidden = d_hidden,
+            n_layers = n_layers,
+            n_head = n_head,
+            d_qk = d_qk,
+            d_v = d_v,
+            dropout = dropout,
+            device = self.device
+        )
+
+
+    def forward(self, event_time, event_type, non_pad_mask):
+        """
+        Return intensity functions' values for all events and time and events, if possible, predictions.
+        Args:
+        1. event_time: the length of all time intervals between two adjacent events. shape: [batch_size, seq_len]
+        2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
+        3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
+        """
+        enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, 1 + number_of_negative_samples, seq_len, d_input]
+
+        return enc_output

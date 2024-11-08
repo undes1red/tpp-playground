@@ -29,7 +29,7 @@ def check_tensor(x, positive = True, inf = True, nan = True, break_out = True):
         if_nan = torch.isnan(x).any().item()
     
     if break_out:
-        assert if_positive and not if_inf and not if_nan, 'Input Check failed!'
+        assert if_positive and not if_inf and not if_nan, f'Input Check failed! Input: {x}.'
     else:
         return if_positive and not if_inf and not if_nan
 
@@ -50,6 +50,6 @@ def check_number(x, positive = True, inf = True, nan = True, break_out = True):
         if_nan = math.isnan(x)
 
     if break_out:
-        assert if_positive and not if_inf and not if_nan, 'Input Check failed!'
+        assert if_positive and not if_inf and not if_nan, f'Input Check failed! Input: {x}.'
     else:
         return if_positive and not if_inf and not if_nan

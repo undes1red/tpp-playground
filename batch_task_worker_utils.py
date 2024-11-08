@@ -1,26 +1,26 @@
-import copy, math, subprocess, time, os
+import copy, math, subprocess, time, os, yaml
 from src.taskhost import get_logger
 
 
 logger = get_logger(__name__)
 
-slurm_kwargs = {
+default_slurm_kwargs = {
     'slurm_partition': 'SCT',
     'slurm_job_name': 'slurm_task',
-    'slurm_cpus_per_task': 8,
+    'slurm_cpus_per_task': 4,
     'slurm_time': 1400,
-    'slurm_mem': '32GB',
+    'slurm_mem': '16GB',
     'slurm_gres': 'gpu:1',
     'slurm_qos': 'normal'
 }
 
 monitor_frequency = 10
-def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir, use_slurm):  
+def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir, use_slurm, **kwargs):  
     if use_slurm:
         if use_gpu:
-            return monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir)
+            return monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir, **kwargs)
         else:
-            return monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir)
+            return monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir, **kwargs)
     else:
         if use_gpu:
             return monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
@@ -279,7 +279,7 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
     return failed_tasks
 
 
-def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir):
+def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir, slurm_arguments):
     import submitit
     
     number_of_tasks = len(tasks)
@@ -292,6 +292,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
 
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        slurm_kwargs = default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
         job = executor.submit(function)
@@ -343,7 +344,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
 
 
 
-def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir):
+def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir, slurm_arguments):
     import submitit
     # I don't quite know how the GPU allocation works in slurm.
     # Due to this, we temporarily disable gpu_pool in this function.
@@ -358,6 +359,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
         logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        slurm_kwargs = default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
         job = executor.submit(function)
@@ -405,3 +407,16 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
         time.sleep(1/monitor_frequency)
     
     return failed_tasks
+
+
+# Read and convert a YAML file into a dict object.
+def read_yaml(yaml_path):
+    a = {}
+    if yaml_path is not None:
+        with open(yaml_path, 'r') as f:
+            try:
+                a = yaml.safe_load(f)
+            except yaml.YAMLError as exc:
+                print(exc)
+
+    return a

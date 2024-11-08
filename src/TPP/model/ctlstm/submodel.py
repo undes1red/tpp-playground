@@ -109,6 +109,48 @@ class CTLSTM(nn.Module):
         return integral_all_events, intensity_all_events
 
 
+    def nhps_get_history_state(self, time_history, events_history):
+        seq_len = events_history.shape[-1]
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
+
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+        
+        return history
+
+
+    def nhps_get_decayed_state(self, history, time_next, num_dimension_prior_batch = 0):
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, d_input]
+        '''
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
+        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, d_input]
+        '''
+        return hidden_state_at_t
+
+
+    def nhps_get_decayed_state_of_a_interval(self, history, time_interval_start, time_interval_length, num_dimension_prior_batch = 0):
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_interval_length.unsqueeze(dim = -1) * time_multiplier + time_interval_start.unsqueeze(dim = -1)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate]
+        expanded_hidden_states = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time.float(), num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, d_input]
+        
+        return expanded_hidden_states, expanded_time
+
+
     def sample_for_tm(self, time_history, time_next, events_history):
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [number_of_sampled_sequences, seq_len, d_mark_embedding]

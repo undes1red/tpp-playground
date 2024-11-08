@@ -25,8 +25,8 @@ def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
 
 def sampling_by_its(self, task, *args, **kwargs):
     dict_apparoch_for_tasks = {
-        'mt': self.sampling_by_its_for_mt,
-        'tm': self.sampling_by_its_for_tm
+        'mt': sampling_by_its_for_mt,
+        'tm': sampling_by_its_for_tm
     }
 
     return dict_apparoch_for_tasks[task](self, *args, **kwargs)

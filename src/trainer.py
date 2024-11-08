@@ -50,12 +50,6 @@ class Trainer:
         mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
         mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
 
-        try:
-            from accelerate import Accelerator
-            self.accelerator = Accelerator()
-        except ImportError as e:
-            logger.warning('Huggingface Accelerate not found! We fallback to plain pytorch training.')
-            self.accelerator = None
 
     def get_procedure_monitor_dict(self, additional_info = {}):
         monitored_info = {'lr': pack_one_value_to_dict(get_lr(self.optimizer), '8.5f'),

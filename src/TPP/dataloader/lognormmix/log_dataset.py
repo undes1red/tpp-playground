@@ -1,15 +1,12 @@
 import os
 import torch.utils as utils
-import pandas as pd
 import numpy as np
+
+from src.toolbox.misc import load_from_pkl
 
 
 def concatenate(per_line, item1 = np.array([]), item2 = np.array([])):
     return np.concatenate([item1, per_line, item2])
-
-
-def concatenate_shift(per_line, item1, item2):
-    return np.concatenate([item1 + per_line[0] - 1, per_line, item2 + item1 + per_line[0] - 1])
 
 
 class LogNormDataset(utils.data.Dataset):
@@ -20,7 +17,6 @@ class LogNormDataset(utils.data.Dataset):
 
     def __init__(self, data, device, property_dict, input_norm_data = False, evaluate = False, shift = True):
         super(LogNormDataset, self).__init__()
-        self.data = data
         self.device = device
         self.evaluate = evaluate
         self.start_time = property_dict['t_0']
@@ -35,32 +31,45 @@ class LogNormDataset(utils.data.Dataset):
         '''
         Convert data from list to np.array.
         '''
+        '''
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-
+        '''
+        self.time_seq = data['time_seq']
+        self.score = data['score']
+        self.intensity = data['intensity']
+        self.event = data['event']
+        self.dataset_size = len(self.time_seq)
+        
         # Data preprocessing
-        self.data.event = self.data.event.apply(concatenate, item2 = np.array([self.event_num]))
-        self.data.time_seq = self.data.time_seq.apply(np.diff, prepend = self.start_time, append = self.end_time)
-        self.data.time_seq = self.data.time_seq + (self.epsilon if shift else 0)
-
+        self.event = [concatenate(item, item2 = np.array([self.event_num])) for item in self.event]
+        self.time_seq = [np.diff(item, prepend = self.start_time, append = self.end_time) + (self.epsilon if shift else 0) for item in self.time_seq]
+        
+        '''
+        self.event = self.data.event.apply(concatenate, item2 = np.array([self.event_num]))
+        self.time_seq = self.data.time_seq.apply(np.diff, prepend = self.start_time, append = self.end_time)
+        self.time_seq = self.data.time_seq + (self.epsilon if shift else 0)
+        '''
+        
         # Data normalization
         if input_norm_data:
             time_inteval = np.array([])
-            for item in self.data['time_seq'].values.tolist():
+            for item in self.time_seq:
                 time_inteval = np.concatenate((time_inteval, item[:-1]))
             regenerated_data = np.log(time_inteval + self.epsilon)
             self.mean = regenerated_data.mean()
             self.std = regenerated_data.std()
+            del time_inteval, regenerated_data
         
         '''
         Fix datatype
         '''
-        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
-        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int32)
-        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+        self.time_seq = [np.array(seq, dtype = np.float32) for seq in self.time_seq]
+        self.score = [np.array(seq, dtype = np.float32) for seq in self.score]
+        self.intensity = [np.array(seq, dtype = np.float32) for seq in self.intensity]
+        self.event = [np.array(seq, dtype = np.int32) for seq in self.event]
 
 
     def __getitem__(self, index):
@@ -81,18 +90,18 @@ class LogNormDataset(utils.data.Dataset):
             Seems that t_start and t_end are fixed and stay unchanged unless the dataset get changed.
             finally we should tell the model how many event types the dataset has.(Maybe this can be a model hyperparameter)
             '''
-            event_tensor = self.data.iloc[index].event
-            time_tensor = self.data.iloc[index].time_seq
-            score = self.data.iloc[index].score
+            event_tensor = self.event[index]
+            time_tensor = self.time_seq[index]
+            score = self.score[index]
 
             if self.evaluate:
-                return event_tensor, time_tensor, score, self.data.iloc[index].intensity
+                return event_tensor, time_tensor, score, self.intensity[index]
             else:
                 return event_tensor, time_tensor, score
 
 
     def __len__(self):
-        return self.data.shape[0]
+        return self.dataset_size
 
 
     def data_collator(self, data):
@@ -109,7 +118,7 @@ class LogNormDataset(utils.data.Dataset):
             '''
             The final dummy event should be excluded.
             '''
-            mask = np.array([1] * (item[0].size - 1) + [0] * (pad_length + 1))
+            mask = np.array([1] * (item[0].size - 1) + [0] * (pad_length + 1), dtype = np.bool)
             padded_time_seq = np.pad(item[1], (0, pad_length), mode = 'mean')
             padded_event = np.pad(item[0], (0, pad_length), mode = 'minimum')
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
@@ -128,18 +137,10 @@ class LogNormDataset(utils.data.Dataset):
 
 def read_data(path, file_names):
     data_raw = {}
-    is_csv = file_names[0].split('.')[-1] == 'csv'
     try:
-        if is_csv:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_csv(
-                    os.path.join(path, file + '.' + type))
-        else:
-            for file_name in file_names:
-                file, type = file_name.split('.')
-                data_raw[file] = pd.read_json(
-                    os.path.join(path, file + '.' + type))
+        for file_name in file_names:
+            file, _ = file_name.split('.', 1)
+            data_raw[file] = load_from_pkl(os.path.join(path, file_name), compression = 'lzma')
     except:
         raise TypeError(
             f"Wrong datafile format. Please check your data file in {path}")

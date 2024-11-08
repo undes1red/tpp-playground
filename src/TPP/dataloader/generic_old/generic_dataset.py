@@ -1,8 +1,7 @@
 import torch.utils as utils
 import os
+import pandas as pd
 import numpy as np
-
-from src.toolbox.misc import load_from_pkl
 
 
 def prepend(per_line, number):
@@ -27,6 +26,7 @@ class generic_dataset(utils.data.Dataset):
     '''
     def __init__(self, data, device, property_dict, evaluate = False, shift = False, input_norm_data = False):
         super(generic_dataset, self).__init__()
+        self.data = data
         self.device = device
         self.evaluate = evaluate
         self.number_of_events = property_dict['num_events']
@@ -38,56 +38,34 @@ class generic_dataset(utils.data.Dataset):
         '''
         Convert data from list to np.array.
         '''
-        self.time_seq = data['time_seq']
-        self.score = data['score']
-        self.intensity = data['intensity']
-        self.event = data['event']
-        
-        assert len(self.time_seq) == len(self.score) == len(self.intensity) == len(self.event), 'Dataset size mismatches!'
-        self.dataset_size = len(self.time_seq)
+        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
+        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
+        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
+        self.data.event = self.data.event.apply(np.array, dtype = np.int64)
 
         # Data preprocessing
         # we remove the end dummy event from the sequence when evaluate = True
         if self.evaluate:
-            self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
-            '''
             self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
-            '''
         else:
             # Use T
             # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
             # Do not use T
-            self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
-            self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
-            self.event = [append(seq, self.number_of_events) for seq in self.event]
-
-            '''
             self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
             self.data.time_seq = self.data.time_seq.apply(append, number = 0.1)
             self.data.event = self.data.event.apply(append, number = self.number_of_events)
-            '''
 
-        self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
-        self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
-        self.event = [prepend(seq, self.number_of_events) for seq in self.event]
-        '''
-        self.time_seq = self.data.time_seq.apply(prepend, number = 0)
+        self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
+        self.data.time_seq = self.data.time_seq.apply(prepend, number = 0)
         self.data.event = self.data.event.apply(prepend, number = self.number_of_events)
-        '''
 
         '''
         Fix datatype
-        '''
-        self.time_seq = [np.array(seq, dtype = np.float32) for seq in self.time_seq]
-        self.score = [np.array(seq, dtype = np.float32) for seq in self.score]
-        self.intensity = [np.array(seq, dtype = np.float32) for seq in self.intensity]
-        self.event = [np.array(seq, dtype = np.int32) for seq in self.event]
         '''
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
         self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
         self.data.event = self.data.event.apply(np.array, dtype = np.int64)
-        '''
 
 
     def __getitem__(self, index):
@@ -101,18 +79,18 @@ class generic_dataset(utils.data.Dataset):
             ]
         else:
             if self.evaluate:
-                return self.time_seq[index], \
-                       self.event[index], \
-                       self.score[index],\
-                       self.intensity[index]
+                return self.data.iloc[index].time_seq, \
+                       self.data.iloc[index].event, \
+                       self.data.iloc[index].score,\
+                       self.data.iloc[index].intensity
             else:
-                return self.time_seq[index], \
-                       self.event[index], \
-                       self.score[index]
+                return self.data.iloc[index].time_seq, \
+                       self.data.iloc[index].event, \
+                       self.data.iloc[index].score
 
 
     def __len__(self):
-        return self.dataset_size
+        return self.data.shape[0]
     
     
     def data_collator(self, data):
@@ -127,7 +105,7 @@ class generic_dataset(utils.data.Dataset):
         padded_data = []
         for item in data:
             pad_length = max_length_of_this_batch - item[0].size
-            mask = np.array([1] * item[0].size + [0] * pad_length, dtype = np.bool)
+            mask = np.array([1] * item[0].size + [0] * pad_length)
             padded_time_seq = np.pad(item[0], (0, pad_length), mode = 'constant', constant_values = 0)
             padded_event = np.pad(item[1], (0, pad_length), mode = 'constant', constant_values = self.number_of_events)
             padded_score = np.pad(item[2], (0, pad_length), mode = 'constant', constant_values = 0)
@@ -148,8 +126,9 @@ def read_data(path, file_names):
     data_raw = {}
     try:
         for file_name in file_names:
-            file, _ = file_name.split('.', 1)
-            data_raw[file] = load_from_pkl(os.path.join(path, file_name), compression = 'lzma')
+            file, _ = file_name.split('.')
+            data_raw[file] = pd.read_json(
+                os.path.join(path, file_name))
     except:
         raise TypeError(
             f"Wrong datafile format. Please check your data file in {path}")

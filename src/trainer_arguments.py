@@ -27,7 +27,7 @@ class BasicTrainerArguments:
         
         # Datasets.
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/${main_procedure_name}.')
-        self.parser.add_argument('--dataset_type', type=str, default='json', help='The format of the required dataset.')
+        self.parser.add_argument('--dataset_type', type=str, default='pkl.lzma', help='The format of the required dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--training_data_name', type=str, default='train', help='Name of the dataset used for training the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')

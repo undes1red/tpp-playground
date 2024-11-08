@@ -110,7 +110,7 @@ ENV/
 *.bin
 
 # The data, config files, and outputs
-/data/
+/data*/
 results*/
 output*/
 raw_input/
@@ -156,6 +156,7 @@ src/TPP_patch/*
 src/ehd/*
 src/ml/*
 src/TPP_imputation/*
+src/MDI/*
 src/TPP_ood/*
 
 

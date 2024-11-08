@@ -42,7 +42,7 @@ def easy_model_load(root_path, replace_id, dataset_name, dataset_name_for_model,
     
     abs_model_config = os.path.join(root_path, 'config', 'TPP', kwargs['model_name'], dataset_name_for_model, kwargs['model_config']) if kwargs['model_config'] else None
     model_param = read_yaml(abs_model_config)
-    dataset_info_dict = SimpleNamespace(info_dict = info_dict)
+    dataset_info_dict = SimpleNamespace(info_dict = info_dict, compile = False)
     model = model_class(device = device, opt = dataset_info_dict, **model_param)
     
     model_identifier = suffix(SimpleNamespace(**kwargs), *kwargs_should_have)

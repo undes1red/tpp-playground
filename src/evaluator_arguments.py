@@ -28,7 +28,7 @@ class BasicEvaluatorArguments:
 
         # Input data
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/input.')
-        self.parser.add_argument('--dataset_type', type=str, default='json', help='File type of the selected dataset.')
+        self.parser.add_argument('--dataset_type', type=str, default='pkl.lzma', help='File type of the selected dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in {root}/src/TPP/dataloader.')
         self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of dataloader config file used during training. We only need the filename, not the relative path.')

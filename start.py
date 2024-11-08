@@ -4,13 +4,17 @@ import os
 root_path = os.path.dirname(os.path.abspath(__file__))
 
 main_procedure_translator = {
-    # Temporal point process
+    # Temporal Point Process
     'TPP_train': 'TPP',
     'TPP_evaluate': 'TPP',
 
-    # Long-horizon Temporal point process
+    # Long-horizon Temporal Point Process
     'LH_train': 'LH',
     'LH_evaluate': 'LH',
+
+    # Missing Data Imputation with Temporal Point Process
+    'MDI_train': 'MDI',
+    'MDI_evaluate': 'MDI',
 
     # Explainable History Distillation.
     'ehd_train': 'ehd',
@@ -21,13 +25,17 @@ main_procedure_translator = {
 }
 
 sub_procedure_translator = {
-    # Temporal point process
+    # Temporal Point Process
     'TPP_train': 'Trainer',
     'TPP_evaluate': 'Evaluator',
 
-    # Long-horizon Temporal point process
+    # Long-horizon Temporal Point Process
     'LH_train': 'Trainer',
     'LH_evaluate': 'Evaluator',
+
+    # Missing Data Imputation with Temporal Point Process
+    'MDI_train': 'Trainer',
+    'MDI_evaluate': 'Evaluator',
 
     # Explainable History Distillation.
     'ehd_train': 'Trainer',
@@ -76,6 +84,10 @@ if __name__ == '__main__':
         # Long-horizon Temporal point process
         'LH_train',
         'LH_evaluate',
+
+        # Missing Data Imputation with Temporal Point Process
+        'MDI_train',
+        'MDI_evaluate',
     ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

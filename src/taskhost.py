@@ -114,11 +114,11 @@ class TaskHost:
             self.opt.cuda = False
         elif self.opt.cuda and torch.cuda.is_available():
             logger.warning('We use cuda to speed up model training!')
-            logger.warning(f'We use PyTorch compiled against CUDA {torch.version.cuda}.')
+            logger.info(f'We use PyTorch compiled against CUDA {torch.version.cuda}.')
             logger.info(f'Found {torch.cuda.device_count()} CUDA devices.')
             logger.info(f'We use the CUDA device with id {self.opt.cuda_device}.')
             props = torch.cuda.get_device_properties(self.opt.cuda_device)
-            logger.info(f'{props.name} \t Memory: {props.total_memory / (1024**3):.2f}GiB.')
+            logger.info(f'CUDA Device name: {props.name} \t Memory: {props.total_memory / (1024**3):.2f}GiB.')
             if props.major > 6:
                 logger.info(f'Device supports CUDA {props.major}.{props.minor} higher than 6.0. torch.compile() is possible.')
             else:
@@ -140,7 +140,7 @@ class TaskHost:
         2. The name of the entry function should be work().
         '''
         logger.debug(f'Root path: {self.opt.root_path}.')
-        logger.info(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
+        logger.warning(f'Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}.')
         
         '''
         Show the config file of matplotlib.

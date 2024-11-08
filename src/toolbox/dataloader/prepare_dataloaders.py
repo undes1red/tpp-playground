@@ -17,6 +17,7 @@ def prepare_dataloaders(opt, find_dataset):
             This namespace stores all parsed arguments.
     '''
     available_file_names = [os.path.basename(item) for item in glob.glob(opt.data_path + f'/*.{opt.dataset_type}')]
+    logger.info(f'Dataset path: {opt.data_path}.')
 
     # find if required dataset files exists.
     file_names = check_exist(available_file_names, opt.dataset_type, opt.training_data_name,

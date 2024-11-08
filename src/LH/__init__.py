@@ -8,18 +8,16 @@ TaskHost needs this file to start required tasks. Please, do not modify the cont
 '''
 
 # Argument parser
-from src.TPP.train_arguments import TrainerArguments, Trainer_postprocess
-from src.TPP.evaluate_arguments import EvaluatorArguments, Evaluator_postprocess
+from src.LH.train_arguments import TrainerArguments, Trainer_postprocess
+from src.LH.evaluate_arguments import EvaluatorArguments, Evaluator_postprocess
 
 # Model and dataloader entry.
-from src.TPP.model import get_model
-from src.TPP.dataloader import get_dataloader
+from src.LH.model import get_model
+from src.LH.dataloader import get_dataloader
 
 # Evaluation.
-from src.TPP.evaluation_functions import desc_funcs as get_evaluation_funcs
+from src.LH.evaluation_functions import desc_funcs as get_evaluation_funcs
 
-# Function load_model() will use this function for stable and easy corss-process model loading.
-from src.TPP.utils import easy_model_load
 
 pytorch_version_warnings = {
     '>=2.1.0': [
