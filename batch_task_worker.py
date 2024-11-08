@@ -44,7 +44,9 @@ if opt.GPU is not None:
     else:
         use_gpu = True
         gpu_pool = [int(gpu_id) for gpu_id in opt.GPU] * opt.num_task_parallel
-        slurm_arguments = read_yaml(os.path.join(root_path, opt.slurm_config))
+        slurm_arguments = {}
+        if opt.slurm_config is not None:
+            slurm_arguments = read_yaml(os.path.join(root_path, opt.slurm_config))
 
 
 if not use_gpu:
