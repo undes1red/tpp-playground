@@ -123,7 +123,7 @@ else:
         generated_tasks.append(' '.join(task))
     
 
-failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments)
+failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments = slurm_arguments)
 
 # Report the execution sumamry:
 logger.warning('==========================================')

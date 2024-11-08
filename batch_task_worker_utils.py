@@ -292,6 +292,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
 
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        logger.info(f'The following slurm environment arguments will be updated by {slurm_arguments}.')
         slurm_kwargs = default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
@@ -359,6 +360,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
         logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
+        logger.info(f'The following slurm environment arguments will be updated by {slurm_arguments}.')
         slurm_kwargs = default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
