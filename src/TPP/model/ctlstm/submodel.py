@@ -8,7 +8,6 @@ from scipy.stats import spearmanr
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.integration import approximate_integration
-from src.toolbox.patchifier import Patchifier
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
@@ -149,8 +148,7 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, d_input]
         
         return expanded_hidden_states, expanded_time
-
-
+    
     def sample_for_tm(self, time_history, time_next, events_history):
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [number_of_sampled_sequences, seq_len, d_mark_embedding]
@@ -158,7 +156,8 @@ class CTLSTM(nn.Module):
         history = events_embeddings + time_embeddings                          # [number_of_sampled_sequences, seq_len, d_mark_embedding]
             
         _, (sampled_history_embedding, _) = self.history_encoder(history)      # [1, number_of_sampled_sequences, d_hidden]
-        sampled_history_embedding = rearrange(sampled_history_embedding, '() bs dh -> bs () dh')
+        if len(sampled_history_embedding.shape) == 3:
+            sampled_history_embedding = rearrange(sampled_history_embedding, '() bs dh -> bs () dh')
                                                                                # [number_of_sampled_sequences, 1, d_history]
         history = self.history_mapper(sampled_history_embedding)               # [number_of_sampled_sequences, 1, d_input]
 

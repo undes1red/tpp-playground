@@ -177,7 +177,7 @@ class LLMTPPModel(BasicModel):
             mask_next:          [batch_size, seq_len]
         '''
         # pick the time.
-        event_next_mask = torch.nn.functional.one_hot(event_next, num_classes = self.num_events)
+        event_next_mask = torch.nn.functional.one_hot(event_next.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         selected_pred_time = (pred_time * event_next_mask).sum(dim = -1)       # [batch_size, seq_len]
         gap = torch.abs(selected_pred_time - time_next)                        # [batch_size, seq_len]
@@ -292,8 +292,8 @@ class LLMTPPModel(BasicModel):
         '''
         This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
         Steps:
-        1. Sample a time \\\(t_s\\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
-        2. Judge the mark of this event by comparing \\\(\\lambda^*(m, t_s)\\\).
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
         '''
         time_history_for_sampling = torch.zeros(number_of_sampled_sequences, 1, device = self.device)
                                                                                # [number_of_sampled_sequences, 1]

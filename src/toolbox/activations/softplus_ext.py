@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from src.toolbox.misc import check_tensor
 
 '''
-This softplus function can accept beta as a vector.
+This softplus function can accept a vector as beta.
 '''
 # @torch.compile()
 def softplus_ext(input, beta, threshold = 20):

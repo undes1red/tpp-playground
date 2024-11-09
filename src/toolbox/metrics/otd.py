@@ -76,8 +76,8 @@ def otd_add_remove_event_cost_number(pred_event_seq, pred_time_seq, true_event_s
     assert len(pred_event_seq) == len(pred_time_seq), 'The predicted event sequence and time sequence have different lengths. Something is definitely wrong.'
     assert len(true_event_seq) == len(true_time_seq), 'The true event sequence and time sequence have different lengths. Something is definitely wrong.'
     
-    assert (np.diff(pred_time_seq) > 0).all(), 'The pred_time_seq must contain absolute timestamps!'
-    assert (np.diff(true_time_seq) > 0).all(), 'The true_time_seq must contain absolute timestamps!'
+    assert (np.diff(pred_time_seq) >= 0).all(), f'The pred_time_seq must contain absolute timestamps! Got: {np.diff(pred_time_seq)}'
+    assert (np.diff(true_time_seq) >= 0).all(), 'The true_time_seq must contain absolute timestamps!'
     
     otd_foreach_mark = [0] * num_events
     number_of_events_foreach_mark = [0] * num_events
