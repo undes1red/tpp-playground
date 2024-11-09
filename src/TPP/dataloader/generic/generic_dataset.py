@@ -81,7 +81,7 @@ class generic_dataset(utils.data.Dataset):
         self.time_seq = [np.array(seq, dtype = np.float32) for seq in self.time_seq]
         self.score = [np.array(seq, dtype = np.float32) for seq in self.score]
         self.intensity = [np.array(seq, dtype = np.float32) for seq in self.intensity]
-        self.event = [np.array(seq, dtype = np.int32) for seq in self.event]
+        self.event = [np.array(seq, dtype = np.int64) for seq in self.event]
         '''
         self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
         self.data.score = self.data.score.apply(np.array, dtype = np.float32)
