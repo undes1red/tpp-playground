@@ -112,7 +112,7 @@ class LLMTPPModel(BasicModel):
 
         # cross entropy loss between p_{real} and p_{pred}.
         events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
-                                                                                events_next_without_dummy.long(), reduction = 'none')
+                                                                                events_next_without_dummy, reduction = 'none')
                                                                                # [batch_size, seq_len]
         events_loss_without_dummy = events_loss_without_dummy * mask_next_without_dummy
                                                                                # [batch_size, seq_len]
@@ -155,7 +155,7 @@ class LLMTPPModel(BasicModel):
                                             event_next = events_next_without_dummy, mask_next = mask_next_without_dummy)
 
         events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
-                                                                                events_next_without_dummy.long(), reduction = 'none')
+                                                                                events_next_without_dummy, reduction = 'none')
                                                                                # [batch_size, seq_len]
         events_loss_without_dummy = events_loss_without_dummy * mask_next_without_dummy
                                                                                # [batch_size, seq_len]
@@ -177,7 +177,7 @@ class LLMTPPModel(BasicModel):
             mask_next:          [batch_size, seq_len]
         '''
         # pick the time.
-        event_next_mask = torch.nn.functional.one_hot(event_next.long(), num_classes = self.num_events)
+        event_next_mask = torch.nn.functional.one_hot(event_next, num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         selected_pred_time = (pred_time * event_next_mask).sum(dim = -1)       # [batch_size, seq_len]
         gap = torch.abs(selected_pred_time - time_next)                        # [batch_size, seq_len]
@@ -248,9 +248,9 @@ class LLMTPPModel(BasicModel):
         
         f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(events_next, pred_event_prob, mask_next, self.num_events)
 
-        predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index.long(), num_classes = self.num_events)
+        predict_index_one_hot_mask = torch.nn.functional.one_hot(predict_index, num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-        events_next_one_hot_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
+        events_next_one_hot_mask = torch.nn.functional.one_hot(events_next, num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
 
         if return_mean:
