@@ -292,7 +292,10 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
 
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
-        logger.info(f'The following slurm environment arguments will be updated by {slurm_arguments}.')
+        if len(slurm_arguments) > 0:
+            logger.info(f'The following slurm environment variables will be updated.')
+            for key in slurm_arguments.keys():
+                logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
@@ -309,7 +312,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
     failed_tasks = {}
 
     logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while automatically detecting if a task errored out is unreliable.')
-    logger.warning(f'You have to check the result and affirm failed tasks by yourself.')
+    logger.warning(f'You may need to manually check the results and identify any tasks that have failed.')
 
     while True:
         if task_id > number_of_tasks:
@@ -360,7 +363,10 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
         logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
-        logger.info(f'The following slurm environment arguments will be updated by {slurm_arguments}.')
+        if len(slurm_arguments) > 0:
+            logger.info(f'The following slurm environment variables will be updated.')
+            for key in slurm_arguments.keys():
+                logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
@@ -373,7 +379,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
     all_task_executed = False
     failed_tasks = {}
     logger.warning(f'Tasks submitted to slurm are out of our control. We can check if one job has finished, while automatically detecting if a task errored out is unreliable.')
-    logger.warning(f'You have to check the result and affirm failed tasks by yourself.')
+    logger.warning(f'You may need to manually check the results and identify any tasks that have failed.')
 
     while True:
         if unique_task_id > number_of_tasks:
