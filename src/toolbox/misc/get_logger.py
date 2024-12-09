@@ -21,7 +21,7 @@ class LogFormat(logging.Formatter):
     error = "\x1b[38;5;196m"
     critical = '\x1b[48;5;196m'
     
-    format = f"{green}%(asctime)s{reset}{cyan} [Line %(lineno)d of %(filename)s]{reset}: {{}}%(message)s{reset}"
+    format = f"{green}%(asctime)s{reset} {cyan}[%(filename)s:%(lineno)d]{reset}: {{}}%(message)s{reset}"
 
     FORMATS = {
         logging.DEBUG: format.format(debug),

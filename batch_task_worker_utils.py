@@ -284,6 +284,11 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
     
     number_of_tasks = len(tasks)
 
+    if len(slurm_arguments) > 0:
+        logger.info(f'The following slurm environment variables will be updated.')
+        for key in slurm_arguments.keys():
+            logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+
     def run_task(task, task_id):
         task_list = task.split(' ')
 
@@ -292,10 +297,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {task}')
 
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
-        if len(slurm_arguments) > 0:
-            logger.info(f'The following slurm environment variables will be updated.')
-            for key in slurm_arguments.keys():
-                logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
@@ -357,16 +359,18 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
     number_of_gpus = len(gpu_pool)
     number_of_tasks = len(tasks)
 
+    if len(slurm_arguments) > 0:
+        logger.info(f'The following slurm environment variables will be updated.')
+        for key in slurm_arguments.keys():
+            logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+
     def run_task(task, task_id, gpu_id):
         task_list = task.split(' ') + ['--cuda', '--cuda_device', f'{gpu_id}']
 
         logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')
         logger.info(f'Command of task {task_id}/{number_of_tasks}: {" ".join(task_list)}')
         executor = submitit.AutoExecutor(folder = os.path.join(stdout_dir, str(task_id)))
-        if len(slurm_arguments) > 0:
-            logger.info(f'The following slurm environment variables will be updated.')
-            for key in slurm_arguments.keys():
-                logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
