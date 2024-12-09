@@ -86,8 +86,8 @@ if __name__ == '__main__':
         'LH_evaluate',
 
         # Missing Data Imputation with Temporal Point Process
-        'MDI_train',
-        'MDI_evaluate',
+        # 'MDI_train',
+        # 'MDI_evaluate',
     ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

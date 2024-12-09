@@ -16,6 +16,8 @@ class BasicTrainerArguments:
                             help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.")
         self.parser.add_argument('--compile', action='store_true', 
                             help="True: Use torch.compile() to compile models or functions to speed up training and evaluation.\n False: disable torch.compile().")
+        self.parser.add_argument('--maximum_retrain', type=int, default=5,
+                            help="How many times should we retrain a model at most to enture model stability? Useful when the training script exited unexpectedly.")
 
 
         # The number of Dataloader worker

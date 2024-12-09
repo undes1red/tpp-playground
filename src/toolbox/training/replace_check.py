@@ -1,13 +1,14 @@
 import os
 
-def replace_check(opt, id, *subdirs):
+def replace_check(opt, id, **subdirs_and_marker):
     '''
     This function must ensure we use the same index in all subdirs.
     Throw an exception if indexes calculated in each dirs do not match.
     '''
     calculated_indexes = []
+    continue_running = True
     
-    for subdir in subdirs:
+    for (subdir, marker_file) in subdirs_and_marker.items():
         leaf_dir_name = f'{subdir}_' + id
         tmp_path = os.path.join(opt.root_path, subdir, opt.procedure)
         if not os.path.exists(tmp_path):
@@ -22,7 +23,7 @@ def replace_check(opt, id, *subdirs):
         index = 1
         for vaild_dir_name in valid_dir_names:
             vaild_dir = os.path.join(tmp_path, str(vaild_dir_name), opt.dataset_name, leaf_dir_name)
-            if os.path.exists(vaild_dir):
+            if os.path.exists(os.path.join(vaild_dir, marker_file)):
                 index += 1
             else:
                 break
@@ -31,6 +32,9 @@ def replace_check(opt, id, *subdirs):
     
     baseline = calculated_indexes[0]
     for index in calculated_indexes:
-        assert index == baseline, f'We get different task indexes in {subdirs}!'
+        assert index == baseline, f'We get different task indexes in {list(subdirs_and_marker.keys())}!'
     
-    return str(baseline)
+    if baseline > opt.maximum_retrain:
+        continue_running = False
+    
+    return continue_running, str(baseline)

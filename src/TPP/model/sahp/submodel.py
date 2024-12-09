@@ -111,7 +111,7 @@ class SAHP(nn.Module):
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, num_dimension_prior_batch = 0, time_next_start = None):
         if time_next_start is None:
-            time_next_start == torch.zeros_like(time_next)                     # [..., batch_size, seq_len]
+            time_next_start = torch.zeros_like(time_next)                     # [..., batch_size, seq_len]
 
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]

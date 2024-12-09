@@ -1,4 +1,4 @@
-import os, torch, copy
+import os, torch, copy, sys
 from tqdm import tqdm
 import pandas as pd
 from itertools import cycle
@@ -32,7 +32,12 @@ class Trainer:
         self.opt = opt
 
         # Insert the model index if needed.
-        replace_index = '' if self.opt.replace else replace_check(self.opt, self.opt.model_identifier, 'log', 'model')
+        self.continue_running, replace_index = (True, '') if self.opt.replace else replace_check(self.opt, self.opt.model_identifier, log='Training_record.csv', model='checkpoint.csv')
+        
+        if not self.continue_running:
+            logger.warning(f'We already have {opt.maximum_retrain} checkpoints! No training is needed. Exiting now.')
+            sys.exit(0)
+        
         self.opt.log = os.path.join(self.opt.root_path, 'log', self.opt.procedure, replace_index, self.opt.dataset_name)
         self.opt.save_model = os.path.join(self.opt.root_path, 'model', self.opt.procedure, replace_index, self.opt.dataset_name)
 
@@ -66,7 +71,7 @@ class Trainer:
         '''
         The entry function for TaskHost to start the task.
         '''
-
+        
         '''
         We try to check if models and logs are saved and give some hints if you don't store any models or logs(most time you should store them).
         '''
@@ -292,7 +297,7 @@ class Trainer:
 
         save_should_or_not = False
         checker, checkpoint_name = dict_save_model_checkers_and_checkpoint_names[mode]
-        if current_step >= warmup and checker(metric_data):
+        if checker(metric_data):
             save_should_or_not = True
 
         return save_should_or_not, checkpoint_name

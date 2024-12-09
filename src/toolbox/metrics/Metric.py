@@ -96,3 +96,31 @@ if __name__ == '__main__':
     assert result == False, 'Metric judgement is wrong!'
     assert metric.show() == [2.0, 2.0, 0.25, 0.25], 'We stored the wrong metric values!'
     print(metric.show())
+    
+    
+    metric_number = 1
+    metric = Metric(metric_number)
+    
+    first_metric = [1] * 1
+    result = metric.compare(first_metric)
+    assert result == True, 'Why do not accept the first group of metric values?'
+    assert metric.show() == [1,], 'We stored the wrong metric values!'
+    print(metric.show())
+    
+    second_metric = [0.5] * 1
+    result = metric.compare(second_metric)
+    assert result == True, 'This one should be better!'
+    assert metric.show() == [0.5,], 'We stored the wrong metric values!'
+    print(metric.show())
+
+    second_metric = [0.25] * 1
+    result = metric.compare(second_metric)
+    assert result == True, 'This one should be better!'
+    assert metric.show() == [0.25,], 'We stored the wrong metric values!'
+    print(metric.show())
+
+    third_metric = [0.75] * 1
+    result = metric.compare(third_metric)
+    assert result == False, 'Metric judgement is wrong!'
+    assert metric.show() == [0.25,], 'We stored the wrong metric values!'
+    print(metric.show())
