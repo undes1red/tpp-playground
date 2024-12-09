@@ -28,9 +28,14 @@ parser.add_argument('--num_task_parallel', type = int, default = -1, help = 'The
                                                                              This argument is mandatory when executing tasks on CPU.')
 parser.add_argument('--slurm', action  ='store_true', help = 'Experimental')
 parser.add_argument('--slurm_config', type = str, help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
+parser.add_argument('--sleep', type = int, default = 0, help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
 
 # Preprocess
 opt = parser.parse_args()
+
+import time
+time.sleep(opt.sleep)
+
 use_gpu = False
 slurm_arguments = {}
 if opt.GPU is not None:

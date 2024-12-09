@@ -73,7 +73,7 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
         duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = mu + (eta - mu) * torch.exp(-gamma * duration_t)              # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+        cell_t = F.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))      # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
         
         return cell_t
 
@@ -148,6 +148,11 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, d_input]
         
         return expanded_hidden_states, expanded_time
+    
+    
+    def nhps_get_intensity(self, input_state):
+        return self.intensity_layer(input_state)                               # [..., num_events]
+    
     
     def sample_for_tm(self, time_history, time_next, events_history):
         seq_len = events_history.shape[-1]
