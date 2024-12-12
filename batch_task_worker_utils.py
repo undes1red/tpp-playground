@@ -281,16 +281,15 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir, slurm_arguments):
-    import submitit
-    
     number_of_tasks = len(tasks)
 
     if len(slurm_arguments) > 0:
         logger.info(f'The following slurm environment variables will be updated.')
         for key in slurm_arguments.keys():
-            logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+            logger.info(f'{key}: {colored(default_slurm_kwargs.get(key), 'blue')} -> {colored(slurm_arguments[key], 'red')}')
 
     def run_task(task, task_id):
+        import submitit
         task_list = task.split(' ')
 
         # Replace this command with your actual task command
