@@ -1,5 +1,6 @@
 import copy, math, subprocess, time, os, yaml
 from src.taskhost import get_logger
+from termcolor import colored
 
 
 logger = get_logger(__name__)
@@ -351,7 +352,6 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, num_task_parallel, stdout_dir, slurm_arguments):
-    import submitit
     # I don't quite know how the GPU allocation works in slurm.
     # Due to this, we temporarily disable gpu_pool in this function.
     gpu_pool = list(available_gpus)
@@ -362,9 +362,11 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
     if len(slurm_arguments) > 0:
         logger.info(f'The following slurm environment variables will be updated.')
         for key in slurm_arguments.keys():
-            logger.info(f'{key}: {default_slurm_kwargs.get(key)} -> {slurm_arguments[key]}')
+            logger.info(f'{key}: {colored(default_slurm_kwargs.get(key), 'blue')} -> {colored(slurm_arguments[key], 'red')}')
 
     def run_task(task, task_id, gpu_id):
+        import submitit
+
         task_list = task.split(' ') + ['--cuda', '--cuda_device', f'{gpu_id}']
 
         logger.warning(f'----> Task No.{task_id}/{number_of_tasks} started. <----')

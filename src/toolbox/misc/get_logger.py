@@ -11,24 +11,27 @@ def get_logger(name = None, root = True, mode = 'logging'):
 
 class LogFormat(logging.Formatter):
     
-    green = "\x1b[38;5;2m"
-    cyan = "\x1b[36m"
-    reset = "\x1b[0m"
+    def gen_format(x):
+        from termcolor import colored
+        
+        fmt_dict = {
+            'debug': {'color': 'light_grey'},
+            'info': {},
+            'warning': {'color': 'red'},
+            'error': {'color': 'red', 'on_color': 'on_white', 'attrs': ['bold', ]},
+            'critical': {'color': 'red', 'on_color': 'on_white', 'attrs': ['bold', 'blink']}
+        }
+        
+        return colored('%(asctime)s', 'green') + \
+               colored('[%(filename)s:%(lineno)d]:', 'cyan') + \
+               colored('%(message)s', **fmt_dict[x])
     
-    debug = "\x1b[38;5;243m"
-    info = ""
-    warning = "\x1b[38;5;214m"
-    error = "\x1b[38;5;196m"
-    critical = '\x1b[48;5;196m'
-    
-    format = f"{green}%(asctime)s{reset} {cyan}[%(filename)s:%(lineno)d]{reset}: {{}}%(message)s{reset}"
-
     FORMATS = {
-        logging.DEBUG: format.format(debug),
-        logging.INFO: format.format(info),
-        logging.WARNING: format.format(warning),
-        logging.ERROR: format.format(error),
-        logging.CRITICAL: format.format(critical),
+        logging.DEBUG: gen_format('debug'),
+        logging.INFO: gen_format('info'),
+        logging.WARNING: gen_format('warning'),
+        logging.ERROR: gen_format('error'),
+        logging.CRITICAL: gen_format('critical'),
     }
 
     def format(self, record):
@@ -62,12 +65,6 @@ def get_logger_logging(name = None, root = True):
     logger.addHandler(ch)
 
     return logger
-
-
-def get_logger_loguru(name, root = True):
-    from loguru import logger
-    
-    logger.add(sys.stdout, format="{time} {level} {message}", level="INFO")
 
 
 if __name__ == "__main__":
