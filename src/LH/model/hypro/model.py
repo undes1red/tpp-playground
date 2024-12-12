@@ -4,7 +4,7 @@ from sklearn.metrics import accuracy_score
 from einops import rearrange, repeat, reduce, pack
 
 from src.toolbox.metrics import otd
-from src.toolbox.misc import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict, compile_model
 
 from src.LH.model.basic_tpp_model import BasicModel
 from src.LH.model.hypro.submodel import HYPRO
@@ -32,6 +32,8 @@ class HYPROModel(BasicModel):
         self.model = HYPRO(num_events = self.num_events, d_input = d_input, \
                            d_hidden = d_hidden, n_layers = n_layers, n_head = n_head, d_qk = d_qk, \
                            d_v = d_v, dropout = dropout, device = device)
+        
+        self.model = compile_model(self.model, opt.compile)
         
     
     def forward(self, task_name, *args, **kwargs):

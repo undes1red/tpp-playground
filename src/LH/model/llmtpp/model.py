@@ -4,7 +4,7 @@ from sklearn.metrics import f1_score
 from einops import rearrange, repeat, reduce, pack
 
 from src.toolbox.metrics import otd
-from src.toolbox.misc import pack_one_value_to_dict
+from src.toolbox.misc import pack_one_value_to_dict, compile_model
 
 from src.LH.model.basic_tpp_model import BasicModel
 from src.LH.model.llmtpp.submodel import LLMTPP
@@ -32,6 +32,8 @@ class LLMTPPModel(BasicModel):
         self.model = LLMTPP(llm_class_name = llm_class_name, full_llm_name = full_llm_name, \
                             num_events = self.num_events, d_model = d_model, d_embedding = d_embedding, \
                             lm_layers = lm_layers, dropout = dropout, lh_length = self.lh_length, device = device)
+        
+        self.model = compile_model(self.model, opt.compile)
 
 
     def forward(self, task_name, *args, **kwargs):
