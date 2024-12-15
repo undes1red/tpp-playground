@@ -5,8 +5,6 @@ import logging
 def get_logger(name = None, root = True, mode = 'logging'):
     if mode == 'logging':
         return get_logger_logging(name, root)
-    elif mode == 'loguru':
-        return get_logger_loguru(name, root)
 
 
 class LogFormat(logging.Formatter):
@@ -22,8 +20,8 @@ class LogFormat(logging.Formatter):
             'critical': {'color': 'red', 'on_color': 'on_white', 'attrs': ['bold', 'blink']}
         }
         
-        return colored('%(asctime)s', 'green') + \
-               colored('[%(filename)s:%(lineno)d]:', 'cyan') + \
+        return colored('%(asctime)s', 'green') + ' ' + \
+               colored('[%(filename)s:%(lineno)d]:', 'cyan') +  ' ' + \
                colored('%(message)s', **fmt_dict[x])
     
     FORMATS = {
