@@ -6,7 +6,7 @@ logger = get_logger(__name__)
 
 def compile_model(model, use_compile, *args, **kwargs):
     if use_compile:
-        logger.warning('Optimizing the model by torch.compile(). This process may not work in some conditions because of unsupported devices, out-of-date graphic drivers, wrong triton installation, specific model design, pytorch bugs, etc.')
+        logger.warning('Optimizing the model by torch.compile(). This process may not work OOTB in some cases because of unsupported devices, out-of-date graphic drivers, wrong triton installation, specific model design, pytorch bugs, etc.')
         
     return torch.compile(
         model,
