@@ -156,7 +156,6 @@ src/TPP_patch/*
 src/ehd/*
 src/ml/*
 src/TPP_imputation/*
-src/MDI/*
 
 # data serialization files
 *.yml
