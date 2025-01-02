@@ -27,6 +27,7 @@ class BasicEvaluatorArguments:
                                  help='This task is delayed and will start in the amount of time you have set.')
 
         # Input data
+        self.parser.add_argument('--training_dataset_name', type=str, default=None, help='Name of the used dataset where we train the model on. All datasets should be placed in {root}/data/input. By default, training_dataset_name is dataset_name if training_dataset_name is not provided.')
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/input.')
         self.parser.add_argument('--dataset_type', type=str, default='pkl.lzma', help='File type of the selected dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in {root}/src/TPP/dataloader.')

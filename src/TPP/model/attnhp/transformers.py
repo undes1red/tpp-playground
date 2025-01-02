@@ -111,7 +111,7 @@ class Encoder(nn.Module):
         '''
         Prepare attention masks
         AttNHP's attention mask should be carefully handled. It should ensure:
-        1. each sample_event only sees itself and history events it should consider.
+        1. each sample_event only sees itself and history events it should see.
         2. each event in history only sees eariler events. It should not know the existence of sample_event.
         3. padding events and EOS are invisible to history_events and sample_events.
         '''
@@ -158,7 +158,7 @@ class Encoder(nn.Module):
 
         for enc_layer in self.layer_stack:
             mingled_emb, _ = enc_layer(mingled_emb, non_pad_mask = non_pad_mask, self_attn_mask = self_attn_mask)
-                                                                               # [..., sample_rate, batch_size, seq_len * 2, num_event, d_input]
+                                                                               # [..., sample_rate, num_event, batch_size, seq_len * 2, d_input]
 
         return mingled_emb
     

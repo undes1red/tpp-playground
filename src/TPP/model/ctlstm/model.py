@@ -1,7 +1,7 @@
 import torch, copy
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, conditional_decorator, pack_one_value_to_dict
 from src.toolbox.integration import approximate_integration
@@ -96,7 +96,10 @@ class CTLSTMWrapper(BasicModel):
             'intensity': self.figure_intensity,
             'integral': self.figure_integral,
             'probability': self.figure_probability,
-            'debug': self.figure_debug
+            'debug': self.figure_debug,
+            
+            # For CPPOD, should be used with the od_generic dataloader.
+            'cppod_evaluation': self.cppod_evaluation
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -588,6 +591,72 @@ class CTLSTMWrapper(BasicModel):
         _, maes, probability_sum = move_from_tensor_to_ndarray(*maes, probability_sum)
 
         return maes, f1_2, probability_sum
+
+
+    def convert_missing_mask_to_gap_mask(self, missing_mask):
+        # input shape: [num_samples, seq_len]
+        
+        masks = []
+        for missing_mask_per_seq in missing_mask:
+            current_in_missing = False
+            mask_current_seq = []
+            for item in missing_mask_per_seq[1:]:
+                if item == 1 and not current_in_missing:
+                    mask_current_seq.append(1)
+                elif item == 1 and current_in_missing:
+                    current_in_missing = False
+                elif item == 0 and not current_in_missing:
+                    mask_current_seq.append(0)
+                    current_in_missing = True
+                else:
+                    continue
+            
+            masks.append(mask_current_seq)
+        
+        return masks
+
+
+    def cppod_evaluation(self, input_data, opt):
+        '''
+        Take care. This function only evaluates the omission outlier.
+        Interestingly, the original CPPOD code seems only focusing on omission too as only omission scores are recorded in model.detect_outlier().
+        Paired with the od_genetic dataloader.
+        '''
+        forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
+            = input_data
+        
+        roc_result = []
+        for obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, _ in padded_obs_data:
+            obs_time_history_for_one_seq, obs_time_next_for_one_seq = self.divide_history_and_next(obs_time_for_one_seq)
+                                                                               # [batch_size, seq_len] * 2
+            obs_events_history_for_one_seq, obs_events_next_for_one_seq = self.divide_history_and_next(obs_events_for_one_seq)
+                                                                               # [batch_size, seq_len] * 2
+            obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
+                                                                               # [batch_size, seq_len]
+            
+            missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
+                                                                               # [num_samples, ...]
+            integral_all_events, intensity_all_events \
+                = self.model(obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), obs_events_history_for_one_seq)
+                                                                               # [num_samples, seq_len, num_events]
+            
+            integral_sum = integral_all_events.sum(dim = -1)                   # [num_samples, seq_len]
+            intensity_sum = intensity_all_events.sum(dim = -1)                 # [num_samples, seq_len]
+            
+            all_roauc_area = []
+            for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in \
+                zip(integral_sum, missing_mask_for_one_seq):
+                
+                sample_len = len(missing_mask_for_one_seq_per_sample)
+                selected_integral_sum_per_seq_per_sample = move_from_tensor_to_ndarray(integral_sum_per_seq_per_sample[:sample_len])
+                
+                roauc_area = roc_auc_score(y_true = missing_mask_for_one_seq_per_sample, y_score = selected_integral_sum_per_seq_per_sample)
+                all_roauc_area.append(roauc_area)
+            
+            roc_result.append(np.mean(all_roauc_area))
+        
+        roc_result = np.array(roc_result)
+        return roc_result
 
 
     '''

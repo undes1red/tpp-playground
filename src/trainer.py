@@ -297,7 +297,7 @@ class Trainer:
 
         save_should_or_not = False
         checker, checkpoint_name = dict_save_model_checkers_and_checkpoint_names[mode]
-        if checker(metric_data):
+        if current_step >= warmup and checker(metric_data):
             save_should_or_not = True
 
         return save_should_or_not, checkpoint_name

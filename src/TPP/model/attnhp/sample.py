@@ -127,14 +127,14 @@ def sampling_by_its(self, task, *args, **kwargs):
     return dict_apparoch_for_tasks[task](self, *args, **kwargs)
 
 
-def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
-                           number_of_total_samples, step, inf_val, mean, std):
+def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m, resolution,
+                           number_of_total_samples, step, inf_val, mean, std, autoregressive = False):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def evaluate_all_event(taus):
         expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-            self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, num_dimension_prior_batch = 1)
+            self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch = 1)
                                                                             # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
         expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                             # [sample_rate, batch_size, seq_len, num_events, resolution]
@@ -173,8 +173,8 @@ def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
     return tau_pred
 
 
-def sampling_by_its_for_tm(self, events_history, time_history,
-                            number_of_total_samples, step, mean, std):
+def sampling_by_its_for_tm(self, events_history, time_history, mask_history,
+                            number_of_total_samples, step, mean, std, autoregressive = False):
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def bisect_target(taus, probability_threshold):
@@ -185,7 +185,7 @@ def sampling_by_its_for_tm(self, events_history, time_history,
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         '''
         expanded_integral_all_events, _, = \
-            self.model(time_history, taus, events_history, num_dimension_prior_batch = 1)
+            self.model(time_history, taus, events_history, mask_history, num_dimension_prior_batch = 1)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
         expanded_integral = expanded_integral_all_events.sum(dim = -1)     # [sample_rate, batch_size, seq_len]
 
@@ -225,30 +225,30 @@ def autoregressive_sampling_by_thinning_for_tm(self):
 
 def sampling_by_thinning(self, task, *args, **kwargs):
     dict_apparoch_for_tasks = {
-        'mt': sampling_by_thinning_for_mt,
-        'tm': sampling_by_thinning_for_tm
+        'mt': self.sampling_by_thinning_for_mt,
+        'tm': self.sampling_by_thinning_for_tm
     }
 
-    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
+    return dict_apparoch_for_tasks[task](*args, **kwargs)
 
 
 def sampling_by_thinning_for_mt(self, *args, **kwargs):
     raise Exception('Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.')
 
 
-def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_total_samples, step, mean, std):
+def sampling_by_thinning_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std):
     sample_rate_list = step_split(number_of_total_samples, step)
     batch_size, seq_len = time_history.shape
     maximum_thinning_loops = 50
     max_sample_time_limit = mean + 10 * std
 
-    def get_intensity(tau, time_history, events_history):
-        return self.model(time_history, tau, events_history, num_dimension_prior_batch = 1)[-1].sum(dim = -1)
+    def get_intensity(tau, time_history, events_history, mask_history):
+        return self.model(time_history, tau, events_history, mask_history, num_dimension_prior_batch = 1)[-1].sum(dim = -1)
     
-    def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history):
+    def find_maximum_intensity_values_in_one_interval(interval_left, interval_right, time_history, events_history, mask_history):
         _, intensity_between_interval_left_and_right, _ \
-            = self.model.integral_intensity_time_next_2d(events_history, time_history, interval_right, \
-                                                            self.integration_sample_rate, num_dimension_prior_batch = 1, time_next_start = interval_left)
+            = self.model.integral_intensity_time_next_2d(events_history, time_history, interval_right, mask_history, \
+                                                            self.integration_sample_rate, time_next_start = interval_left)
                                                                             # [sample_rate, batch_size, seq_len, integration_sample_rate, num_events]
         intensity_between_interval_left_and_right = intensity_between_interval_left_and_right.sum(dim = -1)
                                                                             # [sample_rate, batch_size, seq_len, integration_sample_rate]
@@ -258,7 +258,7 @@ def sampling_by_thinning_for_tm(self, events_history, time_history, number_of_to
     sampled_time = []
     for each_step in sample_rate_list:
         sampled_time.append(thinning_sampling(maximum_thinning_loops, max_sample_time_limit, (each_step, batch_size, seq_len), self.device, \
-                                                get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history))
+                                                get_intensity, find_maximum_intensity_values_in_one_interval, time_history, events_history, mask_history))
                                                                             # [sample_rate, batch_size, seq_len]
     
     sampled_time = torch.cat(sampled_time, dim = 0)
@@ -270,7 +270,7 @@ def sample_time_event(self, time_history_for_sampling, events_history_for_sampli
     '''
     This function will sample x sequences by the learned probability distribution following the time-event prediction procedure.
     Steps:
-    1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+    1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history.
     2. Judge the mark of this event by comparing \\(\\lambda^*(m, t_s)\\).
     '''
     if time_history_for_sampling is None and events_history_for_sampling is None:

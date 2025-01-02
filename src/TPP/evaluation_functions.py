@@ -59,7 +59,7 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     and the ground truth on all available event sequences.
     We dump all mae_e values for calculating Q1, Q2, and Q3 later.
     '''
-    capable_of_sending_event_next = ['fenn', 'fullynn', 'sahp', 'thp', 'marked_lognormmix']
+    capable_of_sending_event_next = ['fenn', 'fullynn', 'sahp', 'thp', 'marked_lognormmix', 'llmtpp']
     if opt.model_name == 'ifib_c':
         '''
         mae_e, macro-f1, sum of p^*(m), p^*(m), events_next
@@ -160,6 +160,19 @@ def samples_from_et_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
+def cppod_evaluation_postprocess(all_evaluation_results, desc, opt):
+    rocs = all_evaluation_results
+    rocs = np.mean(rocs).item()
+    
+    result_file = os.path.join(opt.store_dir, f'{desc}_roc_mean.txt')
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average roc of outlier detection is {rocs}.'
+    write_to_txt(strings, result_file)
+    
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_cppod_rocs.pkl')
+    data = {'rocs': rocs}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
+
 def generate_hypro_dataset_postprocess(all_evaluation_results, desc, opt):
     '''
     Dump the detailed distribution of mae-e for further usage.
@@ -225,6 +238,10 @@ desc_funcs = {
     'samples_from_et': {'desc_string': 'Samples of {0} for each mark', 'postprocess_func': samples_from_et_postprocess},
     'generate_hypro_dataset': {'desc_string': 'Generate HYPRO dataset for {0}', 'postprocess_func': generate_hypro_dataset_postprocess},
 
+    # CPPOD task.
+    'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},
+
+    
     # Custom evaluation function.
     'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events
 }

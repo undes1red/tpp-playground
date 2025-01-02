@@ -48,8 +48,7 @@ def Evaluator_postprocess(opt, root_path):
         opt.n_training_steps *= opt.agg_update_step
 
     opt.training_batch_size = 1
-    if opt.task_name not in ['figure', 'plot']:
-        opt.evaluation_batch_size = 1
+    opt.evaluation_batch_size = 2
         
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None

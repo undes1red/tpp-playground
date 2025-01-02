@@ -7,6 +7,19 @@ def load_checkpoint(logger, checkpoint_dir, model, device, evaluation = True):
     '''
     model_raw = torch.load(checkpoint_dir, weights_only = False, map_location = device)
     model_state_dict = model_raw['model']
+    
+    # remove _orig_mod from keys if any of them exist.
+    # _orig_mod exists when the original model is replaced by a compiled version.
+    new_dict = {}
+    recorded_keys = []
+    for item in model_state_dict.keys():
+        if '_orig_mod' in item:
+            new_dict[item.replace('._orig_mod', '')] = model_state_dict[item]
+            recorded_keys.append(item)
+    for recorded_key in recorded_keys:
+        model_state_dict.pop(recorded_key, None)
+    model_state_dict.update(new_dict)
+    
     model.load_state_dict(model_state_dict)
     if evaluation:
         model.requires_grad_(requires_grad = False)

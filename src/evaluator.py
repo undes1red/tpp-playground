@@ -55,7 +55,10 @@ class Evaluator:
 
         for index in self.opt.replace_index:
             # locate where checkpoints are stored.
-            self.opt.checkpoint_folder = os.path.join(self.opt.checkpoint_of_this_procedure, str(index), self.opt.dataset_name, self.checkpoint_folder_suffix)
+            self.opt.checkpoint_folder = os.path.join(self.opt.checkpoint_of_this_procedure, 
+                                                      str(index), 
+                                                      self.opt.training_dataset_name if self.opt.training_dataset_name is not None else self.opt.dataset_name, 
+                                                      self.checkpoint_folder_suffix)
             # where figures, records are stored.
             self.opt.store_dir = os.path.join(self.opt.results_of_this_procedure, str(index), self.opt.dataset_name, self.results_folder_suffix)
             logger.info(f'We will load the model checkpoint in {self.opt.checkpoint_folder}.')

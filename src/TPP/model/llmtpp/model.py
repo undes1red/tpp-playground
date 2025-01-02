@@ -525,7 +525,7 @@ class LLMTPPModel(BasicModel):
             = self.mean_absolute_error_e(events_history, events_next, time_history, \
                                                time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        mae, probability_sum, events_next = move_from_tensor_to_ndarray(mae, probability_sum, events_next)
+        _, maes, probability_sum, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
 
         return maes, f1_2, probability_sum, events_next
 

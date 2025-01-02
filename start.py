@@ -16,6 +16,10 @@ main_procedure_translator = {
     'MDI_train': 'MDI',
     'MDI_evaluate': 'MDI',
 
+    # Outlier Detection with Temporal Point Process
+    'OD_train': 'OD',
+    'OD_evaluate': 'OD',
+
     # Explainable History Distillation.
     'ehd_train': 'ehd',
     'ehd_evaluate': 'ehd',
@@ -36,6 +40,10 @@ sub_procedure_translator = {
     # Missing Data Imputation with Temporal Point Process
     'MDI_train': 'Trainer',
     'MDI_evaluate': 'Evaluator',
+
+    # Outlier Detection with Temporal Point Process
+    'OD_train': 'Trainer',
+    'OD_evaluate': 'Evaluator',
 
     # Explainable History Distillation.
     'ehd_train': 'Trainer',
@@ -88,6 +96,10 @@ if __name__ == '__main__':
         # Missing Data Imputation with Temporal Point Process
         # 'MDI_train',
         # 'MDI_evaluate',
+        
+        # Outlier Detection with Temporal Point Process
+        'OD_train',
+        'OD_evaluate'
     ]
 
     subparsers = parser.add_subparsers(help = 'Define the procedure name.')

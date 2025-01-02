@@ -54,6 +54,48 @@ class AttNHP(nn.Module):
         return integral_all_events, intensity_all_events[..., -1, :]
 
 
+    def sample_for_tm(self, time_history, time_next, events_history, mask_history, custom_events_history = False, num_dimension_prior_batch = 0):
+        # calculate the integral
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [number_of_sampled_sequences, seq_len, integration_sample_rate]
+
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history)
+                                                                               # [integration_sample_rate, num_event, number_of_sampled_sequences, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [integration_sample_rate, num_event, number_of_sampled_sequences, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [integration_sample_rate, num_event, number_of_sampled_sequences, seq_len, 1]
+        # Rearrage the intensity tensor.
+        intensity_all_events = rearrange(intensity_all_events, 'isr ne nss sl () -> nss sl isr ne')
+                                                                               # [number_of_sampled_sequences, seq_len, integration_sample_rate, num_event]
+        
+        integral_all_events = approximate_integration(intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [number_of_sampled_sequences, seq_len, num_events]
+        
+        return integral_all_events, intensity_all_events[..., -1, :]
+
+
+    def sample_for_mt(self, time_history, time_next, events_history, mask_history, custom_events_history = False, num_dimension_prior_batch = 0):
+        # calculate the integral
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+        expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
+
+        hidden_state = self.attn_model(time_history, expanded_time, events_history, mask_history)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        _, hidden_state_all_events_at_expanded_time = hidden_state.chunk(2, dim = -2)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, d_input]
+        intensity_all_events = self.intensity_layer(hidden_state_all_events_at_expanded_time)
+                                                                               # [..., integration_sample_rate, num_event, batch_size, seq_len, 1]
+        # Rearrage the intensity tensor.
+        intensity_all_events = rearrange(intensity_all_events, '... isr ne bs sl () -> ... bs sl isr ne')
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_event]
+        
+        integral_all_events = approximate_integration(intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [..., batch_size, seq_len, num_events]
+        
+        return integral_all_events, intensity_all_events[..., -1, :]
+
+
     def get_event_embedding(self, input_event):
         return self.history_encoder.get_event_embedding(input_event)           # [batch_size, seq_len, d_history]
 
