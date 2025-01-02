@@ -157,8 +157,6 @@ src/ehd/*
 src/ml/*
 src/TPP_imputation/*
 src/MDI/*
-src/OD/*
-
 
 # data serialization files
 *.yml
