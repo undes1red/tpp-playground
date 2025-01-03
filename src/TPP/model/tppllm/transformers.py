@@ -5,8 +5,8 @@ from einops import rearrange
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
 from src.TPP.model.tppllm.transformers_module import lm_module_location
 
-from transformers import AutoModel, AutoConfig
-from peft import LoraConfig, get_peft_model
+from transformers import AutoConfig
+from peft import get_peft_model, LoraConfig, TaskType
 
 
 class LLMEncoder(nn.Module):
@@ -22,20 +22,19 @@ class LLMEncoder(nn.Module):
         if self.lm is None:
             raise Exception('Language model not recorded in dict lm_module_location.')
         self.config = AutoConfig.from_pretrained(full_llm_name)
-        self.d_lm_embedding = self.config.n_embd
-        self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_attentions = True, attn_implementation = "eager", \
-                                                    output_hidden_states = True, device_map = self.device)
-        self.retrieved_lm.h = self.retrieved_lm.h[:self.lm_layers]
-        
-        # We only train the parameters in FFN and LayerNorm
-        for _, (name, param) in enumerate(self.retrieved_lm.named_parameters()):
-            if 'ln' in name or 'wpe' in name:
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
-                
         LLM_config = AutoConfig.from_pretrained(full_llm_name)
         LLm_hidden_size = LLM_config.hidden_size
+        
+        self.d_lm_embedding = self.config.hidden_size
+        self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_attentions = True, attn_implementation = "eager", \
+                                                    torch_dtype = torch.bfloat16, \
+                                                    output_hidden_states = True, device_map = self.device)
+        
+        peft_config = LoraConfig(
+            task_type = TaskType.SEQ_2_SEQ_LM, inference_mode = False, r = 8, lora_alpha = 32, lora_dropout = 0.1,
+            target_modules = ['up_proj', 'down_proj'], layers_pattern = "layers", layers_to_transform = [0, 35]
+        )
+        self.model = get_peft_model(self.retrieved_lm, peft_config)
         
         '''
         LLM = AutoModel.from_pretrained(LLM_name)
@@ -74,9 +73,10 @@ class LLMEncoder(nn.Module):
             events_emb = torch.zeros_like(time_emb, device = self.device)      # [batch_size, seq_len, d_input]
 
         event_emb = time_emb + events_emb                                      # [batch_size, seq_len, d_input]
-        output = self.extend(event_emb)                                        # [batch_size, seq_len, LLm_hidden_size]
-        output = self.retrieved_lm(inputs_embeds = output, attention_mask = non_pad_mask).last_hidden_state
+        input_embs = self.extend(event_emb).bfloat16()                         # [batch_size, seq_len, LLm_hidden_size]
+        output = self.retrieved_lm(inputs_embeds = input_embs, attention_mask = non_pad_mask).hidden_states[-1]
                                                                                # [batch_size, seq_len, LLm_hidden_size]
+        output = output.float()
         output = self.shrink(output)                                           # [batch_size, seq_len, d_input]
 
         return output

@@ -36,30 +36,30 @@ class TPPLLM(nn.Module):
         # the history encoder
         self.history_encoder = TemporalLLM(num_events = num_events, device = self.device, d_input = d_input, d_rnn = d_rnn, \
                                            lm_layers = lm_layers, llm_class_name = llm_class_name, full_llm_name = full_llm_name)
+    
+    
+    def forward(self, task = 'full_forward', *args, **kwargs):
+        dict_task_translator = {
+            'full_forward': self.default_forward,
+            'get_history_embedding': self.history_embedding,
+            'get_cif': self.get_conditional_intensity_and_integral,
+            
+            'get_cif_time_2d': self.integral_intensity_time_next_2d,
+            'get_cif_no_history_time_2d': self.get_conditional_intensity_and_integral_time_next_2d,
 
-
-    def extract_history_embeddings(self, time, events, mask):
-        '''
-        Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-        3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
-        '''
-
-        time_history, _ = self.divide_history_and_next(time)                   # [batch_size, seq_len]
-        events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len]
-        mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
-
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, num_events]
-        return history
-
-
-    def forward(self, time_history, time_next, events_history, mask_history):
-        history = self.history_encoder(time_history, events_history, mask_history)
+            'get_cif_time_3d': self.integral_intensity_time_next_3d,
+            'get_cif_no_history_time_3d': self.get_conditional_intensity_and_integral_time_next_3d,
+        }
+        
+        return dict_task_translator[task](*args, **kwargs)
+        
+    
+    def history_embedding(self, time_history, events_history, mask_history):
+        return self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
-
-        history = rearrange(history, f'... -> {"() " * (len(time_next.shape) - len(time_history.shape))}...')
+    
+    def get_conditional_intensity_and_integral(self, history_embedding, time_next):
+        history = rearrange(history_embedding, f'... -> {"() " * (len(time_next.shape) - len(history_embedding.shape) + 1)}...')
                                                                                # [..., batch_size, seq_len, d_input]
 
         scaled_time = time_next.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, 1]
@@ -80,14 +80,19 @@ class TPPLLM(nn.Module):
         return integral_all_events, intensity_all_events
     
     
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, time_next_start = None):
+    def default_forward(self, time_history, time_next, events_history, mask_history):
+        history_embedding = self.history_embedding(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+
+        return self.get_conditional_intensity_and_integral(history_embedding, time_next)
+    
+    
+    def get_conditional_intensity_and_integral_time_next_2d(self, history_embedding, time_next, integration_sample_rate, time_next_start):
         if time_next_start == None:
             time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
 
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
         einop = f'b s di -> {"() " * (len(time_next.shape) - 2)} b s () di'
-        history = rearrange(history, einop)                                    # [..., batch_size, seq_len, 1, d_input]
+        history = rearrange(history_embedding, einop)                          # [..., batch_size, seq_len, 1, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
         expanded_time = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
@@ -101,12 +106,15 @@ class TPPLLM(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
 
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
-        
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
-        history = self.history_encoder(time_history, events_history, mask_history)
-                                                                               # [batch_size, seq_len, d_input]
-
+    
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, time_next_start = None):
+        history = self.history_embedding(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]                                             
+        return self.get_conditional_intensity_and_integral_time_next_2d(history, time_next, integration_sample_rate, time_next_start)
+    
+    
+    def get_conditional_intensity_and_integral_time_next_3d(self, history_embedding, time_next, integration_sample_rate):
         # Intensity and integral estimation
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
                                                                                # [integration_sample_rate]
@@ -114,7 +122,7 @@ class TPPLLM(nn.Module):
                                                                                # [..., batch_size, seq_len, num_event, integration_sample_rate]
         expanded_time = original_expanded_time.unsqueeze(dim = -1)             # [..., batch_size, seq_len, num_event, integration_sample_rate, 1]
         
-        history = rearrange(history, f'... -> {"() " * (len(time_next.shape) - len(time_history.shape) - 1)}...')
+        history = rearrange(history_embedding, f'... -> {"() " * (len(time_next.shape) - 3)}...')
                                                                                # [..., batch_size, seq_len, d_input]
 
         intensity_for_each_event = self.linear(history)                        # [..., batch_size, seq_len, num_events]
@@ -128,7 +136,14 @@ class TPPLLM(nn.Module):
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
         return expanded_integral_across_all_events, expanded_intensity_across_all_events, original_expanded_time
-    
+
+
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
+        history = self.history_embedding(time_history, events_history, mask_history)
+                                                                               # [batch_size, seq_len, d_input]
+        
+        return self.get_conditional_intensity_and_integral_time_next_3d(history, time_next, integration_sample_rate)
+
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate):
         history = self.history_encoder(time_history, events_history, mask_history)

@@ -123,7 +123,8 @@ class TPPLLMWrapper(BasicModel):
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
+        integral_all_events, intensity_all_events = self.model(time_history = time_history, time_next = time_next, \
+                                                               events_history = events_history, mask_history = mask_history)
                                                                                # [batch_size, seq_len, num_events]
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.negative_log_likelihood_and_event_loss(
@@ -173,7 +174,8 @@ class TPPLLMWrapper(BasicModel):
                                                        mask_history, mask_next_without_dummy, mean, std)
         mae = mae.sum().item() / the_number_of_events
 
-        integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mask_history)
+        integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history = time_history, time_next = time_next, \
+                                                                                   events_history = events_history, mask_history = mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
@@ -247,12 +249,13 @@ class TPPLLMWrapper(BasicModel):
     @torch.no_grad()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                events_history = events_history, time_history = time_history, mask_history = mask_history,
-                                number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
+                                     events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                     number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(time_next - pred_time) * mask_next                     # [batch_size, seq_len]
         
-        _, intensity_all_events_pred = self.model(time_history, pred_time, events_history, mask_history)
+        _, intensity_all_events_pred = self.model(time_history = time_history, time_next = pred_time, \
+                                                  events_history = events_history, mask_history = mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
         f1_pred = self.evaluate_f1(intensity_all_events_pred, events_next, mask_next)
         
@@ -270,7 +273,7 @@ class TPPLLMWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model('get_cif_time_2d', events_history, time_history, time_next_inf, mask_history, resolution_inf)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -375,7 +378,7 @@ class TPPLLMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model('get_cif_time_2d', events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -412,7 +415,7 @@ class TPPLLMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model('get_cif_time_2d', events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -448,7 +451,7 @@ class TPPLLMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model('get_cif_time_2d', events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -518,7 +521,7 @@ class TPPLLMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, mask_history, opt.resolution)
+            self.model('get_cif_time_2d', events_history, time_history, time_next, mask_history, opt.resolution)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -604,7 +607,7 @@ class TPPLLMWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model('get_cif_time_2d', events_history, time_history, time_next_inf, mask_history, resolution_inf)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
@@ -650,7 +653,7 @@ class TPPLLMWrapper(BasicModel):
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
                                                                                # [batch_size, seq_len]
         expanded_integral_all_events_to_inf, expanded_intensity_all_events_to_inf, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next_inf, mask_history, resolution_inf)
+            self.model('get_cif_time_2d', events_history, time_history, time_next_inf, mask_history, resolution_inf)
                                                                                # 2 * [batch_size, seq_len, resolution, num_events]
         expanded_probability_inf = \
             torch.exp(-expanded_integral_all_events_to_inf.sum(dim = -1, keepdim = True)) * expanded_intensity_all_events_to_inf
