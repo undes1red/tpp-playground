@@ -94,8 +94,8 @@ if __name__ == '__main__':
         'LH_evaluate',
 
         # Missing Data Imputation with Temporal Point Process
-        # 'MDI_train',
-        # 'MDI_evaluate',
+        'MDI_train',
+        'MDI_evaluate',
         
         # Outlier Detection with Temporal Point Process
         'OD_train',

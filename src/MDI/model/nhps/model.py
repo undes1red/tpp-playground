@@ -21,10 +21,11 @@ class NHPSWrapper(BasicModel):
                  integration_sample_rate = 100, survival_loss_during_training = True, config_loaded_model = {}):
         super(NHPSWrapper, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
-        self.mark_missing_probability = opt.dataloader_config_dict['missing_probability']
+        self.mark_missing_probability = opt.info_dict['missing_prob']
         self.integration_sample_rate = integration_sample_rate
         self.event_del_costs = event_del_costs
         self.epsilon = epsilon
@@ -280,22 +281,23 @@ class NHPSWrapper(BasicModel):
         
         otds = []
         for obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, _ in padded_obs_data:
-            imputed_seqs_per_sample_by_nhpf \
+            weight, imputed_seqs_per_sample_by_nhpf \
                 = self.imputing_by_nhpf(obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, \
-                                        samples_to_calc_otd = 1, imputed_retries_num = 1, resample = 1, mean = mean, std = std)
+                                        samples_to_calc_otd = 1, imputed_retries_num = 1, mean = mean, std = std)
                                                                                # [num_samples, len(self.event_del_costs), seq_len]
             otds_per_obs_seq = []
             for imputed_seqs in imputed_seqs_per_sample_by_nhpf:
                 otds_per_seq = []
-                for cost_idx, (imputed_marks, imputed_times) in enumerate(imputed_seqs):
+                for picked_imputed_marks, picked_imputed_times in zip(*imputed_seqs):
+                    picked_imputed_marks, picked_imputed_times = move_from_tensor_to_ndarray(picked_imputed_marks, picked_imputed_times)
                     otds_per_seq.append(
-                        otd(imputed_marks, imputed_times, complete_events, complete_time.cumsum(axis = -1), \
-                            self.num_events + 1, add_remove_event_cost = self.event_del_costs[cost_idx], move_event_cost = 1.0, average = 'macro'))
+                        otd(picked_imputed_marks, picked_imputed_times.cumsum(axis = -1), complete_events, complete_time.cumsum(axis = -1), \
+                            self.num_events + 1, add_remove_event_cost = self.event_del_costs, move_event_cost = 1.0, average = 'macro'))
                 
-                otds_per_obs_seq.append(otds_per_seq)
-            otds.append(np.array(otds_per_obs_seq).mean(axis = 0))             # [len(self.event_del_costs)]
+                otds_per_obs_seq.append(np.stack(otds_per_seq, axis = 0).mean(axis = 0))
+            otds.append(np.stack(otds_per_obs_seq, axis = 0).mean(axis = 0))   # [len(self.event_del_costs)]
         
-        otds = np.stack(otds, axis = -1)                                       # [batch_size, len(self.event_del_costs)]
+        otds = np.stack(otds, axis = 0)                                        # [batch_size, len(self.event_del_costs)]
         return otds
 
 
@@ -306,26 +308,27 @@ class NHPSWrapper(BasicModel):
         complete_time, complete_events, complete_mask = move_from_tensor_to_ndarray(*forward_complete_data)
         
         otds = []
-        for obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, _, \
-            backward_obs_time_for_one_seq, backward_obs_event_for_one_seq, backward_obs_mask_for_one_seq, backward_missing_mask_for_one_seq, _ \
+        for (obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, _,), \
+            (backward_obs_time_for_one_seq, backward_obs_event_for_one_seq, backward_obs_mask_for_one_seq, backward_missing_mask_for_one_seq, _ ) \
             in zip(padded_obs_data, padded_backward_obs_event_seq):
-            imputed_seqs_per_sample_by_nhpf \
-                = self.imputing_by_nhps(obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, \
-                                        backward_obs_time_for_one_seq, backward_obs_event_for_one_seq, backward_obs_mask_for_one_seq, 
-                                        samples_to_calc_otd = 1, imputed_retries_num = 1, resample = 1, mean = mean, std = std)
+            weight, imputed_seqs_per_sample_by_nhpf \
+                = self.imputing_by_nhps(obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, \
+                                        backward_obs_time_for_one_seq, backward_obs_event_for_one_seq, backward_obs_mask_for_one_seq, backward_missing_mask_for_one_seq, \
+                                        samples_to_calc_otd = 2, imputed_retries_num = 2, mean = mean, std = std)
                                                                                # [num_samples, len(self.event_del_costs), seq_len]
             otds_per_obs_seq = []
             for imputed_seqs in imputed_seqs_per_sample_by_nhpf:
                 otds_per_seq = []
-                for cost_idx, (imputed_marks, imputed_times) in enumerate(imputed_seqs):
+                for picked_imputed_marks, picked_imputed_times in zip(*imputed_seqs):
+                    picked_imputed_marks, picked_imputed_times = move_from_tensor_to_ndarray(picked_imputed_marks, picked_imputed_times)
                     otds_per_seq.append(
-                        otd(imputed_marks, imputed_times, complete_events, complete_time.cumsum(axis = -1), \
-                            self.num_events + 1, add_remove_event_cost = self.event_del_costs[cost_idx], move_event_cost = 1.0, average = 'macro'))
+                        otd(picked_imputed_marks, picked_imputed_times.cumsum(axis = -1), complete_events, complete_time.cumsum(axis = -1), \
+                            self.num_events + 1, add_remove_event_cost = self.event_del_costs, move_event_cost = 1.0, average = 'macro'))
                 
-                otds_per_obs_seq.append(otds_per_seq)
-            otds.append(np.array(otds_per_obs_seq).mean(axis = 0))             # [len(self.event_del_costs)]
+                otds_per_obs_seq.append(np.stack(otds_per_seq, axis = 0).mean(axis = 0))
+            otds.append(np.stack(otds_per_obs_seq, axis = 0).mean(axis = 0))   # [len(self.event_del_costs)]
         
-        otds = np.stack(otds, axis = -1)                                       # [batch_size, len(self.event_del_costs)]
+        otds = np.stack(otds, axis = 0)                                        # [batch_size, len(self.event_del_costs)]
         return otds
     
     

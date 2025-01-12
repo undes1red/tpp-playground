@@ -5,10 +5,11 @@ from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 from src.TPP.model.utils import step_split, median_prediction, thinning_sampling, predict_event
 
 from src.toolbox.integration import approximate_integration
-from src.toolbox.misc import check_should_we_stop_sampling
+from src.toolbox.misc import check_should_we_stop_sampling, conditional_compile_class_method
 
 
 @torch.no_grad()
+@conditional_compile_class_method
 def sample_time(self, sampling_approach = 'its', task = 'mt', autoregressive = False, *args, **kwargs):
     '''
     number_of_total_samples: how many samples do we need to predict one next event.
