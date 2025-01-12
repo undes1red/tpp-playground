@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from einops import repeat, rearrange, pack
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, easy_model_load
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, easy_model_load, conditional_compile_class_method
 from src.toolbox.integration import approximate_integration
 
 from src.TPP.model.utils import median_prediction, predict_event
@@ -19,6 +19,7 @@ class NHPS(nn.Module):
                  history_encoder_layers, dropout, integration_sample_rate, mark_missing_probability, config_loaded_model):
         super(NHPS, self).__init__()
         self.device = device
+        self.compile_or_not = opt.compile
         self.num_events = num_events
         self.d_input = d_input
         self.mark_missing_probability = mark_missing_probability
@@ -82,7 +83,7 @@ class NHPS(nn.Module):
             backward_missing_mask_history_for_one_seq, backward_missing_mask_next_for_one_seq \
                 = self.divide_history_and_next(backward_missing_mask_for_one_seq)
                                                                                # [sample_num, seq_len] * 2
-                
+
             which_history_the_next_event_should_know = missing_mask_history_for_one_seq.cumsum(dim = -1) - 1
                                                                                # [sample_num, seq_len]
             backward_which_history_the_next_event_should_know = backward_missing_mask_history_for_one_seq.cumsum(dim = -1) - 1
@@ -184,6 +185,7 @@ class NHPS(nn.Module):
         return log_q_z_con_x_on_all_samples
     
     
+    @conditional_compile_class_method
     def autoregressive_sampling_by_its_for_nhpf(self, events_history, time_history, \
                                                 its_lower_bound, mean, std):
         def bisect_target(taus, probability_threshold):
@@ -219,14 +221,15 @@ class NHPS(nn.Module):
 
     def imputing_by_nhpf(self, obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, num_imputed_seq, mean, std):
         weights = []
-        imputed_sequences = []
+        imputed_sequences_events = []
+        imputed_sequences_time = []
         number_of_events = obs_mask_for_one_seq.sum()
         
         for _ in range(num_imputed_seq):
             idx_on_obs_events = 1
             
-            events_history = torch.tensor([[self.num_events], ], dtype = torch.int32, device = self.device)
-            time_history = torch.tensor([[0.0], ], dtype = torch.float32, device = self.device)
+            events_history = torch.tensor([self.num_events, ], dtype = torch.int32, device = self.device)
+            time_history = torch.tensor([0.0, ], dtype = torch.float32, device = self.device)
             weight = 1.0
             aggregate_time = 0.0
             
@@ -258,12 +261,13 @@ class NHPS(nn.Module):
                     aggregate_time = 0.0
             
             weights.append(weight)
-            events_history, time_history = move_from_tensor_to_ndarray(events_history, time_history)
-            imputed_sequences.append([events_history, time_history])
+            imputed_sequences_events.append(events_history)
+            imputed_sequences_time.append(time_history)
         
-        return weights, imputed_sequences
-
-
+        return weights, (imputed_sequences_events, imputed_sequences_time)
+    
+    
+    @conditional_compile_class_method
     def autoregressive_sampling_by_its_for_nhps(self, picked_forward_history_state, picked_backward_history_state, \
                                                 sample_start_time, max_interval_length):
         # Add fake dimensions to all history states so we can use
@@ -274,6 +278,8 @@ class NHPS(nn.Module):
                                                                                # [batch_size, seq_len, di]
         sample_start_time = rearrange(sample_start_time, '() -> () ()')        # [batch_size, seq_len]
         max_interval_length = rearrange(max_interval_length, '() -> () ()')    # [batch_size, seq_len]
+        
+        assert max_interval_length > 0, "Why negative max_interval_length?"
         
         def bisect_target(taus, probability_threshold):
             '''
@@ -329,7 +335,8 @@ class NHPS(nn.Module):
         expanded_intensity_q = self.intensity_layer(mixed_expanded_hidden_state_at_t)
                                                                                # [batch_size, seq_len, integration_sample_rate, d_input]
         integral_of_intensity_q = approximate_integration(expanded_intensity_q, expanded_time, dim = -2, only_integral = True).sum(dim = -1)
-                                                                               # [batch_size, seq_len, num_events]
+                                                                               # [batch_size, seq_len]
+        '''
         are_we_get_legit_sample = (integral_of_intensity_q + torch.log(1 - probability_threshold) >= 0).item()
         
         if not are_we_get_legit_sample:
@@ -343,7 +350,8 @@ class NHPS(nn.Module):
                                                                                # [num_events]
         
             return are_we_get_legit_sample, probability_p
-
+        '''
+        
         # Next event is a missing event.
         sampled_time = median_prediction(50, 1e-4, bisect_target, probability_threshold, r_val = max_interval_length)
                                                                                # [1]
@@ -390,15 +398,12 @@ class NHPS(nn.Module):
         sampled_time = sampled_time.squeeze(dim = 0)                           # [1]
         sampled_marks = sampled_marks.squeeze(dim = 0)                         # [1]
         
-        return are_we_get_legit_sample, (sampled_time, sampled_marks, probability_q, probability_p)
+        return sampled_time, sampled_marks, probability_q, probability_p
 
 
     def imputing_by_nhps(self, obs_time_for_one_seq, obs_events_for_one_seq, obs_missing_mask_for_one_seq, \
                          backward_obs_time_for_one_seq, backward_obs_events_for_one_seq, backward_obs_missing_mask_for_one_seq, \
                          num_imputed_seq, mean, std):
-        weights = []
-        imputed_sequences = []
-        
         missing_mask_history_for_one_seq, missing_mask_next_for_one_seq \
             = self.divide_history_and_next(obs_missing_mask_for_one_seq)       # [full_seq_len] * 2
         backward_missing_mask_history_for_one_seq, backward_missing_mask_next_for_one_seq \
@@ -414,11 +419,11 @@ class NHPS(nn.Module):
         backward_repeated_which_history_the_next_event_should_know = repeat(backward_which_history_the_next_event_should_know, '... -> ... di', di = self.d_input)
                                                                                # [full_seq_len, d_input]
         
-        obs_seq_len = obs_time_for_one_seq.shape[-1]
         obs_time_history, obs_time_next = self.divide_history_and_next(obs_time_for_one_seq)
                                                                                # [sample_length] * 2
         obs_events_history, obs_events_next = self.divide_history_and_next(obs_events_for_one_seq)
                                                                                # [sample_length] * 2
+        obs_seq_len = obs_time_next.shape[-1]
         
         backward_obs_time_history, backward_obs_time_next = self.divide_history_and_next(backward_obs_time_for_one_seq)
                                                                                # [sample_length] * 2
@@ -430,6 +435,7 @@ class NHPS(nn.Module):
         obtained_imputed_seqs_weight = [1.0,] * num_imputed_seq
         obtained_imputed_seqs_time = [torch.tensor([obs_time_history[0]], device = self.device, dtype = torch.float32) for _ in range(num_imputed_seq)]
         obtained_imputed_seqs_events = [torch.tensor([obs_events_history[0]], device = self.device, dtype = torch.int64) for _ in range(num_imputed_seq)]
+        
         for idx in range(obs_seq_len):
             picked_backward_history_state = backward_history_state[-idx]       # [d_input]
             max_interval_length = obs_time_next[idx:idx+1]
@@ -442,29 +448,32 @@ class NHPS(nn.Module):
                         = self.left_to_right_mtpp_model.model.nhps_get_history_state(obtained_imputed_seqs_time[sample_idx].float(), obtained_imputed_seqs_events[sample_idx])
                     hidden_state_at_sampled_time = hidden_state_at_sampled_time[-1]
 
-                    are_we_get_legit_sample, data \
-                        = self.autoregressive_sampling_by_its_for_nhps(hidden_state_at_sampled_time, picked_backward_history_state, \
-                                                                       sample_start_time, max_interval_length - aggregate_time)
+                    data = self.autoregressive_sampling_by_its_for_nhps(hidden_state_at_sampled_time, picked_backward_history_state, \
+                                                                          sample_start_time, max_interval_length - aggregate_time)
                                                                                    # [1, 1]
-                    if are_we_get_legit_sample:
+                    sampled_time, sampled_marks, probability_q, probability_p = data
+                    new_aggregate_time = aggregate_time + sampled_time
+                    
+                    if new_aggregate_time < obs_time_next[idx:idx+1]:
                         # find a missing event.
-                        sampled_time, sampled_marks, probability_q, probability_p = data
-                        aggregate_time = aggregate_time + sampled_time
+                        aggregate_time = new_aggregate_time
                         obtained_imputed_seqs_time[sample_idx] = torch.cat((obtained_imputed_seqs_time[sample_idx], sampled_time))
                         obtained_imputed_seqs_events[sample_idx] = torch.cat((obtained_imputed_seqs_events[sample_idx], sampled_marks))
                         obtained_imputed_seqs_weight[sample_idx] = obtained_imputed_seqs_weight[sample_idx] * probability_p / probability_q * self.mark_missing_probability[sampled_marks]
                     else:
                         # sampling failed, no missing event observed.
-                        probability_p = data
                         obtained_imputed_seqs_time[sample_idx] = torch.cat((obtained_imputed_seqs_time[sample_idx], obs_time_next[idx:idx+1] - aggregate_time))
                         obtained_imputed_seqs_events[sample_idx] = torch.cat((obtained_imputed_seqs_events[sample_idx], obs_events_next[idx:idx+1]))
-                        obtained_imputed_seqs_weight[sample_idx] = obtained_imputed_seqs_weight[sample_idx] * probability_p[..., obs_events_next[idx]] * (1 - self.mark_missing_probability[obs_events_next[idx]])
+                        if obs_events_next[idx] != self.num_events:
+                            # We hit the end of the sequence when obs_events_next[idx] == self.num_events. The common practice outputs the probability that no event occurs between [t_n, T].
+                            # But here we need the value of the probability density function, which is undefined, so in this case we do nothing when we hit the end of the sequence.
+                            obtained_imputed_seqs_weight[sample_idx] = obtained_imputed_seqs_weight[sample_idx] * probability_p * (1 - self.mark_missing_probability[obs_events_next[idx]])
                         
                         # Restore the history state.
                         aggregate_time = 0
                         break
-                    
-                
+        
+        '''
         for _ in range(num_imputed_seq):
             idx_on_obs_events = 1
             
@@ -508,8 +517,9 @@ class NHPS(nn.Module):
             weights.append(weight)
             events_history, time_history = move_from_tensor_to_ndarray(events_history, time_history)
             imputed_sequences.append([events_history, time_history])
+        '''
         
-        return weights, imputed_sequences
+        return obtained_imputed_seqs_weight, (obtained_imputed_seqs_events, obtained_imputed_seqs_time)
     
     
     def get_nhpf_probability(self, forward_complete_data, padded_obs_data):

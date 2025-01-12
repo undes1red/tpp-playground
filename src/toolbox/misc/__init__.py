@@ -14,7 +14,7 @@ from src.toolbox.misc.save_matplotlib_figure import save_fig
 from src.toolbox.misc.yaml_operation import read_yaml, write_yaml
 from src.toolbox.misc.print_args import print_args
 from src.toolbox.misc.pack_unpack_value import pack_one_value_to_dict, only_keep_data
-from src.toolbox.misc.compile_model import compile_model
+from src.toolbox.misc.compile_model import compile_model, conditional_compile_class_method, conditional_compile_func
 from src.toolbox.misc.should_we_stop_sampling import check_should_we_stop_sampling
 from src.toolbox.misc.easy_model_load import easy_model_load
 

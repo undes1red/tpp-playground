@@ -22,8 +22,6 @@ class LLMEncoder(nn.Module):
         if self.lm is None:
             raise Exception('Language model not recorded in dict lm_module_location.')
         self.config = AutoConfig.from_pretrained(full_llm_name)
-        LLM_config = AutoConfig.from_pretrained(full_llm_name)
-        LLm_hidden_size = LLM_config.hidden_size
         
         self.d_lm_embedding = self.config.hidden_size
         self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_attentions = True, attn_implementation = "eager", \
@@ -48,8 +46,8 @@ class LLMEncoder(nn.Module):
 
         # event type embedding
         self.event_emb = nn.Embedding(num_events + 1, d_input, padding_idx = num_events, device = self.device)
-        self.extend = nn.Linear(d_input, LLm_hidden_size, device = self.device)
-        self.shrink = nn.Linear(LLm_hidden_size, d_input, device = self.device)
+        self.extend = nn.Linear(d_input, self.d_lm_embedding, device = self.device)
+        self.shrink = nn.Linear(self.d_lm_embedding, d_input, device = self.device)
 
 
     def forward(self, event_type, event_time, non_pad_mask):

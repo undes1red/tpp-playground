@@ -1,3 +1,6 @@
+import torch
+
+
 def conditional_decorator(*args, **kwargs):
     if len(args) + len(kwargs) == 2:
         return conditional_decorator1(*args, **kwargs)

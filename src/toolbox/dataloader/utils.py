@@ -17,7 +17,7 @@ def check_exist(file_list, file_type, *file_names):
 
         complete_file_name = f'{file_name}.{file_type}'
         if complete_file_name not in file_list:
-            return FileExistsError(f'{file_name} is not found!')
+            raise FileExistsError(f'{file_name} is not found! Found files are: {file_list}.')
         
         existing_files.append(complete_file_name)
     

@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, conditional_decorator, pack_one_value_to_dict
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
@@ -227,8 +227,7 @@ class THPWrapper(BasicModel):
         return mtpp_nll_loss, events_loss
 
 
-    def sample_time(self, *args, **kwargs):
-        return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
+    sample_time = sample_time
 
 
     @torch.no_grad()
