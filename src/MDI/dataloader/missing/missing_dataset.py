@@ -31,8 +31,7 @@ class missing_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, property_dict, missing_probability = [], num_of_missing_sample = 16, \
-                 shift = False, input_norm_data = False):
+    def __init__(self, data, device, property_dict, input_norm_data = False):
         super(missing_dataset, self).__init__()
         self.device = device
         # The dummy events, with event_id = self.number_of_events, are always here.

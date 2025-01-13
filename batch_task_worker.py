@@ -1,5 +1,5 @@
 # You can use this file if you are too lazy to create and modify script files.
-# Just pack numerous tasks and run them one by one automatically.
+# This file can pack numerous tasks and run them one by one automatically.
 
 import os, argparse, importlib, copy
 from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks, read_yaml
@@ -17,7 +17,7 @@ parser.add_argument('--script_type', type = str, choices = ['train', 'evaluate',
                                              train: training mode. Execute training tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              evaluate: evaluation mode. Execute Evaluation tasks defined in parameter_set/{procedure_name} one by one.\n \
                                              previous_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_previous_failed_tasks.txt and execute these tasks one by one.')
-parser.add_argument('--procedure_name', type = str, choices = ['TPP', 'LH'], \
+parser.add_argument('--procedure_name', type = str, choices = ['TPP', 'LH', 'OD', 'MDI'], \
                                         help = 'You need this argument to select the proper parameter set.')
 parser.add_argument('--GPU', nargs='+', default = None, help='How many GPU you want to use? Tell us the ID of available GPUs, \
                                                               or set it to a negative number or None to go CPU-only.')
