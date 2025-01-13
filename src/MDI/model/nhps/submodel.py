@@ -123,11 +123,9 @@ class NHPS(nn.Module):
             aligned_backward_cum_obs_time_history = torch.gather(cum_backward_obs_time_history, -1, backward_which_history_the_next_event_should_know)
                                                                                # [sample_num, seq_len]
             
-            forward_where_to_start \
-                = time_history[idx:idx+1].cumsum(dim = -1) - aligned_cum_obs_time_history
+            forward_where_to_start = time_history[idx:idx+1, :aligned_cum_obs_time_history.shape[-1]].cumsum(dim = -1) - aligned_cum_obs_time_history
             
-            backward_where_to_start \
-                = backward_time_history[idx:idx+1].cumsum(dim = -1) - aligned_backward_cum_obs_time_history
+            backward_where_to_start = backward_time_history[idx:idx+1, :aligned_cum_obs_time_history.shape[-1]].cumsum(dim = -1) - aligned_backward_cum_obs_time_history
                                                                                # [sample_num, seq_len]
             forward_where_to_start = (forward_where_to_start * (~missing_mask_history_for_one_seq)).float()
             backward_where_to_start = (backward_where_to_start * (~backward_missing_mask_history_for_one_seq)).float()

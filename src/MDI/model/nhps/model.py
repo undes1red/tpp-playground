@@ -12,8 +12,7 @@ from src.MDI.model.nhps.plot import *
 from src.toolbox.misc import pack_one_value_to_dict
 from src.MDI.model.nhps.submodel import NHPS
 from src.MDI.model.utils import *
-from src.MDI.model.nhps.decoder import ConsensusDecoder
-
+from src.MDI.model.nhps.utils import dataset_translator
 
 class NHPSWrapper(BasicModel):
     def __init__(self, opt, device, event_del_costs, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
@@ -37,7 +36,10 @@ class NHPSWrapper(BasicModel):
         self.max_step = 50
         
         self.nhps = NHPS(opt, device, self.num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
-                         history_encoder_layers, dropout, integration_sample_rate, self.mark_missing_probability, config_loaded_model)
+                         history_encoder_layers, dropout, integration_sample_rate, self.mark_missing_probability, \
+                         {**config_loaded_model, 
+                          'dataset_name': opt.info_dict['dataset_name'], 
+                          'dataset_name_for_model': dataset_translator(opt.info_dict['dataset_name'])})
     
 
     def divide_history_and_next(self, input):
@@ -112,7 +114,7 @@ class NHPSWrapper(BasicModel):
         2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
         3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
         '''
-
+        
         log_q_z_con_x_on_all_samples \
             = self.nhps(forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq)
                                                                                  # 2 * [batch_size, seq_len, num_events]
