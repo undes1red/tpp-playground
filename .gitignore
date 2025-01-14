@@ -147,6 +147,7 @@ useful_utilities/*
 
 # hyperparameter set
 parameter_set/*
+new_parameter_set/*
 
 # pending projects
 src/fakenews/*

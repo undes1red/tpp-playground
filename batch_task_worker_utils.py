@@ -47,7 +47,7 @@ def task_generator_worker(hyperparameter_list, iterate_style):
         return [{}], 0
 
     static_hyperparameters = hyperparameter_list.get('static', {})
-    tasks_hyperparameters = hyperparameter_list.get('tasks', {})
+    tasks_hyperparameters = hyperparameter_list.get('loop_vars', {})
     zip_style_hyperparameters = hyperparameter_list.get('zip_style', {})
     counting_style_hyperparameters = hyperparameter_list.get('counting_style', {})
 
