@@ -2,7 +2,7 @@
 # This file can pack numerous tasks and run them one by one automatically.
 
 import os, argparse, importlib, copy, sys
-from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks, read_yaml
+from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks, read_yaml, mkdir_if_not_exist
 from src.taskhost import get_logger
 
 
@@ -65,8 +65,6 @@ if not use_gpu:
 # stdout dir
 # where we store printed logs of each task.
 stdout_dir = os.path.join(root_path, 'stdout', opt.procedure_name, opt.script_type, opt.model)
-if not os.path.exists(stdout_dir):
-    os.makedirs(stdout_dir)
 
 
 def task_generator(hyperparameter_list):
@@ -121,7 +119,8 @@ if opt.script_type == 'previous_failed_tasks':
     for command in f_previous_failed_tasks:
         generated_tasks.append(command.strip())
     the_number_of_task = len(generated_tasks)
-
+    
+    mkdir_if_not_exist(stdout_dir)
     failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments = slurm_arguments)
     
     # Report the execution sumamry:
@@ -171,10 +170,12 @@ else:
         # Extract the list and run the tasks one by one.
         for idx, sub_job in enumerate(job_content):
             logger.warning(f'============ subjob No. {idx + 1} started ============')
+            stdout_dir_for_this_subjob = os.path.join(stdout_dir, job, "subjob_" + str(idx + 1))
+            mkdir_if_not_exist(stdout_dir_for_this_subjob)
             generated_tasks, the_number_of_task = task_generator(sub_job)
             generated_tasks = [' '.join(sub_task) for sub_task in generated_tasks]
             
-            failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments = slurm_arguments)
+            failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir_for_this_subjob, opt.slurm, slurm_arguments = slurm_arguments)
             
             # Report the execution sumamry:
             logger.warning('==========================================')
