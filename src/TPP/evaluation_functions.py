@@ -241,7 +241,6 @@ desc_funcs = {
     # CPPOD task.
     'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},
 
-    
     # Custom evaluation function.
     'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events
 }

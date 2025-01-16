@@ -69,7 +69,7 @@ if not os.path.exists(stdout_dir):
     os.makedirs(stdout_dir)
 
 
-def task_generator(worker, hyperparameter_list):
+def task_generator(hyperparameter_list):
     '''
     [
         (other single hyperparameters),
@@ -83,7 +83,7 @@ def task_generator(worker, hyperparameter_list):
         ]
     ]
     '''
-    file_name = os.path.join(root_path, worker)
+    file_name = os.path.join(root_path, hyperparameter_list['worker'])
     argparser = opt.procedure_name + '_' + hyperparameter_list['job_type']
 
     static_hyperparameters = hyperparameter_list.get('static', {})
@@ -111,9 +111,9 @@ def task_generator(worker, hyperparameter_list):
 if opt.script_type == 'previous_failed_tasks':
     logger.info(f'We are in previous_failed_tasks mode. We will read in and rerun failed commands recorded in {opt.model}_previous_failed_tasks.txt.')
     try:
-        f_previous_failed_tasks = open(os.path.join(root_path, 'new_parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'r')
+        f_previous_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'r')
     except FileNotFoundError as e:
-        logger.exception(f"File {os.path.join('new_parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt')} not found!")
+        logger.exception(f"File {os.path.join('parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt')} not found!")
     except Exception as e:
         raise e
     
@@ -142,27 +142,25 @@ if opt.script_type == 'previous_failed_tasks':
     Only in previous_failed_tasks mode we can rewrite the previous_failed_tasks.txt.
     By this we can avoid missing failed tasks in the previous task sets if the execution script calls batch_task_worker.py multiple times.
     '''
-    f_previous_failed_tasks = open(os.path.join(root_path, 'new_parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'w')
+    f_previous_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'w')
     f_previous_failed_tasks.writelines(failed_commands)
     f_previous_failed_tasks.close()
 else:
-    parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'new_parameter_set')
+    parameter_lib = importlib.import_module(f'.{opt.procedure_name}', package = 'parameter_set')
     parameter_retriver = getattr(parameter_lib, 'parameter_retriver')
     full_job_list = parameter_retriver(opt)
-    worker = full_job_list['file_name']
     
-    logger.info(f'We call {worker} to run our jobs.')
     if opt.job_name is None:
         logger.warning(f'No job selected! Exiting...')
         sys.exit(0)
     elif opt.job_name == ['ALL',]:
-        opt.job_name = full_job_list['jobs'].keys()
+        opt.job_name = full_job_list.keys()
 
     logger.info(f'We will execute the following jobs: {opt.job_name}.')
-    logger.info(f'All available jobs: {full_job_list['jobs'].keys()}.')
+    logger.info(f'All available jobs: {full_job_list.keys()}.')
     
     for job in opt.job_name:
-        job_content = full_job_list['jobs'][job]
+        job_content = full_job_list[job]
         
         # condition 1: a single dict.
         if isinstance(job_content, dict):
@@ -173,7 +171,7 @@ else:
         # Extract the list and run the tasks one by one.
         for idx, sub_job in enumerate(job_content):
             logger.warning(f'============ subjob No. {idx + 1} started ============')
-            generated_tasks, the_number_of_task = task_generator(worker, sub_job)
+            generated_tasks, the_number_of_task = task_generator(sub_job)
             generated_tasks = [' '.join(sub_task) for sub_task in generated_tasks]
             
             failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments = slurm_arguments)
@@ -196,7 +194,7 @@ else:
             Only in previous_failed_tasks mode we can rewrite the previous_failed_tasks.txt.
             By this we can avoid missing failed tasks in the previous task sets if the execution script calls batch_task_worker.py multiple times.
             '''
-            f_previous_failed_tasks = open(os.path.join(root_path, 'new_parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'a')
+            f_previous_failed_tasks = open(os.path.join(root_path, 'parameter_set', opt.procedure_name, f'{opt.model}_previous_failed_tasks.txt'), 'a')
             f_previous_failed_tasks.writelines(failed_commands)
             f_previous_failed_tasks.close()
 
