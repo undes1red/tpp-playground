@@ -804,6 +804,29 @@ class FullyNNModel(BasicModel):
         return tau_pred_all_event, p_m
 
 
+    def convert_missing_mask_to_gap_mask(self, missing_mask):
+        # input shape: [num_samples, seq_len]
+        
+        masks = []
+        for missing_mask_per_seq in missing_mask:
+            current_in_missing = False
+            mask_current_seq = []
+            for item in missing_mask_per_seq[1:]:
+                if item == 1 and not current_in_missing:
+                    mask_current_seq.append(1)
+                elif item == 1 and current_in_missing:
+                    current_in_missing = False
+                elif item == 0 and not current_in_missing:
+                    mask_current_seq.append(0)
+                    current_in_missing = True
+                else:
+                    continue
+            
+            masks.append(mask_current_seq)
+        
+        return masks
+
+
     def cppod_evaluation(self, input_data, opt):
         '''
         Take care. This function only evaluates the omission outlier.

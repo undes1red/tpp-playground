@@ -817,7 +817,7 @@ class IFIBCModel(BasicModel):
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)        
         
-        if mask.sum(dim = -1) < opt.number_of_events_hypro:
+        if mask.sum(dim = -1) <= opt.number_of_events_hypro:
             '''
             Sequence too short to perform HYPRO. Considering to make the number_of_events_hypro lower to avoid this.
             '''
