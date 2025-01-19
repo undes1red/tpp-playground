@@ -1,5 +1,5 @@
 import torch, copy
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 from einops import rearrange, repeat, reduce
 from scipy.stats import spearmanr
 
@@ -822,6 +822,8 @@ class FullyNNModel(BasicModel):
             obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
                                                                                # [batch_size, seq_len]
             
+            obs_time_next_for_one_seq = repeat(obs_time_next_for_one_seq, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
             missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
                                                                                # [num_samples, ...]
             integral_all_events = self.model(obs_events_history_for_one_seq, obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), mean, std)

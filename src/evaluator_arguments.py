@@ -13,6 +13,8 @@ class BasicEvaluatorArguments:
                             help="Select which CUDA device you want to use. Default number is 0. This argument does nothing if --cuda is not set.")
         self.parser.add_argument('--replace', action='store_true', 
                             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.")
+        self.parser.add_argument('--model_index', nargs = '+', default = None, 
+                            help = 'Pick the model by its index.')
         self.parser.add_argument('--fpcounter', action='store_true', 
                             help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.")
         self.parser.add_argument('--compile', action='store_true', 

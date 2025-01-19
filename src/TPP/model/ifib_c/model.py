@@ -783,16 +783,18 @@ class IFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len] * 2
             obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
                                                                                # [batch_size, seq_len]
-            
+
+            obs_time_next_for_one_seq = repeat(obs_time_next_for_one_seq, 'b s -> b s ne', ne = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
             missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
                                                                                # [num_samples, ...]
             # CAUTION: this is the integral of p(m, t) from t to the positive infinity, or 1 - F(m, t)
             # 1 - F(t) = \Gamma(t) = exp(-\Lambda(t))
             # <=> \Lambda(t) = - ln \Gamma(t)
-            obtained_integral = self.model(obs_events_history_for_one_seq, obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), mean, std)
+            obtained_integral = self.model('default_forward', obs_events_history_for_one_seq, obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), mean, std)
                                                                                # [num_samples, seq_len, num_events]
             
-            integral_sum = - torch.log(obtained_integral.sum(dim = -1))        # [num_samples, seq_len]
+            integral_sum = - torch.log(obtained_integral).sum(dim = -1)        # [num_samples, seq_len]
             
             all_roauc_area = []
             for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in \
