@@ -7,7 +7,7 @@ def check_should_we_stop_sampling(tmp_time_history_for_sampling, end_sampling_re
     if end_sampling_requirement == 'time':
         
         tmp_sum_of_sampled_time = tmp_time_history_for_sampling.sum(dim = -1)  # [number_of_sampled_sequences]
-        if tmp_sum_of_sampled_time.min() >= kwargs['end_time']:
+        if tmp_sum_of_sampled_time.min() > kwargs['end_time']:
             should_we_stop = True
             sampled_mask = (tmp_time_history_for_sampling.cumsum(dim = -1) < kwargs['end_time']).int()
             
@@ -17,7 +17,7 @@ def check_should_we_stop_sampling(tmp_time_history_for_sampling, end_sampling_re
             
     elif end_sampling_requirement == 'event_num':
         current_seq_len = tmp_time_history_for_sampling.shape[-1]
-        if current_seq_len >= kwargs['max_seq_len']:
+        if current_seq_len > kwargs['max_seq_len']:
             should_we_stop = True
             sampled_mask = torch.ones_like(tmp_time_history_for_sampling, dtype = int)
             
