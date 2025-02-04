@@ -2,6 +2,7 @@ import torch, copy
 from sklearn.metrics import f1_score, roc_auc_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
+import torch.nn.functional as F
 
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict, conditional_decorator
 from src.toolbox.metrics import L1_distance_between_two_funcs
@@ -164,8 +165,12 @@ class IFIBCModel(BasicModel):
         events_loss = events_loss_without_dummy.sum()
 
         # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
-        time_loss_without_dummy = self.nll_loss(probability = probability_for_each_event, \
-                                                mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
+        # time_loss_without_dummy = self.nll_loss(probability = probability_for_each_event, \
+        #                                         mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
+        time_loss_without_dummy = self.nll_loss_oversample(probability = probability_for_each_event, \
+                                                           mask_next = mask_next_without_dummy, \
+                                                           events_next_without_dummy = events_next_without_dummy, \
+                                                           events_next = events_next_without_dummy)
         time_loss_survival = 0
         if self.survival_loss_during_training:
             # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau} = -\\log(1 - P(t)) = -log(IFIB-C(t)).
@@ -227,14 +232,18 @@ class IFIBCModel(BasicModel):
         events_loss = events_loss.sum()
 
         # Time loss: -log p(t) = \\sum_{i = 1}^{N}{\\lambda_{k}(t_i)} + \\int_{t_0}^{t_N}{\\sum_{k}\\lambda_k^(\\tau)d\\tau}
-        time_loss_wihtout_dummy = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
+        # time_loss_without_dummy = self.nll_loss(probability = probability_for_each_event_at_time_next, mask_next = mask_next_without_dummy, events_next = events_next_without_dummy)
+        time_loss_without_dummy = self.nll_loss_oversample(probability = probability_for_each_event_at_time_next, \
+                                                           mask_next = mask_next_without_dummy, \
+                                                           events_next_without_dummy = events_next_without_dummy, \
+                                                           events_next = events_next_without_dummy)
         # Survival probability: \\int_{t_N}^{T}{\\sum_{k}\\lambda_k^(\\tau)d\\tau} = -\\log(1 - P(t)) = -log(\\sum_{m}{IFIB-C(m, t)}).
         dummy_event_index = mask_next.sum(dim = -1) - 1                        # [batch_size]
         probability_survival = probability_integral_from_time_next_to_infinite.sum(dim = -1).gather(index = dummy_event_index.unsqueeze(dim = -1), dim = -1)
                                                                                # [batch_size, 1]
         time_loss_survival = -torch.log(probability_survival + self.epsilon).mean()
 
-        return time_loss_wihtout_dummy, time_loss_survival, events_loss, mae, f1, the_number_of_events
+        return time_loss_without_dummy, time_loss_survival, events_loss, mae, f1, the_number_of_events
 
 
     def nll_loss(self, probability, events_next, mask_next):
@@ -255,6 +264,91 @@ class IFIBCModel(BasicModel):
         loss = torch.sum(loss)
 
         return loss
+
+
+    def nll_loss_oversample(self, probability, events_next, events_next_without_dummy, mask_next):
+        '''
+        The definition of loss.
+    
+        Args:
+            probability:        [batch_size, seq_len, num_events]
+            events_next:        [batch_size, seq_len]
+            mask_next:          [batch_size, seq_len]
+        '''
+        # Balance the loss of different marks.
+        marks, counts = torch.unique(events_next, return_counts = True)
+        marks_counts_with_unobserved = {}
+        for mark in range(self.num_events):
+            if mark in marks:
+                marks_counts_with_unobserved[mark] = counts[marks == mark]
+        
+        min_num = min(marks_counts_with_unobserved.values())
+        for mark, num in marks_counts_with_unobserved.items():
+            marks_counts_with_unobserved[mark] = min_num/num
+        
+        probability_mask = torch.nn.functional.one_hot(events_next_without_dummy.long(), num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
+        log_probability = - torch.log(probability + self.epsilon) * probability_mask
+        log_probability = reduce(log_probability, '... ne -> ...', 'sum')      # [batch_size, seq_len]
+        
+        loss = 0
+        for mark in marks_counts_with_unobserved.keys():
+            selected_loss = log_probability[events_next == mark] * marks_counts_with_unobserved[mark]
+            loss += selected_loss.sum()
+        
+        # loss = log_probability * mask_next                                   # [batch_size, seq_len]
+        # loss = torch.sum(loss)
+
+        return loss
+
+
+    '''
+    Loss functions
+    '''
+    def loss_function_undersample(self, integral_all_events, intensity_all_events, events_next_without_dummy, events_next, mask_next):
+        
+        # Balance the loss of different marks.
+        marks, counts = torch.unique(events_next, return_counts = True)
+        marks_counts_with_unobserved = {}
+        for mark in range(self.num_events):
+            if mark in marks:
+                marks_counts_with_unobserved[mark] = counts[marks == mark]
+            else:
+                marks_counts_with_unobserved[mark] = 0
+        
+        min_num = max(min(marks_counts_with_unobserved.values()), 1)
+        
+        """ Log-likelihood of sequence. """
+        type_mask = F.one_hot(events_next_without_dummy, num_classes = self.num_events)
+                                                                               # [batch_size, seq_len, num_events]
+        '''
+        MTPP loss function
+        '''
+        selected_intensity = (intensity_all_events * type_mask).sum(dim = -1)  # [batch_size, seq_len]
+        log_intensity = torch.log(selected_intensity + self.epsilon)           # [batch_size, seq_len]
+        nll = -log_intensity + integral_all_events.sum(dim = -1)               # [batch_size, seq_len]
+    
+        mtpp_loss = 0
+        for mark in marks_counts_with_unobserved.keys():
+            selected_loss = nll[events_next == mark][:min_num]
+            mtpp_loss += selected_loss.sum()
+    
+        # mtpp_loss = torch.sum(nll * mask_next)
+
+        '''
+        Event loss function. Only for evaluation, do NOT use this loss as a part of the training loss.
+        '''
+        events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
+                                                                               # [batch_size, seq_len, num_events]
+        events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
+                                                                               # [batch_size, seq_len, num_events]
+        reshaped_events_prediction_probability = rearrange(events_prediction_probability, 'b s ne -> b ne s')
+                                                                               # [batch_size, num_events, seq_len]
+        events_loss = F.cross_entropy(input = reshaped_events_prediction_probability, target = events_next_without_dummy, reduction = 'none')
+                                                                               # [batch_size, seq_len]
+        events_loss = (events_loss * mask_next).sum()
+
+        return mtpp_loss, events_loss
     
     
     def sample_time(self, *args, **kwargs):
@@ -644,7 +738,7 @@ class IFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
 
-        return mae, f1_1
+        return mae, f1_1, events_next
 
     
     def get_mae_e_and_f1(self, input_data, opt):
@@ -657,7 +751,7 @@ class IFIBCModel(BasicModel):
         f1_2, top_k, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std)
         
-        _, maes, probability_sum, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
+        _, maes, probability_sum, probability_integral_from_zero_to_infinite, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, probability_integral_from_zero_to_infinite, events_next)
 
         return maes, f1_2, probability_sum, probability_integral_from_zero_to_infinite, events_next
 

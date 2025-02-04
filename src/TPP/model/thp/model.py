@@ -329,7 +329,9 @@ class THPWrapper(BasicModel):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
         
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+        return f1, top_k_acc, probability_integral_sum, \
+               probability_integral_to_inf, \
+               tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
@@ -490,7 +492,7 @@ class THPWrapper(BasicModel):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_history, mask_next, opt.resolution)
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
 
         '''
@@ -568,9 +570,9 @@ class THPWrapper(BasicModel):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
+        mae, events_next = move_from_tensor_to_ndarray(mae, events_next)
 
-        return mae, f1_1
+        return mae, f1_1, events_next
 
     
     @torch.no_grad()
@@ -581,13 +583,13 @@ class THPWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, probability_integral_to_inf, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_history, mask_next, mean, std)
         
-        _, maes, probability_sum, events_next, = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
+        _, maes, probability_sum, probability_integral_to_inf, events_next, = move_from_tensor_to_ndarray(*maes, probability_sum, probability_integral_to_inf, events_next)
 
-        return maes, f1_2, probability_sum, events_next
+        return maes, f1_2, probability_sum, probability_integral_to_inf, events_next
 
 
     @torch.no_grad()
@@ -669,6 +671,29 @@ class THPWrapper(BasicModel):
                                               mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
 
         return tau_pred_all_event, probability_integral_to_inf
+
+
+    def convert_missing_mask_to_gap_mask(self, missing_mask):
+        # input shape: [num_samples, seq_len]
+        
+        masks = []
+        for missing_mask_per_seq in missing_mask:
+            current_in_missing = False
+            mask_current_seq = []
+            for item in missing_mask_per_seq[1:]:
+                if item == 1 and not current_in_missing:
+                    mask_current_seq.append(1)
+                elif item == 1 and current_in_missing:
+                    current_in_missing = False
+                elif item == 0 and not current_in_missing:
+                    mask_current_seq.append(0)
+                    current_in_missing = True
+                else:
+                    continue
+            
+            masks.append(mask_current_seq)
+        
+        return masks
 
 
     def cppod_evaluation(self, input_data, opt):

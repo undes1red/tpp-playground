@@ -318,7 +318,8 @@ class CTLSTMWrapper(BasicModel):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
         
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+        return f1, top_k_acc, probability_integral_sum, probability_integral_to_inf, \
+               tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
@@ -484,7 +485,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
                                                           mask_next, opt.resolution)
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std,  return_mean = False)
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
@@ -568,9 +569,9 @@ class CTLSTMWrapper(BasicModel):
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
+        mae, events_next = move_from_tensor_to_ndarray(mae, events_next)
 
-        return mae, f1_1
+        return mae, f1_1, events_next
 
     
     @torch.no_grad()
@@ -581,13 +582,13 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, p_m, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_history, mask_next, mean, std)
         
-        _, maes, probability_sum = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes, probability_sum, p_m, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, events_next)
 
-        return maes, f1_2, probability_sum
+        return maes, f1_2, probability_sum, p_m, events_next
 
 
     def convert_missing_mask_to_gap_mask(self, missing_mask):
