@@ -134,7 +134,8 @@ class FENNModel(BasicModel):
             'debug': self.figure_debug,
 
             # For CPPOD, should be used with the od_generic dataloader.
-            'cppod_evaluation': self.cppod_evaluation
+            'cppod_evaluation': self.cppod_evaluation,
+            'cppod_commission_evaluation': self.cppod_commission_evaluation
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -897,6 +898,54 @@ class FENNModel(BasicModel):
         
         roc_result = np.array(roc_result)
         return roc_result
+
+
+    def cppod_commission_evaluation(self, input_data, opt):
+        (time_seq, events, commission, mask), (mean, std) = input_data
+        
+        time_history, time_next = self.divide_history_and_next(time_seq)       # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
+        _, commission_next = self.divide_history_and_next(commission)          # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        time_history = time_history.float()
+        time_next = time_next.float()
+        
+        time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
+        '''
+        preparing for multi-event training when needed
+        '''
+        time_next.requires_grad = True
+        integral_for_each_event_from_tl_to_time_next = self.model(events_history, time_history, time_next, mean = mean, std = std)
+                                                                               # [batch_size, seq_len, num_events]
+        '''
+        Obtains intensity values.
+        '''
+        intensity_for_each_event_from_tl_to_time_next = torch.autograd.grad(
+            outputs = integral_for_each_event_from_tl_to_time_next,
+            inputs = time_next,
+            grad_outputs = torch.ones_like(integral_for_each_event_from_tl_to_time_next),
+        )[0]                                                                   # [batch_size, seq_len, num_events]
+        time_next.requires_grad = False
+        check_tensor(intensity_for_each_event_from_tl_to_time_next)            # [batch_size, seq_len, num_events]
+        assert intensity_for_each_event_from_tl_to_time_next.shape == integral_for_each_event_from_tl_to_time_next.shape
+        
+        intensity_sum_from_tl_to_time_next = intensity_for_each_event_from_tl_to_time_next.sum(dim = -1)
+                                                                               # [batch_size, seq_len]
+        score = -intensity_sum_from_tl_to_time_next                            # [batch_size, seq_len]
+        
+        packed_data = zip(score, commission_next, mask_next)
+        all_roauc_area = []
+
+        for score_per_seq, commission_next_per_seq, mask_next_per_seq in packed_data:
+            available_score = score_per_seq[mask_next_per_seq]
+            available_commission_label = commission_next_per_seq[mask_next_per_seq]
+            
+            available_score, available_commission_label = move_from_tensor_to_ndarray(available_score, available_commission_label)
+            roauc_area = roc_auc_score(y_true = available_commission_label, y_score = available_score)
+            all_roauc_area.append(roauc_area)
+        
+        all_roauc_area = np.array(all_roauc_area)
+        return all_roauc_area
 
 
     def get_event_embedding(self, input_events):

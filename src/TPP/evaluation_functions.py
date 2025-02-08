@@ -168,6 +168,19 @@ def cppod_evaluation_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
+def cppod_commission_evaluation_postprocess(all_evaluation_results, desc, opt):
+    rocs = all_evaluation_results
+    rocs = np.mean(rocs).item()
+
+    result_file = os.path.join(opt.store_dir, f'{desc}_roc_commission_mean.txt')
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average roc of outlier detection is {rocs}.'
+    write_to_txt(strings, result_file)
+    
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_cppod_commission_rocs.pkl')
+    data = {'rocs': rocs}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
+
 def generate_hypro_dataset_postprocess(all_evaluation_results, desc, opt):
     '''
     Dump the detailed distribution of mae-e for further usage.
@@ -235,6 +248,8 @@ desc_funcs = {
 
     # CPPOD task.
     'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},
+    'cppod_commission_evaluation': {'desc_string': 'Obtaining CPPOD score on commission outlier for {0}', 'postprocess_func': cppod_commission_evaluation_postprocess},
+
 
     # Custom evaluation function.
     'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events

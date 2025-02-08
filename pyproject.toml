@@ -1,0 +1,36 @@
+[project]
+name = "tpp-playground"
+version = "0.0.12"
+description = "Main coderepo of MTPP models."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch==2.6.0",
+    "torchvision",
+    "torchaudio",
+    "numpy",
+    "einops",
+    "scipy",
+    "scikit-learn",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "pyyaml",
+    "termcolor"
+]
+
+# Settings for uv
+[tool.uv]
+# Something we need during development while not when release.
+dev-dependencies = ["ipython"]
+
+# [[tool.uv.index]]
+# name = "pytorch-cu126"
+# url = "https://download.pytorch.org/whl/cu126"
+# explicit = true
+
+# [tool.uv.sources]
+# Install pytorch from the official pytorch repo.
+# torch = { index = "pytorch-cu126" }
+# torchvision = { index = "pytorch-cu126" }
+# torchaudio = {index = "pytorch-cu126" }
