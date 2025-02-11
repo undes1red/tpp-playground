@@ -16,7 +16,9 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "pyyaml",
-    "termcolor"
+    "termcolor",
+    "transformers",
+    "accelerate"
 ]
 
 # Settings for uv

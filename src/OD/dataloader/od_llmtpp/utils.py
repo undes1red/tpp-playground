@@ -20,6 +20,7 @@ def convert_missing_mask_to_gap_mask(missing_mask):
             else:
                 continue
         
+        mask_current_seq = [item ^ 1 for item in mask_current_seq]
         masks.append(mask_current_seq)
     
     return masks

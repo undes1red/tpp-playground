@@ -888,7 +888,7 @@ class IFIBCModel(BasicModel):
             obtained_integral = self.model('default_forward', obs_events_history_for_one_seq, obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), mean, std)
                                                                                # [num_samples, seq_len, num_events]
             
-            integral_sum = - torch.log(obtained_integral).sum(dim = -1)        # [num_samples, seq_len]
+            integral_sum = - torch.log(obtained_integral.sum(dim = -1))        # [num_samples, seq_len]
             
             all_roauc_area = []
             for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in \
@@ -897,7 +897,7 @@ class IFIBCModel(BasicModel):
                 sample_len = len(missing_mask_for_one_seq_per_sample)
                 selected_integral_sum_per_seq_per_sample = move_from_tensor_to_ndarray(integral_sum_per_seq_per_sample[:sample_len])
                 
-                roauc_area = roc_auc_score(y_true = missing_mask_for_one_seq_per_sample, y_score = selected_integral_sum_per_seq_per_sample)
+                roauc_area = roc_auc_score(y_true = np.array(missing_mask_for_one_seq_per_sample) ^ 1, y_score = selected_integral_sum_per_seq_per_sample)
                 all_roauc_area.append(roauc_area)
             
             roc_result.append(np.mean(all_roauc_area))
