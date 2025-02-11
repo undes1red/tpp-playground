@@ -43,7 +43,7 @@ def Evaluator_postprocess(opt, root_path):
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
     if opt.combine_used_and_current_dataloader_config:
-        opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
+        opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataset_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
         opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None
 
     opt.checkpoint_of_this_procedure = os.path.join(root_path, 'model', opt.procedure)

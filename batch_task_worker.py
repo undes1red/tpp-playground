@@ -32,6 +32,7 @@ parser.add_argument('--slurm', action  ='store_true', help = 'Submit tasks throu
 parser.add_argument('--slurm_config', type = str, help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
 parser.add_argument('--sleep', type = int, default = 0, help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
 parser.add_argument('--interpreter', type = str, default = 'python3', help = 'This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.')
+parser.add_argument('--start_from_this_index', type = int, default = 0, help = 'This argument directs the script to start from the work with the given index. Useful during debug.')
 
 
 # Preprocess
