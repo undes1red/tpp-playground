@@ -157,7 +157,7 @@ def samples_from_et_postprocess(all_evaluation_results, desc, opt):
 
 def cppod_evaluation_postprocess(all_evaluation_results, desc, opt):
     rocs = all_evaluation_results
-    rocs = np.mean(rocs).item()
+    rocs = np.nanmean(rocs).item()
     
     result_file = os.path.join(opt.store_dir, f'{desc}_roc_mean.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average roc of outlier detection is {rocs}.'
@@ -170,7 +170,7 @@ def cppod_evaluation_postprocess(all_evaluation_results, desc, opt):
 
 def cppod_commission_evaluation_postprocess(all_evaluation_results, desc, opt):
     rocs = all_evaluation_results
-    rocs = np.mean(rocs).item()
+    rocs = np.nanmean(rocs).item()
 
     result_file = os.path.join(opt.store_dir, f'{desc}_roc_commission_mean.txt')
     strings = f'For the {desc} of {opt.dataset_name}, we announce that the average roc of outlier detection is {rocs}.'
