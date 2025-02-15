@@ -18,7 +18,8 @@ dependencies = [
     "pyyaml",
     "termcolor",
     "transformers",
-    "accelerate"
+    "accelerate",
+    "wandb"
 ]
 
 # Settings for uv
