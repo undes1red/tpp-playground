@@ -25,4 +25,4 @@ def possible_checkpoint_detect(opt, id):
         if os.path.exists(possible_checkpoint):
             valid_dir_indexes.append(possible_valid_dir_name)
     
-    return valid_dir_indexes
+    return sorted(valid_dir_indexes)

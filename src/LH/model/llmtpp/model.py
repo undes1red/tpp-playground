@@ -201,7 +201,7 @@ class LLMTPPModel(BasicModel):
         
         #2: Calculating mark prediction accuracy.
         
-        return otds
+        return otds, np.array([0.0, 0.0])
 
 
     '''
