@@ -15,7 +15,8 @@ from src.TPP.model.llmtpp_repro.reprogramming_functions import ReprogramInput, R
 
 
 class LLMTPP(nn.Module):
-    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, lm_layers, device, dropout, number_of_prototype):
+    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, lm_layers, \
+                 device, repro_input_layer, dropout, number_of_prototype):
         super(LLMTPP, self).__init__()
         self.device = device
         self.num_events = num_events
