@@ -15,7 +15,7 @@ from src.TPP.model.llmtpp_repro.reprogramming_functions import ReprogramInput, R
 
 
 class LLMTPP(nn.Module):
-    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, lm_layers, \
+    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, \
                  device, repro_input_layer, dropout, number_of_prototype):
         super(LLMTPP, self).__init__()
         self.device = device
@@ -36,8 +36,7 @@ class LLMTPP(nn.Module):
         self.d_lm_embedding = self.config.hidden_size
         
         # The frozen LLM.
-        self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_hidden_states = True, \
-                                                    torch_dtype = torch.bfloat16, \
+        self.retrieved_lm = self.lm.from_pretrained(full_llm_name, output_hidden_states = True, 
                                                     device_map = self.device)
         for param in self.retrieved_lm.parameters():
             param.requires_grad = False
@@ -76,10 +75,8 @@ class LLMTPP(nn.Module):
                                                                                # [1, squeezed_vocab_size, d_model]
         converted_emb = self.time_seq_to_token_emb(input_embs, squeezed_token_emb)
                                                                                # [batch_size, seq_len, d_lm_model]
-        converted_emb = converted_emb.bfloat16()
         outputs = self.retrieved_lm(inputs_embeds = converted_emb).last_hidden_state
                                                                                # [batch_size, seq_len, d_lm_model]
-        outputs = outputs.float()
         
         mark_dist, pred_time = self.reprogram_output(outputs)                  # [batch_size, seq_len, num_events] + [batch_size, seq_len, num_events]
         pred_time = (pred_time - (mean / std)) * std + mean

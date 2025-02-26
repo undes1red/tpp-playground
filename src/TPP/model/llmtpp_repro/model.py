@@ -15,7 +15,7 @@ from src.TPP.model.llmtpp_repro.plot import *
 
 class LLMTPPModel(BasicModel):
     def __init__(self, opt, llm_class_name, full_llm_name, d_model, \
-                 d_embedding, lm_layers, device, dropout, repro_input_layer = 1, number_of_prototype = 1000, \
+                 d_embedding, device, dropout, repro_input_layer = 1, number_of_prototype = 1000, \
                  epsilon = 1e-20, lambda_t = 1.0, lambda_e = 1.0):
         super(LLMTPPModel, self).__init__()
         self.device = device
@@ -28,7 +28,7 @@ class LLMTPPModel(BasicModel):
 
         self.model = LLMTPP(llm_class_name = llm_class_name, full_llm_name = full_llm_name, repro_input_layer = repro_input_layer, \
                             num_events = self.num_events, d_model = d_model, d_embedding = d_embedding, \
-                            lm_layers = lm_layers, dropout = dropout, number_of_prototype = number_of_prototype, device = device)
+                            dropout = dropout, number_of_prototype = number_of_prototype, device = device)
         
         self.model = compile_model(self.model, opt.compile)
 
@@ -580,7 +580,7 @@ class LLMTPPModel(BasicModel):
     '''
     All static methods
     '''
-    def train_step(model, minibatch, device):
+    def train_step(model, minibatch, device, accelerator):
         ''' 
         Epoch operation in training phase.
         The input minibatch comprise time sequences.
@@ -598,7 +598,10 @@ class LLMTPPModel(BasicModel):
                 mean = mean, std = std
         )
         
-        loss.backward()
+        if accelerator is not None:
+            accelerator.backward(loss)
+        else:
+            loss.backward()
 
         loss = loss.item() / the_number_of_events
         time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
