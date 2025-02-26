@@ -15,7 +15,7 @@ from src.TPP.model.llmtpp_repro.reprogramming_functions import ReprogramInput, R
 
 
 class LLMTPP(nn.Module):
-    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, lm_layers, device, dropout, number_of_prototype):
+    def __init__(self, num_events, llm_class_name, full_llm_name, d_model, d_embedding, repro_input_layer, device, dropout):
         super(LLMTPP, self).__init__()
         self.device = device
         self.num_events = num_events
@@ -44,7 +44,7 @@ class LLMTPP(nn.Module):
         self.word_embeddings = self.retrieved_lm.get_input_embeddings().weight.float()
                                                                                # [vocab_size, d_lm_embedding]
         self.vocab_size = self.word_embeddings.shape[0]
-        self.squeezed_token_embedding = nn.Linear(self.vocab_size, number_of_prototype)
+        self.squeezed_token_embedding = nn.Linear(self.vocab_size, 100)
         
         # A converter from sequence embedding to LLM's text embedding.
         self.time_seq_to_token_emb = ReprogramInput(n_head = 3, d_lm_embedding = self.d_lm_embedding, \
