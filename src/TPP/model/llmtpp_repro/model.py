@@ -15,7 +15,8 @@ from src.TPP.model.llmtpp_repro.plot import *
 
 class LLMTPPModel(BasicModel):
     def __init__(self, opt, llm_class_name, full_llm_name, d_model, \
-                 d_embedding, lm_layers, device, dropout, epsilon = 1e-20, lambda_t = 1.0, lambda_e = 1.0):
+                 d_embedding, lm_layers, device, dropout, number_of_prototype = 1000, \
+                 epsilon = 1e-20, lambda_t = 1.0, lambda_e = 1.0):
         super(LLMTPPModel, self).__init__()
         self.device = device
         self.num_events = opt.info_dict['num_events']
@@ -27,7 +28,7 @@ class LLMTPPModel(BasicModel):
 
         self.model = LLMTPP(llm_class_name = llm_class_name, full_llm_name = full_llm_name, \
                             num_events = self.num_events, d_model = d_model, d_embedding = d_embedding, \
-                            lm_layers = lm_layers, dropout = dropout, device = device)
+                            lm_layers = lm_layers, dropout = dropout, number_of_prototype = number_of_prototype, device = device)
         
         self.model = compile_model(self.model, opt.compile)
 
@@ -283,7 +284,7 @@ class LLMTPPModel(BasicModel):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
 
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, \
+        return f1, top_k_acc, probability_integral_sum, pred_event_prob, tau_pred_all_event, \
                (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
@@ -511,7 +512,7 @@ class LLMTPPModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mae = move_from_tensor_to_ndarray(mae)
 
-        return mae, f1_1
+        return mae, f1_1, events_next
 
     
     def get_mae_e_and_f1(self, input_data, opt):
@@ -521,13 +522,13 @@ class LLMTPPModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, pm, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, \
                                                time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         _, maes, probability_sum, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, events_next)
 
-        return maes, f1_2, probability_sum, events_next
+        return maes, f1_2, probability_sum, pm, events_next
 
 
     '''

@@ -6,7 +6,7 @@ from einops import rearrange
 
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self, d_model, device, max_len = 4096):
+    def __init__(self, d_model, device, max_len = 16384):
         super().__init__()
         self.device = device
 

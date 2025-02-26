@@ -63,25 +63,16 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     and the ground truth on all available event sequences.
     We dump all mae_e values for calculating Q1, Q2, and Q3 later.
     '''
-    capable_of_sending_event_next = ['ctlstm', 'ifib_c', 'fenn', 'fullynn', 'sahp', 'thp', 'marked_lognormmix', 'llmtpp']
-    if opt.model_name in capable_of_sending_event_next:
-        '''
-        mae_e, macro-f1, sum of p^*(m), p^*(m), events_next
-        '''
-        mae_e, f1, sum_of_pm, pm, event_next = all_evaluation_results
 
-        mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_data.pkl')
-        data = {'mae_e': mae_e, 'events_next': event_next, 'pm': pm}
-        dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
-    else:
-        '''
-        mae_e, macro-f1, sum of p^*(m)
-        '''
-        mae_e, f1, sum_of_pm = all_evaluation_results
+    '''
+    mae_e, macro-f1, sum of p^*(m), p^*(m), events_next
+    '''
+    mae_e, f1, sum_of_pm, pm, event_next = all_evaluation_results
 
-        mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_data.pkl')
-        data = {'mae_e': mae_e}
-        dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+    mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_data.pkl')
+    data = {'mae_e': mae_e, 'events_next': event_next, 'pm': pm}
+    dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
+
 
     mean_mae_e = np.mean(flatten(mae_e))
     f1 = np.mean(f1)

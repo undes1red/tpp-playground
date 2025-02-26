@@ -659,46 +659,35 @@ class CTLSTMWrapper(BasicModel):
 
 
     def cppod_commission_evaluation(self, input_data, opt):
-        '''
-        Take care. This function only evaluates the omission outlier.
-        Interestingly, the original CPPOD code seems only focusing on omission too as only omission scores are recorded in model.detect_outlier().
-        Paired with the od_genetic dataloader.
-        '''
-        forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
-            = input_data
+        (time_seq, events, commission, mask), (mean, std) = input_data
         
-        roc_result = []
-        for obs_time_for_one_seq, obs_events_for_one_seq, obs_mask_for_one_seq, missing_mask_for_one_seq, _ in padded_obs_data:
-            obs_time_history_for_one_seq, obs_time_next_for_one_seq = self.divide_history_and_next(obs_time_for_one_seq)
-                                                                               # [batch_size, seq_len] * 2
-            obs_events_history_for_one_seq, obs_events_next_for_one_seq = self.divide_history_and_next(obs_events_for_one_seq)
-                                                                               # [batch_size, seq_len] * 2
-            obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
+        time_history, time_next = self.divide_history_and_next(time_seq)       # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
+        _, commission_next = self.divide_history_and_next(commission)          # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        time_history = time_history.float()
+        time_next = time_next.float()
+        
+        _, intensity_all_events = self.model(time_history, time_next, events_history)
+                                                                               # 2 * [batch_size, seq_len, num_events]
+        
+        intensity_sum_from_tl_to_time_next = intensity_all_events.sum(dim = -1)
                                                                                # [batch_size, seq_len]
-            
-            missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
-                                                                               # [num_samples, ...]
-            integral_all_events, intensity_all_events \
-                = self.model(obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), obs_events_history_for_one_seq)
-                                                                               # [num_samples, seq_len, num_events]
-            
-            integral_sum = integral_all_events.sum(dim = -1)                   # [num_samples, seq_len]
-            intensity_sum = intensity_all_events.sum(dim = -1)                 # [num_samples, seq_len]
-            
-            all_roauc_area = []
-            for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in \
-                zip(integral_sum, missing_mask_for_one_seq):
-                
-                sample_len = len(missing_mask_for_one_seq_per_sample)
-                selected_integral_sum_per_seq_per_sample = move_from_tensor_to_ndarray(integral_sum_per_seq_per_sample[:sample_len])
-                
-                roauc_area = roc_auc_score(y_true = missing_mask_for_one_seq_per_sample, y_score = selected_integral_sum_per_seq_per_sample)
-                all_roauc_area.append(roauc_area)
-            
-            roc_result.append(np.mean(all_roauc_area))
+        score = -intensity_sum_from_tl_to_time_next                            # [batch_size, seq_len]
         
-        roc_result = np.array(roc_result)
-        return roc_result
+        packed_data = zip(score, commission_next, mask_next)
+        all_roauc_area = []
+
+        for score_per_seq, commission_next_per_seq, mask_next_per_seq in packed_data:
+            available_score = score_per_seq[mask_next_per_seq]
+            available_commission_label = commission_next_per_seq[mask_next_per_seq]
+            
+            available_score, available_commission_label = move_from_tensor_to_ndarray(available_score, available_commission_label)
+            roauc_area = roc_auc_score(y_true = available_commission_label, y_score = available_score)
+            all_roauc_area.append(roauc_area)
+        
+        all_roauc_area = np.array(all_roauc_area)
+        return all_roauc_area
 
 
     '''

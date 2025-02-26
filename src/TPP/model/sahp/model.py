@@ -115,7 +115,8 @@ class SAHPWrapper(BasicModel):
             'debug': self.figure_debug,
 
             # For CPPOD, should be used with the od_generic dataloader.
-            'cppod_evaluation': self.cppod_evaluation
+            'cppod_evaluation': self.cppod_evaluation,
+            'cppod_commission_evaluation': self.cppod_commission_evaluation
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -779,6 +780,38 @@ class SAHPWrapper(BasicModel):
         
         roc_result = np.array(roc_result)
         return roc_result
+
+
+    def cppod_commission_evaluation(self, input_data, opt):
+        (time_seq, events, commission, mask), (mean, std) = input_data
+        
+        time_history, time_next = self.divide_history_and_next(time_seq)       # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
+        _, commission_next = self.divide_history_and_next(commission)          # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        time_history = time_history.float()
+        time_next = time_next.float()
+        
+        _, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
+                                                                               # 2 * [batch_size, seq_len, num_events]
+        
+        intensity_sum_from_tl_to_time_next = intensity_all_events.sum(dim = -1)
+                                                                               # [batch_size, seq_len]
+        score = -intensity_sum_from_tl_to_time_next                            # [batch_size, seq_len]
+        
+        packed_data = zip(score, commission_next, mask_next)
+        all_roauc_area = []
+
+        for score_per_seq, commission_next_per_seq, mask_next_per_seq in packed_data:
+            available_score = score_per_seq[mask_next_per_seq]
+            available_commission_label = commission_next_per_seq[mask_next_per_seq]
+            
+            available_score, available_commission_label = move_from_tensor_to_ndarray(available_score, available_commission_label)
+            roauc_area = roc_auc_score(y_true = available_commission_label, y_score = available_score)
+            all_roauc_area.append(roauc_area)
+        
+        all_roauc_area = np.array(all_roauc_area)
+        return all_roauc_area
 
 
     '''
