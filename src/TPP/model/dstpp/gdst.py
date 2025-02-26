@@ -194,7 +194,7 @@ class GaussianDiffusion_ST(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start, attn_weight 
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def p_sample(self, x, t: int, x_self_cond = None, clip_denoised = True, cond=None):
         b, *_, device = *x.shape, x.device
         batched_times = torch.full((x.shape[0],), t, device = x.device, dtype = torch.long)
@@ -204,7 +204,7 @@ class GaussianDiffusion_ST(nn.Module):
         
         return pred_img, x_start, attn_weight
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def p_sample_loop(self, shape, cond):
         batch, device = shape[0], self.betas.device
 
@@ -220,7 +220,7 @@ class GaussianDiffusion_ST(nn.Module):
         img = unnormalize_to_zero_to_one(img)
         return img
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def ddim_sample(self, shape, clip_denoised = True, cond=None):
         batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[0], self.betas.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
@@ -256,13 +256,13 @@ class GaussianDiffusion_ST(nn.Module):
         img = unnormalize_to_zero_to_one(img)
         return img
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sample(self, batch_size = 16, cond=None):
         dim_events, channels = self.dim_events, self.channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn((batch_size, channels, dim_events),cond=cond)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
         b, *_, device = *x1.shape, x1.device
         t = default(t, self.num_timesteps - 1)
@@ -311,7 +311,7 @@ class GaussianDiffusion_ST(nn.Module):
 
         x_self_cond = None
         if self.self_condition and random() < 0.5:
-            with torch.no_grad():
+            with torch.inference_mode():
                 x_self_cond, _ = self.model_predictions(x, t).pred_x_start
                 x_self_cond.detach_()
 
@@ -409,7 +409,7 @@ class GaussianDiffusion_ST(nn.Module):
             t_batch = torch.tensor([t] * batch_size, device=device)
             x_t = self.q_sample(x_start=x_start, t=t_batch, noise=noise)
             # Calculate VLB term at the current timestep
-            with torch.no_grad():
+            with torch.inference_mode():
                 vb, vb_temporal, vb_spatial, _ = self._vb_terms_bpd(
                     x_start=x_start,
                     x_t=x_t,

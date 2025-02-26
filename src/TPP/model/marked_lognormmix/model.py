@@ -130,7 +130,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return time_loss + surv_last_loss, time_loss, the_number_of_events
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, std):
         '''
         The shape of minibatch
@@ -173,7 +173,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, std):
         # Obtain dedicated MAE and predicted time.
         tau_pred = self.sample_time('its', 'tm', input_events, input_time, input_mask, mean, std)
@@ -192,7 +192,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return mae, f1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, std, return_mean = True):
         '''
         Well...We will do something totally different by performing event-wise MAE.
@@ -285,7 +285,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return input_time, input_events, input_mask, input_intensity, mean, std
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -313,7 +313,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return NotImplementedError('LogNormMix is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -353,7 +353,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         generate_probability_figure(data, timestamp, opt)
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
         Args:
@@ -437,7 +437,7 @@ class MarkedLogNormMixWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
                                                                                # [batch_size, seq_len + 1] * 4 + float + float
@@ -471,7 +471,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return spearman, l1
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
@@ -482,7 +482,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         return mae, f1_1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 

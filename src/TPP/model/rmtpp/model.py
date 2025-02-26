@@ -131,7 +131,7 @@ class RMTPP(BasicModel):
         return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, events, time, mask, mean, std):
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
@@ -192,7 +192,7 @@ class RMTPP(BasicModel):
     sample_time = sample_time
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm', 
                                      events_history = events_history, time_history = time_history,
@@ -239,7 +239,7 @@ class RMTPP(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -275,7 +275,7 @@ class RMTPP(BasicModel):
         generate_intensity_figure(data, timestamp, opt)
         
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -312,7 +312,7 @@ class RMTPP(BasicModel):
         generate_integral_figure(data, timestamp, opt)
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -351,7 +351,7 @@ class RMTPP(BasicModel):
         generate_probability_figure(data, timestamp, opt)
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
         Args:
@@ -383,7 +383,7 @@ class RMTPP(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -426,7 +426,7 @@ class RMTPP(BasicModel):
         return spearman, l1
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -441,17 +441,17 @@ class RMTPP(BasicModel):
         return mae, f1_1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         raise NotImplemented("get_mae_e_and_f1() not implemented for vanilla RMTPP because it is a TPP model.")
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_which_event_first(self, input_data, opt):
         return NotImplemented('get_which_event_first() not implemented for vanilla RMTPP because it is a TPP model.')
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def samples_from_et(self, input_data, opt):
         return NotImplemented('samples_from_et() not implemented for vanilla RMTPP because it is a TPP model.')
 

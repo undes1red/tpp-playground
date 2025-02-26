@@ -19,7 +19,8 @@ dependencies = [
     "termcolor",
     "transformers",
     "accelerate",
-    "wandb"
+    "wandb",
+    "tabulate"
 ]
 
 # Settings for uv

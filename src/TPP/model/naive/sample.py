@@ -7,7 +7,7 @@ from src.toolbox.integration import approximate_integration
 from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
     '''
     number_of_total_samples: how many samples do we need to predict one next event.

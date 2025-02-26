@@ -30,7 +30,7 @@ class NeuralODEAdjoint(torch.autograd.Function):
         total_state = []
         dt_ratio = 1.0 / num_sample_times
         delta_t = delta_t * dt_ratio
-        with torch.no_grad():
+        with torch.inference_mode():
             state = z_init
             for _ in range(num_sample_times):
                 state = solver(diff_func = ode_fn, dt = delta_t, z0 = state)   # [batch_size, hidden_size]
@@ -71,7 +71,7 @@ class NeuralODEAdjoint(torch.autograd.Function):
         dt_ratio = 1.0 / num_sample_times
         delta_t = delta_t * dt_ratio
 
-        with torch.no_grad():
+        with torch.inference_mode():
             # Construct back-state for ode solver
             # reshape variable \theta for batch solving
             init_var_grad = [torch.zeros_like(torch.flatten(var)) for var in model_parameters]

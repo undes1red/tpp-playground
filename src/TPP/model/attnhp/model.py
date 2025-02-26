@@ -158,7 +158,7 @@ class AttNHPWrapper(BasicModel):
     '''
     Functions for model evaluation
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, time, events, mask, mean, std):
         '''
         Check if events data is present.
@@ -237,7 +237,7 @@ class AttNHPWrapper(BasicModel):
     sample_event_time = sample_event_time
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      time_history = time_history, events_history = events_history, mask_history = mask_history,
@@ -256,7 +256,7 @@ class AttNHPWrapper(BasicModel):
         return mae, f1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = True):
         '''
         The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
@@ -368,7 +368,7 @@ class AttNHPWrapper(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -406,7 +406,7 @@ class AttNHPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -445,7 +445,7 @@ class AttNHPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -485,7 +485,7 @@ class AttNHPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -532,7 +532,7 @@ class AttNHPWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -578,7 +578,7 @@ class AttNHPWrapper(BasicModel):
         return spearman, l1
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -594,7 +594,7 @@ class AttNHPWrapper(BasicModel):
         return mae, f1_1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -611,7 +611,7 @@ class AttNHPWrapper(BasicModel):
         return maes, f1_2, probability_sum, events_next
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_which_event_first(self, input_data, opt):
         '''
         Hyperparameters

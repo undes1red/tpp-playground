@@ -128,7 +128,7 @@ class NHPSWrapper(BasicModel):
     '''
     Functions for model evaluation
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, mean, std):
         '''
         Check if events data is present.
@@ -156,7 +156,7 @@ class NHPSWrapper(BasicModel):
         return loss
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def imputing_by_nhpf(self, obs_time_seq, obs_event_seq, obs_mask_seq, 
                          samples_to_calc_otd, imputed_retries_num, mean, std):
         # Considering the length of imputed sequences is not known before the imputation, here nhps.imputing_one_seq_by_nhpf sample one z from x per loop.
@@ -179,7 +179,7 @@ class NHPSWrapper(BasicModel):
         return weights, imputed_seqs
     
     
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_imputed_seq_by_nhpf(self, input_data, opt):
         forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
             = input_data
@@ -194,7 +194,7 @@ class NHPSWrapper(BasicModel):
 
 
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def imputing_by_nhpf(self, obs_time_seq, obs_event_seq, obs_mask_seq, 
                          samples_to_calc_otd, imputed_retries_num, resample, mean, std):
         # Considering the length of imputed sequences is not known before the imputation, here nhps.imputing_one_seq_by_nhpf sample one z from x per loop.
@@ -223,7 +223,7 @@ class NHPSWrapper(BasicModel):
     '''
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def imputing_by_nhps(self, 
                          obs_time_seq, obs_event_seq, obs_mask_seq, obs_missing_mask, 
                          backward_obs_time_seq, backward_obs_events_seq, backward_obs_mask_seq, backward_obs_missing_mask,
@@ -257,7 +257,7 @@ class NHPSWrapper(BasicModel):
         return weights, imputed_seqs
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_imputed_seq_by_nhps(self, input_data, opt):
         forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
             = input_data
@@ -275,7 +275,7 @@ class NHPSWrapper(BasicModel):
         return complete_time, complete_events, complete_mask, weights, imputed_seqs
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def otd_nhpf(self, input_data, opt):
         forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
             = input_data
@@ -303,7 +303,7 @@ class NHPSWrapper(BasicModel):
         return otds
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def otd_nhps(self, input_data, opt):
         forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
             = input_data
@@ -334,7 +334,7 @@ class NHPSWrapper(BasicModel):
         return otds
     
     
-    @torch.no_grad()
+    @torch.inference_mode()
     def probability_nhps_nhpf(self, input_data, opt):
         forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_event_seq, (mean, std) \
             = input_data

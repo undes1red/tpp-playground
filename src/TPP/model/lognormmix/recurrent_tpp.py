@@ -397,7 +397,7 @@ class RecurrentTPP(nn.Module):
             else:
                 marks = None
         
-            with torch.no_grad():
+            with torch.inference_mode():
                 generated = inter_times.sum(-1).min() >= t_end
             batch = Batch(inter_times=inter_times, mask=torch.ones_like(inter_times), marks=marks)
             features = self.get_features(batch)  # (batch_size, seq_len, num_features)

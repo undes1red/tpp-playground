@@ -144,7 +144,7 @@ class M2HPWrapper(BasicModel):
     '''
     Functions for model propagation and evaluation
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, time, events, mask, mean, std):
         '''
         Check if events data is present.
@@ -221,7 +221,7 @@ class M2HPWrapper(BasicModel):
         return mtpp_nll_loss, events_loss
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
         '''
         number_of_total_samples: how many samples do we need to predict one next event.
@@ -366,7 +366,7 @@ class M2HPWrapper(BasicModel):
         return sampled_time
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_f1(self, intensity_all_events, events_next, mask_next):
         events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
@@ -382,7 +382,7 @@ class M2HPWrapper(BasicModel):
         return f1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                 events_history = events_history, time_history = time_history, mask_history = mask_history,
@@ -397,7 +397,7 @@ class M2HPWrapper(BasicModel):
         return mae, f1_pred
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = True):
         '''
         set a relatively large number as the infinity and decide resolution based on this large value and
@@ -505,7 +505,7 @@ class M2HPWrapper(BasicModel):
         return input_time, input_events, input_intensity, mask, mean, std
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def intensity(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -543,7 +543,7 @@ class M2HPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def integral(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -580,7 +580,7 @@ class M2HPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -619,7 +619,7 @@ class M2HPWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def debug(self, input_data, opt):
         '''
         Args:
@@ -666,7 +666,7 @@ class M2HPWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -710,7 +710,7 @@ class M2HPWrapper(BasicModel):
         return spearman, l1
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -726,7 +726,7 @@ class M2HPWrapper(BasicModel):
         return mae, f1_1
 
     
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -743,7 +743,7 @@ class M2HPWrapper(BasicModel):
         return maes, f1_2, probability_sum, events_next
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_which_event_first(self, input_data, opt):
         '''
         Hyperparameters
@@ -789,7 +789,7 @@ class M2HPWrapper(BasicModel):
         return maes, f1
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def samples_from_et(self, input_data, opt):
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]

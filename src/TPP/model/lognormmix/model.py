@@ -116,7 +116,7 @@ class LogNormMixWrapper(BasicModel):
         return time_loss + surv_last_loss, time_loss, event_loss, the_number_of_events
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, std):
         '''
         The shape of minibatch
@@ -161,7 +161,7 @@ class LogNormMixWrapper(BasicModel):
         return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, std):
         # Obtain dedicated MAE and predicted time.
         tau_pred = self.sample_time('its', 'tm', input_events, input_time, input_mask, mean, std)
@@ -236,7 +236,7 @@ class LogNormMixWrapper(BasicModel):
         return NotImplementedError('LogNormMix is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
         Function prober, used by tpp_ploter to draw plots.
@@ -274,7 +274,7 @@ class LogNormMixWrapper(BasicModel):
         return plots
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
         Args:
@@ -304,7 +304,7 @@ class LogNormMixWrapper(BasicModel):
     '''
     Evaluation over the entire dataset.
     '''
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
                                                                                # [batch_size, seq_len + 1] * 4 + float + float
@@ -337,7 +337,7 @@ class LogNormMixWrapper(BasicModel):
         return spearman, l1
     
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
@@ -348,17 +348,17 @@ class LogNormMixWrapper(BasicModel):
         return mae, f1_1
 
     
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
         raise NotImplemented("get_mae_e_and_f1() not implemented for vanilla RMTPP because it is a TPP model.")
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_which_event_first(self, input_data, opt):
         return NotImplemented('get_which_event_first() not implemented for vanilla RMTPP because it is a TPP model.')
 
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def samples_from_et(self, input_data, opt):
         return NotImplemented('samples_from_et() not implemented for vanilla RMTPP because it is a TPP model.')
 

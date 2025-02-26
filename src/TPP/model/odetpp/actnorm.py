@@ -17,7 +17,7 @@ class ActNorm(nn.Module):
 
     def forward(self, x):
         if not self.initialized:
-            with torch.no_grad():
+            with torch.inference_mode():
                 # compute batch statistics
                 x_ = x.reshape(-1, x.shape[-1])
                 batch_mean = torch.mean(x_, dim=0)
