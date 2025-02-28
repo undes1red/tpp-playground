@@ -15,8 +15,6 @@ from src.toolbox.dataloader import prepare_dataloaders
 
 logger = get_logger(__name__)
 
-from accelerate import Accelerator
-
 
 class Trainer:
     def __init__(self, opt, procedure):
@@ -56,9 +54,6 @@ class Trainer:
 
         mkdir_if_not_exist(os.path.join(self.opt.save_model, self.output_checkpoint_folder))
         mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
-        
-        # Accelerate part
-        self.accelerator = Accelerator()
 
 
     def get_procedure_monitor_dict(self, additional_info = {}):
@@ -157,10 +152,6 @@ class Trainer:
         self.format_dict_length = self.model_class.format_dict_length
         self.report_sum = [0] * self.format_dict_length
         self.training_flop = 0
-        
-        self.model, self.optimizer, self.raw_data['Training'], self.scheduler = self.accelerator.prepare(
-            self.model, self.optimizer, self.raw_data['Training'], self.scheduler
-        )
     
         desc = '  - (Training)   '
         step_range = range(1, self.opt.n_training_steps + 1)
@@ -176,11 +167,11 @@ class Trainer:
 
             if self.opt.fpcounter:
                 with FlopCounterMode(display = False) as counter:
-                    step_result = self.model_class.train_step(self.model, data, device = self.opt.device, accelerator = self.accelerator)
+                    step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
                 
                 self.training_flop += sum(counter.flop_counts['Global'].values())
             else:
-                step_result = self.model_class.train_step(self.model, data, device = self.opt.device, accelerator = self.accelerator)
+                step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
                 
                 self.training_flop += 0
 
