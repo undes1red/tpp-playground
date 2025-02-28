@@ -598,10 +598,7 @@ class LLMTPPModel(BasicModel):
                 mean = mean, std = std
         )
         
-        if accelerator is not None:
-            accelerator.backward(loss)
-        else:
-            loss.backward()
+        loss.backward()
 
         loss = loss.item() / the_number_of_events
         time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
