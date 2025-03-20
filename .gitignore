@@ -125,7 +125,6 @@ deprecated/
 archive/
 stdout/
 test_projects/
-llms/
 
 # The test scripts
 scripts*/
