@@ -20,7 +20,18 @@ dependencies = [
     "transformers",
     "accelerate",
     "wandb",
-    "tabulate"
+    "tabulate",
+    "ollama",
+    "openai",
+    "langchain",
+    "langchain-huggingface",
+    "optimum",
+    "gptqmodel",
+    "datasets",
+    "logbar",
+    "tokenicer",
+    "device_smi",
+    "gguf"
 ]
 
 # Settings for uv

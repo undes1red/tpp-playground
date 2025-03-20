@@ -25,7 +25,7 @@ class generic_dataset(utils.data.Dataset):
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, property_dict, evaluate = False, shift = False, input_norm_data = False):
+    def __init__(self, data, device, property_dict, relative_time = True, evaluate = False, shift = False, input_norm_data = False):
         super(generic_dataset, self).__init__()
         self.device = device
         self.evaluate = evaluate
@@ -48,32 +48,44 @@ class generic_dataset(utils.data.Dataset):
 
         # Data preprocessing
         # we remove the end dummy event from the sequence when evaluate = True
-        if self.evaluate:
-            self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
-            '''
-            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
-            '''
+        if relative_time:
+            if self.evaluate:
+                self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
+            else:
+                # Use T
+                # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+                # Do not use T
+                self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
+                self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
+                self.event = [append(seq, self.number_of_events) for seq in self.event]
+
+                '''
+                self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
+                self.data.time_seq = self.data.time_seq.apply(append, number = 0.1)
+                self.data.event = self.data.event.apply(append, number = self.number_of_events)
+                '''
+
+            self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
+            self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
+            self.event = [prepend(seq, self.number_of_events) for seq in self.event]
         else:
-            # Use T
-            # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
-            # Do not use T
-            self.time_seq = [np.diff(seq, prepend = self.start_time) for seq in self.time_seq]
-            self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
-            self.event = [append(seq, self.number_of_events) for seq in self.event]
+            if self.evaluate:
+                self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
+            else:
+                # Use T
+                # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+                # Do not use T
+                self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
+                self.time_seq = [append(seq, seq[-1] + 0.1) for seq in self.time_seq]
+                self.event = [append(seq, self.number_of_events) for seq in self.event]
 
-            '''
-            self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
-            self.data.time_seq = self.data.time_seq.apply(append, number = 0.1)
-            self.data.event = self.data.event.apply(append, number = self.number_of_events)
-            '''
+                '''
+                self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time)
+                self.data.time_seq = self.data.time_seq.apply(append, number = 0.1)
+                self.data.event = self.data.event.apply(append, number = self.number_of_events)
+                '''
 
-        self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
-        self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
-        self.event = [prepend(seq, self.number_of_events) for seq in self.event]
-        '''
-        self.time_seq = self.data.time_seq.apply(prepend, number = 0)
-        self.data.event = self.data.event.apply(prepend, number = self.number_of_events)
-        '''
+            self.event = [prepend(seq, self.number_of_events) for seq in self.event]
 
         '''
         Fix datatype

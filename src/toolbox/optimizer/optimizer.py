@@ -26,52 +26,69 @@ def generate_optimizer_scheduler(opt, model):
     '''
     param = read_yaml(opt.optim_config)
 
-    logger.info(f'The additional input optimizer hyperparameters are {param}')
-    if hasattr(optim, opt.op_name):
-        optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
-    else:
-        optimizer = top.get(opt.op_name)(model.parameters(), opt.lr, **param)
+    logger.info(f'The additional input optimizer hyperparameters are {param}.')
+    if list(model.parameters()) == []:
+        logger.warning('There is no trainable parameters in this model!')
+        logger.warning('We suspect you are doing test-time training such as prompt learning. We will continue.')
         
-    if opt.lr_sched:
-        scheduler = get_lr_sheduler(optimizer = optimizer, num_warmup_steps = opt.n_warmup_steps, 
-                                    num_training_steps = opt.n_training_steps,
-                                    num_cycles = opt.n_cycles, last_epoch = opt.last_epoch)
+        optimizer, scheduler = None, None
     else:
-        scheduler = None
+        if hasattr(optim, opt.op_name):
+            optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
+        else:
+            optimizer = top.get(opt.op_name)(model.parameters(), opt.lr, **param)
+            
+        if opt.lr_sched:
+            scheduler = get_lr_sheduler(optimizer = optimizer, num_warmup_steps = opt.n_warmup_steps, 
+                                        num_training_steps = opt.n_training_steps,
+                                        num_cycles = opt.n_cycles, last_epoch = opt.last_epoch)
+        else:
+            scheduler = None
 
     return optimizer, scheduler
 
 
 def step_and_update_lr(optimizer, scheduler):
     "Step with the inner optimizer"
-    optimizer.step()
+    if optimizer:
+        optimizer.step()
 
     if scheduler:
         scheduler.step()
 
 
 def zero_grad(optimizer):
-    "Zero out the gradients with the inner optimizer"
-    optimizer.zero_grad(set_to_none = True)
+    if optimizer:
+        "Zero out the gradients with the inner optimizer"
+        optimizer.zero_grad(set_to_none = True)
+    else:
+        return 0
 
 
 def get_lr(optimizer):
     lr = []
-    for items in optimizer.state_dict()['param_groups']:
-        lr.append(items['lr'])
+    
+    if optimizer:
+        for items in optimizer.state_dict()['param_groups']:
+            lr.append(items['lr'])
+    else:
+        lr.append(0.0)
 
     return list_mean(lr)
     
 
 def state_dict(optimizer, scheduler):
-    if scheduler:
+    if scheduler and optimizer:
         return {'optimizer': optimizer.state_dict(), 'scheduler': scheduler.state_dict()}
-    else:
+    elif optimizer:
         return {'optimizer': optimizer.state_dict(), 'scheduler': None}
+    else:
+        return {'optimizer': None, 'scheduler': None}
     
 
 def load_state_dict(optimizer, scheduler, state_dict):
-    optimizer.load_state_dict(state_dict['optimizer'])
+    if optimizer:
+        optimizer.load_state_dict(state_dict['optimizer'])
 
     if scheduler:
         scheduler.load_state_dict(state_dict['scheduler'])
@@ -85,5 +102,8 @@ def get_lr_sheduler(optimizer, num_warmup_steps, num_training_steps, num_cycles,
             return float(current_step) / float(max(1, num_warmup_steps))
         progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
-
-    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lr_lambda, last_epoch = last_epoch)
+    
+    if optimizer:
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lr_lambda, last_epoch = last_epoch)
+    else:
+        return None

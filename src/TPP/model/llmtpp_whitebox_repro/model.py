@@ -14,20 +14,21 @@ from src.TPP.model.llmtpp_repro.plot import *
 
 
 class LLMTPPModel(BasicModel):
-    def __init__(self, opt, device, d_embedding, d_input, dropout, \
-                 n_layers, n_head, d_qk, d_v, d_hidden, num_negative_samples, \
-                 api_class, blackbox_llm_name, \
-                 decode_llm_class_name, decode_full_llm_name):
+    def __init__(self, opt, llm_class_name, full_llm_name, d_model, \
+                 d_embedding, device, dropout, repro_input_layer = 1, number_of_prototype = 1000, \
+                 epsilon = 1e-20, lambda_t = 1.0, lambda_e = 1.0):
         super(LLMTPPModel, self).__init__()
         self.device = device
         self.num_events = opt.info_dict['num_events']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
+        self.epsilon = epsilon
+        self.lambda_t = lambda_t
+        self.lambda_e = lambda_e
 
-        self.model = LLMTPP(device, self.num_events, d_embedding, d_input, dropout, \
-                            n_layers, n_head, d_qk, d_v, d_hidden, num_negative_samples, \
-                            api_class, blackbox_llm_name, \
-                            decode_llm_class_name, decode_full_llm_name)
+        self.model = LLMTPP(llm_class_name = llm_class_name, full_llm_name = full_llm_name, repro_input_layer = repro_input_layer, \
+                            num_events = self.num_events, d_model = d_model, d_embedding = d_embedding, \
+                            dropout = dropout, number_of_prototype = number_of_prototype, device = device)
         
         self.model = compile_model(self.model, opt.compile)
 
@@ -98,18 +99,44 @@ class LLMTPPModel(BasicModel):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(input_mask)     # [batch_size, seq_len]
-        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
-        
-        the_number_of_events = mask_next_without_dummy.sum().item()
-        
-        kl_div, training_loss = self.model('train', 
-                                           events_history = events_history, time_history = time_history, mask_history = mask_history, \
-                                           events_next = events_next, time_next = time_next, mask_next = mask_next_without_dummy, \
-                                           mean = mean, std = std)             # [batch_size, seq_len, num_events] * 2
-        
-        loss = kl_div + training_loss
 
-        return loss, kl_div, training_loss, the_number_of_events
+        pred_time, pred_event_prob = self.model('train', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, seq_len, num_events] * 2
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
+
+        the_number_of_events = mask_next_without_dummy.sum().item()
+
+        event_counts = self.event_count_in_event_next(events_next_without_dummy, mask_next_without_dummy)
+                                                                               # [num_events]
+        if True:
+            event_reweight = self.get_resampling_weight_against_next_num(event_counts, events_next_without_dummy)
+                                                                               # [batch_size, seq_len]
+        else:
+            event_reweight = 1
+        
+        # cross entropy loss between p_{real} and p_{pred}.
+        events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
+                                                                                events_next_without_dummy, reduction = 'none')
+                                                                               # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy * event_reweight # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy * mask_next_without_dummy
+                                                                               # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy.sum()
+
+        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = time_next, \
+                                            event_next = events_next_without_dummy, mask_next = mask_next_without_dummy, 
+                                            resample = event_reweight)
+        time_loss_without_dummy = self.lambda_t * time_loss_without_dummy
+        events_loss_without_dummy = self.lambda_e * events_loss_without_dummy
+        loss = time_loss_without_dummy + events_loss_without_dummy
+
+        # we need time_loss_without_dummy to compare our distribution against the ground truth.
+        return loss, time_loss_without_dummy, events_loss_without_dummy, the_number_of_events
 
 
     def evaluate_procedure(self, input_time, input_events, input_score, input_mask, mean, std):
@@ -117,18 +144,48 @@ class LLMTPPModel(BasicModel):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # 2 * [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(input_mask)     # [batch_size, seq_len]
-        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
         
+        '''
+        Remove the probability of the dummy event by mask.
+        '''
+        mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
+        events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
         
-        kl_div, training_loss = self.model('evaluate', 
-                                           events_history = events_history, time_history = time_history, mask_history = mask_history, \
-                                           events_next = events_next, time_next = time_next, mask_next = mask_next_without_dummy, \
-                                           mean = mean, std = std)             # [batch_size, seq_len, num_events] * 2
+        event_counts = self.event_count_in_event_next(events_next_without_dummy, mask_next_without_dummy)
+                                                                               # [num_events]
+        if True:
+            event_reweight = self.get_resampling_weight_against_next_num(event_counts, events_next_without_dummy)
+                                                                               # [batch_size, seq_len]
+        else:
+            event_reweight = 1
         
-        loss = kl_div + training_loss
+        mae, f1 = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history, \
+                                                  events_next = events_next, time_next = time_next, \
+                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, \
+                                                  mean = mean, std = std)      # [batch_size, seq_len] + scalar
+        mae = mae.sum().item() / the_number_of_events
 
-        return loss, kl_div, training_loss, the_number_of_events
+        pred_time, pred_event_prob = self.model('evaluate', events_history = events_history, time_history = time_history, \
+                                                mask_history = mask_history, mean = mean, std = std)
+                                                                               # [batch_size, seq_len, num_events] * 2
+
+        time_loss_without_dummy = self.loss(pred_time = pred_time, time_next = time_next, \
+                                            event_next = events_next_without_dummy, mask_next = mask_next_without_dummy, 
+                                            resample = event_reweight)
+
+        events_loss_without_dummy = torch.nn.functional.cross_entropy(rearrange(pred_event_prob, 'b s ne -> b ne s'), \
+                                                                                events_next_without_dummy, reduction = 'none')
+                                                                               # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy * event_reweight # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy * mask_next_without_dummy
+                                                                               # [batch_size, seq_len]
+        events_loss_without_dummy = events_loss_without_dummy.sum()
+        time_loss_without_dummy = self.lambda_t * time_loss_without_dummy
+        events_loss_without_dummy = self.lambda_e * events_loss_without_dummy
+        loss = time_loss_without_dummy + events_loss_without_dummy
+
+        return loss, time_loss_without_dummy, events_loss_without_dummy, f1, mae, the_number_of_events
     
     
     def get_resampling_weight_against_next_num(self, event_counts, event_next):
@@ -523,7 +580,7 @@ class LLMTPPModel(BasicModel):
     '''
     All static methods
     '''
-    def train_step(model, minibatch, device):
+    def train_step(model, minibatch, device, accelerator):
         ''' 
         Epoch operation in training phase.
         The input minibatch comprise time sequences.
@@ -535,19 +592,20 @@ class LLMTPPModel(BasicModel):
     
         model.train()
         [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
-        loss, kl_div, training_loss, the_number_of_events = model(         
+        loss, time_loss_without_dummy, events_loss, the_number_of_events = model(         
                 task_name = 'train', input_time = input_time, input_events = input_events, \
                 input_score = input_score, input_mask = input_mask, \
                 mean = mean, std = std
         )
         
         loss.backward()
-        
+
         loss = loss.item() / the_number_of_events
-        kl_div = kl_div.item() / the_number_of_events
-        training_loss = training_loss.item() / the_number_of_events
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+        fact = input_score.sum().item() / the_number_of_events
         
-        return loss, kl_div, training_loss
+        return loss, time_loss_without_dummy, events_loss, fact
     
 
     def evaluation_step(model, minibatch, device):
@@ -555,17 +613,15 @@ class LLMTPPModel(BasicModel):
     
         model.eval()
         [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
-        loss, kl_div, training_loss, the_number_of_events = model(         
-                task_name = 'evaluate', input_time = input_time, input_events = input_events, \
-                input_score = input_score, input_mask = input_mask, \
-                mean = mean, std = std
-        )
+        loss, time_loss_without_dummy, events_loss, \
+        f1_pred, mae, the_number_of_events = model(task_name = 'evaluate', input_time = input_time, input_events = input_events, \
+                                                   input_score = input_score, input_mask = input_mask, mean = mean, std = std)
         
         loss = loss.item() / the_number_of_events
-        kl_div = kl_div.item() / the_number_of_events
-        training_loss = training_loss.item() / the_number_of_events
-        
-        return loss, kl_div, training_loss
+        time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
+        events_loss = events_loss.item() / the_number_of_events
+            
+        return loss, time_loss_without_dummy, events_loss, f1_pred, mae
 
 
     def postprocess(input, procedure):
@@ -581,7 +637,7 @@ class LLMTPPModel(BasicModel):
             Evaluation process
             [absolute loss, relative loss, events loss, mae value]
             '''
-            return [input[0], input[1], input[2]]
+            return [input[0], input[1], input[2], input[3], input[4]]
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
@@ -590,20 +646,22 @@ class LLMTPPModel(BasicModel):
         def train_log_print_format(input):
             format_dict = {}
             format_dict['loss'] = pack_one_value_to_dict(input[0])
-            format_dict['kl_div_for_seq2token'] = pack_one_value_to_dict(input[1])
-            format_dict['loss_for_token2seq'] = pack_one_value_to_dict(input[2])
+            format_dict['time_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[2])
             return format_dict
 
         def test_log_print_format(input):
             format_dict = {}
             format_dict['loss'] = pack_one_value_to_dict(input[0])
-            format_dict['kl_div_for_seq2token'] = pack_one_value_to_dict(input[1])
-            format_dict['loss_for_token2seq'] = pack_one_value_to_dict(input[2])
+            format_dict['time_loss'] = pack_one_value_to_dict(input[1])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[2])
+            format_dict['f1'] = pack_one_value_to_dict(input[3])
+            format_dict['mae'] = pack_one_value_to_dict(input[4], '2.8f')
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-    format_dict_length = 3
+    format_dict_length = 5
     
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''

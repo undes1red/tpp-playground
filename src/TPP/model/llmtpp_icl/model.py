@@ -1,35 +1,41 @@
-import torch, copy
+import torch, copy, os
 import numpy as np
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, repeat, reduce, pack
 from scipy.stats import spearmanr
 
 from src.toolbox.metrics import L1_distance_across_events
-from src.toolbox.misc import pack_one_value_to_dict, compile_model
+from src.toolbox.misc import pack_one_value_to_dict, load_from_pkl
 
 from src.TPP.model.basic_tpp_model import BasicModel
-from src.TPP.model.llmtpp_repro.submodel import LLMTPP
+from src.TPP.model.llmtpp_icl.submodel import LLMTPP
 from src.TPP.model.utils import *
-from src.TPP.model.llmtpp_repro.plot import *
+from src.TPP.model.llmtpp_icl.plot import *
 
 
 class LLMTPPModel(BasicModel):
-    def __init__(self, opt, device, d_embedding, d_input, dropout, \
-                 n_layers, n_head, d_qk, d_v, d_hidden, num_negative_samples, \
-                 api_class, blackbox_llm_name, \
-                 decode_llm_class_name, decode_full_llm_name):
+    def __init__(self, opt, device, topk, ollama_url = 'https://ollama.local.qkv.link', \
+                 continuation_model_name = None):
         super(LLMTPPModel, self).__init__()
         self.device = device
         self.num_events = opt.info_dict['num_events']
+        self.dataset_name = opt.info_dict['dataset_name']
+        self.encode_llm_model = opt.info_dict['encode_llm_model']
+        self.embedding_model = opt.info_dict['embedding_model']
         self.start_time = opt.info_dict['t_0']
         self.end_time = opt.info_dict['T']
-
-        self.model = LLMTPP(device, self.num_events, d_embedding, d_input, dropout, \
-                            n_layers, n_head, d_qk, d_v, d_hidden, num_negative_samples, \
-                            api_class, blackbox_llm_name, \
-                            decode_llm_class_name, decode_full_llm_name)
+        self.continuation_model_name = continuation_model_name
+        if self.continuation_model_name is None:
+            self.continuation_model_name = self.encode_llm_model
         
-        self.model = compile_model(self.model, opt.compile)
+        # Load the vector database.
+        database_path = os.path.join(opt.data_path, 'database.pkl.lzma')
+        database = load_from_pkl(database_path, compression = 'lzma')
+
+        self.model = LLMTPP(device, num_events = self.num_events, t_0 = self.start_time, T = self.end_time, \
+                            dataset = self.dataset_name, database = database, top_k = topk, \
+                            encode_llm_model = self.encode_llm_model, embedding_model = self.embedding_model, \
+                            ollama_url = ollama_url, continuation_model_name = self.continuation_model_name)
 
 
     def divide_history_and_next(self, input):
@@ -102,14 +108,26 @@ class LLMTPPModel(BasicModel):
         
         the_number_of_events = mask_next_without_dummy.sum().item()
         
-        kl_div, training_loss = self.model('train', 
+        real_events, real_time, predicted_events, predicted_time = self.model('train', 
                                            events_history = events_history, time_history = time_history, mask_history = mask_history, \
                                            events_next = events_next, time_next = time_next, mask_next = mask_next_without_dummy, \
                                            mean = mean, std = std)             # [batch_size, seq_len, num_events] * 2
-        
-        loss = kl_div + training_loss
 
-        return loss, kl_div, training_loss, the_number_of_events
+        # Time prediction
+        mae_sum = 0
+        for real_time_per_seq, predicted_time_per_seq in zip(real_time, predicted_time):
+            mae_sum += np.abs(np.array(real_time_per_seq) - np.array(predicted_time_per_seq)).sum()
+        
+        mae_mean = mae_sum / the_number_of_events
+
+        # Mark prediction
+        f1_sum = 0
+        for real_events_per_seq, predicted_events_per_seq in zip(real_events, predicted_events):
+            f1_sum += f1_score(y_true = real_events_per_seq, y_pred = predicted_events_per_seq, average = 'macro')
+        
+        f1_mean = f1_sum / len(real_events)
+        
+        return mae_mean, f1_mean
 
 
     def evaluate_procedure(self, input_time, input_events, input_score, input_mask, mean, std):
@@ -121,14 +139,29 @@ class LLMTPPModel(BasicModel):
         
         the_number_of_events = mask_next_without_dummy.sum().item()
         
-        kl_div, training_loss = self.model('evaluate', 
-                                           events_history = events_history, time_history = time_history, mask_history = mask_history, \
-                                           events_next = events_next, time_next = time_next, mask_next = mask_next_without_dummy, \
-                                           mean = mean, std = std)             # [batch_size, seq_len, num_events] * 2
+        real_events, real_time, predicted_events, predicted_time = \
+            self.model('evaluate', events_history = events_history, time_history = time_history, mask_history = mask_history, \
+                       events_next = events_next, time_next = time_next, mask_next = mask_next_without_dummy, \
+                       mean = mean, std = std)                                 # [batch_size, seq_len, num_events] * 2
         
-        loss = kl_div + training_loss
-
-        return loss, kl_div, training_loss, the_number_of_events
+        # Time prediction
+        mae_sum = 0
+        for real_time_per_seq, predicted_time_per_seq in zip(real_time, predicted_time):
+            mae_sum += np.abs(np.array(real_time_per_seq) - np.array(predicted_time_per_seq)).sum()
+        
+        mae_mean = mae_sum / the_number_of_events
+        
+        # Mark prediction
+        f1_sum = 0
+        for real_events_per_seq, predicted_events_per_seq in zip(real_events, predicted_events):
+            f1_sum += f1_score(y_true = real_events_per_seq, y_pred = predicted_events_per_seq, average = 'macro')
+        
+        f1_mean = f1_sum / len(real_events)
+        
+        print(mae_mean)
+        print(f1_mean)
+        
+        return mae_mean, f1_mean
     
     
     def get_resampling_weight_against_next_num(self, event_counts, event_next):
@@ -535,19 +568,13 @@ class LLMTPPModel(BasicModel):
     
         model.train()
         [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
-        loss, kl_div, training_loss, the_number_of_events = model(         
+        mae_mean, f1_mean = model(         
                 task_name = 'train', input_time = input_time, input_events = input_events, \
                 input_score = input_score, input_mask = input_mask, \
                 mean = mean, std = std
         )
         
-        loss.backward()
-        
-        loss = loss.item() / the_number_of_events
-        kl_div = kl_div.item() / the_number_of_events
-        training_loss = training_loss.item() / the_number_of_events
-        
-        return loss, kl_div, training_loss
+        return mae_mean, f1_mean
     
 
     def evaluation_step(model, minibatch, device):
@@ -555,17 +582,13 @@ class LLMTPPModel(BasicModel):
     
         model.eval()
         [input_time, input_events, input_score, input_mask], (mean, std) = minibatch
-        loss, kl_div, training_loss, the_number_of_events = model(         
+        mae_mean, f1_mean = model(         
                 task_name = 'evaluate', input_time = input_time, input_events = input_events, \
                 input_score = input_score, input_mask = input_mask, \
                 mean = mean, std = std
         )
         
-        loss = loss.item() / the_number_of_events
-        kl_div = kl_div.item() / the_number_of_events
-        training_loss = training_loss.item() / the_number_of_events
-        
-        return loss, kl_div, training_loss
+        return mae_mean, f1_mean
 
 
     def postprocess(input, procedure):
@@ -574,14 +597,14 @@ class LLMTPPModel(BasicModel):
             Training process
             [absolute loss, relative loss, events loss]
             '''
-            return [input[0], input[1], input[2]]
+            return [input[0], input[1]]
         
         def test_postprocess(input):
             '''
             Evaluation process
             [absolute loss, relative loss, events loss, mae value]
             '''
-            return [input[0], input[1], input[2]]
+            return [input[0], input[1]]
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
     
@@ -589,28 +612,26 @@ class LLMTPPModel(BasicModel):
     def log_print_format(input, procedure):
         def train_log_print_format(input):
             format_dict = {}
-            format_dict['loss'] = pack_one_value_to_dict(input[0])
-            format_dict['kl_div_for_seq2token'] = pack_one_value_to_dict(input[1])
-            format_dict['loss_for_token2seq'] = pack_one_value_to_dict(input[2])
+            format_dict['mae_mean'] = pack_one_value_to_dict(input[0])
+            format_dict['f1_mean'] = pack_one_value_to_dict(input[1])
             return format_dict
 
         def test_log_print_format(input):
             format_dict = {}
-            format_dict['loss'] = pack_one_value_to_dict(input[0])
-            format_dict['kl_div_for_seq2token'] = pack_one_value_to_dict(input[1])
-            format_dict['loss_for_token2seq'] = pack_one_value_to_dict(input[2])
+            format_dict['mae_mean'] = pack_one_value_to_dict(input[0])
+            format_dict['f1_mean'] = pack_one_value_to_dict(input[1])
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-    format_dict_length = 3
+    format_dict_length = 2
     
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
         '''
-        return [evaluation_report_format_dict['loss'], 
-                test_report_format_dict['loss']], \
-               ['evaluation_loss', 'test_loss']
+        return [evaluation_report_format_dict['mae_mean'], evaluation_report_format_dict['f1_mean'], \
+                test_report_format_dict['mae_mean'], test_report_format_dict['f1_mean']], \
+               ['evaluation_mae_mean', 'evaluation_f1_mean', 'test_mae_mean', 'test_f1_mean']
     
-    metric_number = 2 # metric number is the length of the output of choose_metric
+    metric_number = 4 # metric number is the length of the output of choose_metric
