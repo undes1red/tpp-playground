@@ -201,10 +201,10 @@ class IFIBCModel(BasicModel):
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
         
-        mae, f1 = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history,\
-                                                  events_next = events_next, time_next = time_next, \
-                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, \
-                                                  mean = mean, std = std)      # 2 * [batch_size, seq_len]
+        mae, f1, _ = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history,\
+                                                     events_next = events_next, time_next = time_next, \
+                                                     mask_history = mask_history, mask_next = mask_next_without_dummy, \
+                                                     mean = mean, std = std)   # 2 * [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_events
 
         time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
@@ -379,13 +379,16 @@ class IFIBCModel(BasicModel):
             grad_outputs = torch.ones_like(probability_integral_from_pred_to_infinite)
         )[0]                                                                   # [batch_size, seq_len, num_events]
         time_next_pred.requires_grad = False                                   # [batch_size, seq_len, num_events]
-
+        
         events_pred_index = predict_event(probability_for_each_event)[mask_next == 1]
+        distribution_at_pred_time = probability_for_each_event / probability_for_each_event.sum(dim = -1, keepdim = True)
+                                                                               # [batch_size, seq_len, num_events]
+        
         events_true = events_next[mask_next == 1]
         events_pred_index, events_true = move_from_tensor_to_ndarray(events_pred_index, events_true)
         f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
         
-        return mae, f1
+        return mae, f1, distribution_at_pred_time
 
 
     def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, std, return_mean = True):
@@ -605,8 +608,8 @@ class IFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                       time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, std, mask_next)
 
@@ -733,12 +736,12 @@ class IFIBCModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1, dist = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                          time_next, mask_history, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
+        mae, dist, events_next = move_from_tensor_to_ndarray(mae, dist, events_next)
 
-        return mae, f1_1, events_next
+        return mae, f1_1, dist, events_next
 
     
     def get_mae_e_and_f1(self, input_data, opt):

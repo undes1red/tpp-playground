@@ -144,9 +144,8 @@ class Text2Text(nn.Module):
                         
                         if mark >= self.num_events:
                             mark = 0
-                        tmp_result.append({'time': time, 'event': mark})
                         
-                    results.extend(tmp_result)
+                        results.append({'time': time, 'event': mark})
                     break
                 except Exception as e:
                     print(response)
