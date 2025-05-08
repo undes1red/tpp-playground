@@ -234,7 +234,8 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.inference_mode()
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std, 
+                                   output_mark_distribution = False):
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
                                      number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
@@ -243,13 +244,18 @@ class CTLSTMWrapper(BasicModel):
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
         _, intensity_all_events = self.model(time_history, pred_time, events_history)
                                                                                # [batch_size, seq_len, num_events]
-
+        if output_mark_distribution:
+            mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
+                                                                               # [batch_size, seq_len, num_events]
         predicted_events = torch.argmax(intensity_all_events, dim = -1)[mask_next == 1]
         events_true = events_next[mask_next == 1]
         predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
-        return mae, f1
+        if output_mark_distribution:
+            return mae, f1, mark_distribution
+        else:
+            return mae, f1
 
 
     @torch.inference_mode()
@@ -567,12 +573,12 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                         time_next, mask_history, mask_next, mean, std, output_mark_distribution = True)
                                                                                # [batch_size, seq_len]
-        mae, events_next = move_from_tensor_to_ndarray(mae, events_next)
+        mae, events_next, p_m = move_from_tensor_to_ndarray(mae, events_next, p_m)
 
-        return mae, f1_1, events_next
+        return mae, f1_1, p_m, events_next
 
     
     @torch.inference_mode()

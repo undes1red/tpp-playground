@@ -751,9 +751,10 @@ class IFIBCModel(BasicModel):
         f1_2, top_k, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std)
         
-        _, maes, probability_sum, probability_integral_from_zero_to_infinite, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, probability_integral_from_zero_to_infinite, events_next)
+        _, maes, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, time_next, events_next \
+        = move_from_tensor_to_ndarray(*maes, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, time_next, events_next)
 
-        return maes, f1_2, probability_sum, probability_integral_from_zero_to_infinite, events_next
+        return maes, f1_2, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, time_next, events_next
 
 
     def get_mae_e_and_f1_by_time_event(self, input_data, opt):
