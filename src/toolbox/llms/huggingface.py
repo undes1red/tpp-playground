@@ -17,7 +17,12 @@ class LangChainEmbedding(nn.Module):
     
     
     def forward(self, input):
-        return self.embedder.embed_query(input)
+        if isinstance(input, str):
+            return self.embedder.embed_query(input)
+        elif isinstance(input, list):
+            return self.embedder.embed_documents(input)
+        else:
+            raise Exception('Input with unknown data type.')
 
 
 class LangChainToken2Token(nn.Module):
@@ -75,10 +80,10 @@ if __name__ == '__main__':
         questions.append({'question': f'What is the number {i} in French?'})
         questions.append({'question': f'What is the number {i} in English? Please answer it by a single word.'})
 
-    answers = model.forward(questions, )
+    answers = model.forward(questions)
     
     embedder = LangChainEmbedding(model_name = 'mixedbread-ai/mxbai-embed-large-v1', device = 'cuda:0')
-    results = embedder(answers[0])
+    results = embedder(answers)
     
     for answer in answers:
         print(answer)

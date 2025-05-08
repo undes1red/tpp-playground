@@ -107,7 +107,7 @@ class Text2Text(nn.Module):
                                         prompt_template = pred_prompt_dict[self.dataset], 
                                         batch_size = self.batch_size,
                                         pipeline_kwargs = {'max_new_tokens': 50},
-                                        model_kwargs = {'temperature': 0.6},
+                                        model_kwargs = {'temperature': 0.6, 'do_sample': True},
                                         token_kwargs = {'model_max_length': 8192, 'truncation': True})
 
 
@@ -135,6 +135,7 @@ class Text2Text(nn.Module):
                 try:
                     responses = self.t2t(input_filled_into_template[i:i+self.batch_size])
                                                                                    # [batch_size]
+                    tmp_result = []
                     for response in responses:
                         time_string = re.search(r'Time of the next event:\s*\d*\.\d*', response).group()
                         time = float(time_string.split(':')[1])
@@ -143,10 +144,14 @@ class Text2Text(nn.Module):
                         
                         if mark >= self.num_events:
                             mark = 0
+                        tmp_result.append({'time': time, 'event': mark})
                         
-                        results.append({'time': time, 'event': mark})
+                    results.extend(tmp_result)
+                        
                     break
                 except Exception as e:
+                    print(response)
+                    print(e)
                     print('parse failed! Retrying....')
                     continue
         

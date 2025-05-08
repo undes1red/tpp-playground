@@ -34,12 +34,12 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     and the ground truth on all available event sequences.
     We dump all mae values for calculating Q1, Q2, and Q3 later.
     '''
-    mae, f1, events_next = all_evaluation_results
+    mae, f1, dist, events_next = all_evaluation_results
     f1 = np.mean(f1)
     mean_mae = np.mean(flatten(mae))
     
     mae_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_data.pkl')
-    data = {'mae': mae, 'events_next': events_next}
+    data = {'mae': mae, 'dist': dist, 'events_next': events_next}
     dump_to_pkl(data, mae_dist_file, compression = 'bz2')
 
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
