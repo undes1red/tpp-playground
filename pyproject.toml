@@ -1,11 +1,13 @@
 [project]
 name = "tpp-playground"
-version = "0.0.12"
+version = "1.0.0"
 description = "Main coderepo of MTPP models."
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "torch==2.6.0",
+requires-python = "==3.12.*"
+
+[dependency-groups]
+base = [
+    "torch==2.7.0",
     "torchvision",
     "torchaudio",
     "numpy",
@@ -17,35 +19,45 @@ dependencies = [
     "seaborn",
     "pyyaml",
     "termcolor",
-    "transformers",
+    "transformers[torch]",
     "accelerate",
-    "wandb",
     "tabulate",
-    "ollama",
+    "datasets",
+]
+
+optional = [
+    "wandb",
+]
+
+llm = [
     "openai",
     "langchain",
     "langchain-huggingface",
     "optimum",
     "gptqmodel",
-    "datasets",
     "logbar",
     "tokenicer",
     "device_smi",
     "gguf"
 ]
 
+dev = [
+    "ipython"
+]
+
 # Settings for uv
 [tool.uv]
 # Something we need during development while not when release.
-dev-dependencies = ["ipython"]
+default-groups = ["base", "optional", "llm", "dev"]
+no-build-isolation-package = ["gptqmodel"]
 
-# [[tool.uv.index]]
-# name = "pytorch-cu126"
-# url = "https://download.pytorch.org/whl/cu126"
-# explicit = true
-
-# [tool.uv.sources]
 # Install pytorch from the official pytorch repo.
-# torch = { index = "pytorch-cu126" }
-# torchvision = { index = "pytorch-cu126" }
-# torchaudio = {index = "pytorch-cu126" }
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

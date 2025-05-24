@@ -13,7 +13,7 @@ from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 class CTLSTM(nn.Module):
     def __init__(self, device, num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
-                 history_encoder_layers, dropout, integration_sample_rate, patch_length):
+                 history_encoder_layers, dropout, integration_sample_rate):
         '''
         A CTLSTM implementation, based on existing SAHP codes.
         '''

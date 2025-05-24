@@ -10,16 +10,16 @@ class EvaluatorArguments(BasicEvaluatorArguments):
         self.root_path = root_path        
 
         # plotter specific
-        parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\
-                                                  test set(if set), and evaluation set(if set), respectively. So there will be\
-                                                  {enabled_dataset} * figure_count plots when the plotter finish running.')
-        parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
-        parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
-        parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
+        # parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\
+        #                                           test set(if set), and evaluation set(if set), respectively. So there will be\
+        #                                           {enabled_dataset} * figure_count plots when the plotter finish running.')
+        # parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
+        # parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
+        # parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
         
         # Specfically for the HYPRO dataset preparation.
-        parser.add_argument('--number_of_events_hypro', type=int, default = 1, help = 'The number of events that hypro should predict based on the history.')
-        parser.add_argument('--number_of_negative_samples', type=int, default = 1, help = 'The number of negative samples that each positive sequence has.')
+        # parser.add_argument('--number_of_events_hypro', type=int, default = 1, help = 'The number of events that hypro should predict based on the history.')
+        # parser.add_argument('--number_of_negative_samples', type=int, default = 1, help = 'The number of negative samples that each positive sequence has.')
 
 
         # identification mark
@@ -55,6 +55,8 @@ def Evaluator_postprocess(opt, root_path):
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
     opt.abs_model_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.model_config) if opt.model_config else None
     opt.model_config = os.path.basename(opt.abs_model_config) if opt.model_config else None
+    opt.abs_task_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.task_config) if opt.task_config else None
+    opt.task_config = os.path.basename(opt.abs_task_config) if opt.abs_task_config else None
     if opt.combine_used_and_current_dataloader_config:
         opt.abs_used_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.training_dataset_name if opt.training_dataset_name is not None else opt.dataset_name, opt.used_dataloader_config) if opt.used_dataloader_config else None
         opt.used_dataloader_config = os.path.basename(opt.used_dataloader_config) if opt.used_dataloader_config else None

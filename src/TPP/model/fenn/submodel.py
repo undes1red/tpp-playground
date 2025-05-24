@@ -12,17 +12,31 @@ from src.toolbox.metrics import L1_distance_across_events
 class FENN(nn.Module):
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, device):
+        '''
+        This function creates a FENN model.
+        
+        ### Args
+            * ```str``` history_module
+              Which RNN model do we use to encode the history? Default is LSTM. We don't recommend to change it to something else.
+            * ```int``` d_history
+              The dimension of the history representation.
+            * ```float``` dropout
+              Dropout rate for the history encoder. Only works when history_module_layers > 1.
+            * ```int``` history_module_layers
+              How many layer of RNN our model will have?
+            * ```int``` d_intensity
+              The dimension of the cumulative hazard function network.
+            * ```int``` mlp_layers
+              The number of layers in the cumulative hazard function network.
+            * ```int``` num_events
+              The number of available marks in the sequence.
+        '''
         super(FENN, self).__init__()
         self.device = device
         self.num_events = num_events
 
-        '''
-        Should we compress marker information into the history embedding?
-
-        Caveat:
-        FullyNN can not distinguish different markers because of computation graph overlap.
-        It is expected that the original FullyNN achieves very inferior marker prediction performance in spite of the model size.
-        '''
+        # FullyNN can not distinguish different markers because of computation graph overlap.
+        # It is expected that the original FullyNN achieves very bad marker prediction performance regardless the model size.
         self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
         
         try:
@@ -31,21 +45,15 @@ class FENN(nn.Module):
         except:
             raise Exception(f'Unknown history module {history_module}.')
 
-        '''
-        Map the time number into a vector.
-        '''
+        # Map the time number into a vector.
         self.weight_for_t = nn.Parameter(torch.zeros((self.num_events, d_intensity), device = self.device, requires_grad = True))
         nn.init.xavier_uniform_(self.weight_for_t)
 
-        '''
-        Map history and time embeddings into the same hidden space.
-        '''
+        # Map history and time embeddings into the same hidden space.
         self.history_mapper = nn.Linear(d_history, d_intensity, bias = True, device = device)
         self.time_mapper = NonNegLinear(d_intensity, d_intensity, device = self.device)
 
-        '''
-        IEM module featuring non-negative fully connected layers.
-        '''
+        # IEM module featuring non-negative fully connected layers.
         self.mlp = nn.ModuleList([
             NonNegLinear(d_intensity, d_intensity, bias = True, device = device) for _ in range(mlp_layers)
         ])
@@ -56,31 +64,28 @@ class FENN(nn.Module):
 
     def forward(self, events_history, time_history, time_next, mean, std, custom_events_history = False):
         '''
-        The forwardpropagation function of FENN, triggered by pytorch.
-
-        Args:
-        * events_history  type: torch.tensor shape: [batch_size, seq_len]
-                          Historical event sequences. Commonly, this sequence is a slice of 
-                          the original event sequence from 0 to seq_len - 1(included). 
-        * time_history    type: torch.tensor shape: [batch_size, seq_len]
-                          Historical time sequences. Similar to events_history, we always generate
-                          this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len, num_events]
-                          When the next event actually happens. 
-        * mask            type: torch.tensor shape: [batch_size, seq_len]
-                          placeholder. This parameter might not be needed at all.
-        * mean            type: float shape: N/A
-                          The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
-        * std             type: float shape: N/A
-                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
-        Outputs:
-        * integral        type: torch.tensor shape: [batch_size, seq_len, num_events]
-                          The integral of the intensity function from $ t_i $ to $ t_{i - 1} $. This integral must not contain
-                          1. negative values, 2. inf, and 3. nan. Meanwhile, integral.requires_grad should be True.
+        FENNModel's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` custom_events_history
+              when true, the events_history will be the mark embedding of historical events.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
         '''
-
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
         
         if custom_events_history:
@@ -116,44 +121,58 @@ class FENN(nn.Module):
     
 
     def get_event_embedding(self, input_event):
+        '''
+        Get mark embeddings for input_event.
+        
+        ### Args
+            * ```torch.tensor``` input_event
+              shape: ```[batch_size, seq_len]```
+              Input event sequence.
+        ### Outputs
+            * ```torch.tensor```
+              shape: ```[batch_size, seq_len, d_history]```
+              The output embeddings.
+        '''
         return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, std, time_next_start = None):
         '''
-        Intensity integral & intensity function prober. This function returns values of learned intensity function
-        $ \\lambda^*(m, t) $ and corresponding integral values $ \\Lambda^*(m, t) $ at given times.
-
-        Args:
-        * events_history  type: torch.tensor shape: [batch_size, seq_len]
-                          Historical event sequences. Commonly, this sequence is a slice of 
-                          the original event sequence from 0 to seq_len - 1(included). 
-        * time_history    type: torch.tensor shape: [batch_size, seq_len]
-                          Historical time sequences. Similar to events_history, we always generate
-                          this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [batch_size, seq_len]
-                          When the next event actually happens. 
-        * resolution      type: int shape: N/A
-                          How many values do we need in each time interval [t_{i}, t_{i + 1}].
-        * mean            type: int shape: N/A
-                          The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
-        * std             type: int shape: N/A
-                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
         
-        Ouputs:
-        * expand_integral   type: torch.tensor shape: [batch_size, seq_len, resolution]
-                            Probed intensity integral values at every sampled $ t $
-        * expand_intensity  type: torch.tensor shape: [batch_size, seq_len, resolution]
-                            Probed intensity values at every sampled $ t $
-        * timestamp         type: torch.tensor shape: [batch_size, seq_len, resolution]
-                            The difference between adjacent sampled $ t $.
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```torch,tensor``` time_next_start
+              shape: ```[..., batch_size, seq_len]``` if not None
+              When given, this function computes the integral between [time_next_start, t_i]. time_next_start are expected to be non-negative.
+              This affects the integral, intensity, and timestamp.
+        ### Outputs
+            * ```torch.tensor``` expand_integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expand_intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
         '''
-
-        '''
-        Prepare the history embedding.
-        '''
+        # Prepare the history embedding.
         if time_next_start is None:
             time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
 
@@ -169,9 +188,7 @@ class FENN(nn.Module):
         einop = f'b s di -> {"() " * (len(time_next.shape) - 2)}b s () () di'
         hidden_history = rearrange(hidden_history, einop)                      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Prepare the time embedding.
-        '''
+        # Prepare the time embedding.
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = (time_next - time_next_start).unsqueeze(dim = -1) * time_multiplier + time_next_start.unsqueeze(dim = -1)
@@ -188,18 +205,14 @@ class FENN(nn.Module):
         emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
         output = self.layer_activation(emb_normed_time_expand + hidden_history)# [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Get intensity integrals.
-        '''
+        # Get intensity integrals.
         for nonneg_layer in self.mlp:
             output = nonneg_layer(output)                                      # [..., batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.layer_activation(output)                             # [..., batch_size, seq_len, resolution, num_events, d_intensity]
 
         expand_integral = self.nonneg_activation(self.aggregate(output))       # [..., batch_size, seq_len, resolution, num_events, 1]
 
-        '''
-        Get intensity values at every sampled $ t $.
-        '''
+        # Get intensity values at every sampled $ t $.
         expand_intensity = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
@@ -215,39 +228,39 @@ class FENN(nn.Module):
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, std):
         '''
-        Intensity integral & intensity function prober. This function returns values of learned intensity function
-        $ \\lambda^*(m, t) $ and corresponding integral values $ \\Lambda^*(m, t) $ at given times.
-
-        Args:
-        * events_history  type: torch.tensor shape: [batch_size, seq_len]
-                          Historical event sequences. Commonly, this sequence is a slice of 
-                          the original event sequence from 0 to seq_len - 1(included). 
-        * time_history    type: torch.tensor shape: [batch_size, seq_len]
-                          Historical time sequences. Similar to events_history, we always generate
-                          this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
-        * time_next       type: torch.tensor shape: [..., batch_size, seq_len, num_events]
-                          When the next event actually happens. 
-        * resolution      type: int shape: N/A
-                          How many values do we need in each time interval [t_{i}, t_{i + 1}].
-        * mean            type: int shape: N/A
-                          The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
-        * std             type: int shape: N/A
-                          The stdiance of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                          this value if needed.
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
         
-        Ouputs:
-        * expand_integral   type: torch.tensor shape: [batch_size, seq_len, resolution, num_events, num_events]
-                            Probed intensity integral values at every sampled $ t $
-        * expand_intensity  type: torch.tensor shape: [batch_size, seq_len, resolution, num_events, num_events]
-                            Probed intensity values at every sampled $ t $
-        * timestamp         type: torch.tensor shape: [batch_size, seq_len, resolution, num_events]
-                            The difference between adjacent sampled $ t $.
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```torch.tensor``` expand_integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expand_intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
         '''
 
-        '''
-        Prepare the history embedding.
-        '''
+        # Prepare the history embedding.
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
@@ -259,9 +272,7 @@ class FENN(nn.Module):
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne ne1 di', r = resolution, ne = self.num_events, ne1 = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, num_events, d_intensity]
 
-        '''
-        Prepare the time embedding.
-        '''
+        # Prepare the time embedding.
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_next.unsqueeze(dim = -2) * rearrange(time_multiplier, f'r -> {"() " * (len(time_next.shape) - 1)}r 1')
@@ -278,18 +289,14 @@ class FENN(nn.Module):
                                                                                # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
         output = self.layer_activation(emb_normed_time_expand + hidden_history)# [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
 
-        '''
-        Get intensity integrals.
-        '''
+        # Get intensity integrals.
         for nonneg_layer in self.mlp:
             output = nonneg_layer(output)                                      # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
             output = self.layer_activation(output)                             # [..., batch_size, seq_len, resolution, num_events, num_events, d_intensity]
 
         expand_integral = self.nonneg_activation(self.aggregate(output))       # [..., batch_size, seq_len, resolution, num_events, num_events, 1]
 
-        '''
-        Get intensity values at every sampled $ t $.
-        '''
+        # Get intensity values at every sampled $ t $.
         expand_intensity = torch.autograd.grad(
             outputs=expand_integral,
             inputs=time_expand,
@@ -303,18 +310,40 @@ class FENN(nn.Module):
         return expand_integral, expand_intensity, original_time_expand
 
 
-    def model_probe_function(self, events_history, time_history, time_next, resolution, mean, std, mask_next):
+    def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, std):
         '''
-        We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
-        Args:
-        time_history: [batch_size, seq_len]
-        time_next:    [batch_size, seq_len]
-        resolution:   int
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_next
+              shape: ```[..., batch_size, seq_len]```
+              Tell which event in *_next is the real event so should be considered in metric calculation.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```dict``` data
+              Probed data used for plot drawing.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[batch_size, seq_len, resolution]```
+              The value of sampled times.
         '''
 
-        '''
-        Prepare the history embedding.
-        '''
+        # Prepare the history embedding.
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         events_embeddings = self.events(events_history)                        # [batch_size, seq_len, d_history]
@@ -323,16 +352,13 @@ class FENN(nn.Module):
             'b s *'
         )                                                                      # [batch_size, seq_len, d_history + 1]
 
-        
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Prepare the time embedding.
-        '''
+        # Prepare the time embedding.
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_next.unsqueeze(dim = -1) * time_multiplier # [batch_size, seq_len, resolution]
@@ -349,9 +375,7 @@ class FENN(nn.Module):
         emb_normed_time_expand = self.time_mapper(emb_normed_time_expand)      # [batch_size, seq_len, resolution, num_events, d_intensity]
         output = self.layer_activation(emb_normed_time_expand + hidden_history)# [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Get intensity integrals.
-        '''
+        # Get intensity integrals.
         for nonneg_layer in self.mlp:
             output = nonneg_layer(output)                                      # [batch_size, seq_len, resolution, num_events, d_intensity]
             output = self.layer_activation(output)                             # [batch_size, seq_len, resolution, num_events, d_intensity]
@@ -369,14 +393,11 @@ class FENN(nn.Module):
 
         expand_integral = expand_integral.squeeze(dim = -1)                    # [batch_size, seq_len, resolution, num_events]
         
-        '''
-        The data dict is defined here.
-        This dict should pack all data required by plot().
-        '''
+        # The data dict is defined here.
+        # This dict should pack all data required by plot().
         data = {}
         data['expand_intensity_for_each_event'] = expand_intensity             # [batch_size, seq_len, resolution, num_events]
         data['expand_integral_for_each_event'] = expand_integral               # [batch_size, seq_len, resolution, num_events]
-
 
         expand_intensity = rearrange(expand_intensity, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * resolution, num_event]

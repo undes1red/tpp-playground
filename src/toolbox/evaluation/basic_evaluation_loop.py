@@ -7,7 +7,7 @@ from src.toolbox.misc import get_logger, mkdir_if_not_exist, write_to_txt, free_
 logger = get_logger(name = __file__)
 
 def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_string = '{0}', postprocess_func = None):
-    subtask_name = opt.subtask_name
+    task_name = opt.task_name
 
     elapsed_time = 0
     list_output_results = None
@@ -16,7 +16,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
         with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
             with FlopCounterMode(display = False) as counter:
                 for minibatch in progress_bar:
-                    results_per_minibatch = model(subtask_name, minibatch, opt)
+                    results_per_minibatch = model(task_name, minibatch, opt)
                     
                     if results_per_minibatch is None:
                         continue
@@ -33,7 +33,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
     else:
         with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
             for minibatch in progress_bar:
-                results_per_minibatch = model(subtask_name, minibatch, opt)
+                results_per_minibatch = model(task_name, minibatch, opt)
                 
                 if results_per_minibatch is None:
                     continue
@@ -53,7 +53,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
         free_model_from_gpu(model)
 
     mkdir_if_not_exist(opt.store_dir)
-    result_file = os.path.join(opt.store_dir, f'{desc}_{subtask_name}_misc.txt')
+    result_file = os.path.join(opt.store_dir, f'{desc}_{task_name}_misc.txt')
     strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n', 
                f'Computation: {flops / 1000**4} TFlops.']
     write_to_txt(strings, result_file)

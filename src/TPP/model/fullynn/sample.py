@@ -9,12 +9,81 @@ from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 
 def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
     '''
-    number_of_total_samples: how many samples do we need to predict one next event.
-    step: we output "step" samples to reduce memory comsumption during inference.
-    sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
-    task: 'mt' for mark first time second, 'tm' for time first mark second.
-    '''
+    Sample time from the learned MTPP model using p(t) or p(t|m) using different methods.
+       
+    ### Args
+        * ```str``` sampling_approach
+          Use which method to sample from a distribution.
+          its      -> Inverse Transform Sampling.
+          thinning -> Thinning algorithm.
+        * ```str``` task
+          Use which distribution to sample time, p(t) or p(t|m)?
+          mt -> p(t|m)
+          tm -> p(t)
+        * ```bool``` autoregressive
+          If true, we autoregressively generate a sequence using the learned MTPP model.
+          If false, we sample one next event given a history sequence.
+    
+    ### Args required when sampling from p(t|m) using its.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` p_m
+          shape: ```[batch_size, seq_len, num_events]```
+          The value of p(m) over the different mark m.
+        * ```int``` resolution
+          The number of interpolated points in a time interval between two adjoint events for integration estimation.
+          The number of interpolated points counts the start and end point of the interval.
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
 
+    ### Args required when sampling from p(t) using its.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
+
+    ### Args required when sampling from p(t|m) using thinning.
+        Do not exist since it is impossible for now to sample from p(t|m) using thinning.
+    
+    ### Args required when sampling from p(t) using thinning.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
+    '''
     dict_sampling_apparoch = {
         'its': sampling_by_its,
         'thinning': sampling_by_thinning
@@ -32,16 +101,21 @@ def sampling_by_its(self, task, *args, **kwargs):
     return dict_apparoch_for_tasks[task](self, *args, **kwargs)
 
 
+def sampling_by_thinning(self, task, *args, **kwargs):
+    dict_apparoch_for_tasks = {
+        'mt': sampling_by_thinning_for_mt,
+        'tm': sampling_by_thinning_for_tm
+    }
+
+    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
+
+
 def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
-                            number_of_total_samples, step, inf_val, mean, std, 
-                            autoregressive = False):
+                           number_of_total_samples, step, inf_val, mean, std):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def evaluate_all_event(taus):
-        '''
-        placeholder
-        '''
         integral_all_events, intensity_all_events, time_interval \
                 = self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, mean, std)
                                                                             # 2 * [sample_rate, batch_size, seq_len, resolution, num_events, num_events] + [sample_rate, batch_size, seq_len, resolution, num_events]
@@ -86,19 +160,11 @@ def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
 
 
 def sampling_by_its_for_tm(self, events_history, time_history,
-                            number_of_total_samples, step, mean, std, 
-                            autoregressive = False):
+                           number_of_total_samples, step, mean, std):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def bisect_target(taus, probability_threshold):
-        '''
-        Retrieve the sum of all $ \\Lambda^*(m, t) $ over all $ m $ at $ \\tau $.
-
-        Outputs:
-        * integral    type: torch.tensor shape: [batch_size, seq_len]
-                        $ \\sum_{n \\in M}{\\Lambda^*(n, \\tau)} $
-        '''
         taus = repeat(taus, '... -> ... ne', ne = self.num_events)         # [sample_rate, batch_size, seq_len, num_events]
         integral = self.model(events_history, time_history, taus, mean, std)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
@@ -118,15 +184,6 @@ def sampling_by_its_for_tm(self, events_history, time_history,
     tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len]
 
     return tau_pred
-
-
-def sampling_by_thinning(self, task, *args, **kwargs):
-    dict_apparoch_for_tasks = {
-        'mt': sampling_by_thinning_for_mt,
-        'tm': sampling_by_thinning_for_tm
-    }
-
-    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
 
 
 def sampling_by_thinning_for_mt(self, *args, **kwargs):

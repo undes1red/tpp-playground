@@ -241,7 +241,14 @@ desc_funcs = {
     'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},
     'cppod_commission_evaluation': {'desc_string': 'Obtaining CPPOD score on commission outlier for {0}', 'postprocess_func': cppod_commission_evaluation_postprocess},
 
-
     # Custom evaluation function.
     'mae_and_f1_of_imputated_events': mae_and_f1_of_imputated_events
 }
+
+
+def task_running_on_the_entire_dataset_or_samples(task_name):
+    available_tasks = desc_funcs.keys()
+    if task_name not in available_tasks:
+        logger.exception(f'Unknown task {task_name}. Available tasks are {available_tasks}.')
+    
+    

@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, roc_auc_score
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict, argument_check
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
@@ -15,9 +15,49 @@ from src.TPP.model.utils import decide_resolution_inf_and_resolution_between_eve
 
 
 class CTLSTMWrapper(BasicModel):
+    '''
+    continuous-time LSTM, the backbone of the Neural Hawkes Process, proposed by Mei et al. at NeurIPS 2017.
+    '''
     def __init__(self, opt, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
-                 integration_sample_rate = 100, survival_loss_during_training = True, patch_length = 5):
+                 integration_sample_rate = 100, survival_loss_during_training = True):
+        '''
+        This function creates a CTLSTM model.
+        
+        ### Args
+            * ```int``` d_mark_embedding
+              The dimension of the mark embeddings.
+            * ```str``` history_module
+              Which RNN model do we use to encode the history? Default is LSTM. We don't recommend to change it to something else.
+            * ```int``` d_hidden
+              The dimension of the history representation.
+            * ```float``` dropout
+              Dropout rate for the history encoder. Only works when history_encoder_layers > 1.
+            * ```int``` history_encoder_layers
+              How many layer of RNN our model will have?
+            * ```int``` d_input
+              The dimension of the cumulative hazard function network.
+            * ```int``` mlp_layers
+              The number of layers in the cumulative hazard function network.
+            * ```namespace``` opt
+              Model arguments.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+            * ```float``` epsilon
+              Shiftting the calculated intensity function and probability distribution by a little bit so that ```torch.log()``` won't fail.
+            * ```int``` sample_rate
+              This tells how many time samples from the time distribution are needed for one time prediction.
+            * ```int``` mae_step
+              This parameter controls how many samples are generated in one shot when sampling from p(t).
+            * ```int``` mae_e_step
+              This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+              mae_step and mae_e_step are useful when you cannot get sample_rate time samples from time distributions because of insufficient GPU memory.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```bool``` survival_loss_during_training
+              When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
+        '''
         super(CTLSTMWrapper, self).__init__()
         self.device = device
         self.compile_or_not = opt.compile
@@ -36,17 +76,43 @@ class CTLSTMWrapper(BasicModel):
         self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                             d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
-                            integration_sample_rate = integration_sample_rate, patch_length = patch_length)
+                            integration_sample_rate = integration_sample_rate)
     
 
     def divide_history_and_next(self, input):
+        '''
+        Extract the history and prediction sequences from the input sequence.
+        
+        ### Args
+            * ```torch.tensor``` input
+              shape: [batch_size, seq_len + 1]
+              The input sequence.
+        
+        ### Outputs
+            * ```torch.tensor``` input_history
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+            * ```torch.tensor``` input_next
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+        '''
         input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
         return input_history, input_next
 
 
     def remove_dummy_event_from_mask(self, mask):
         '''
-        Remove the probability of the dummy event by mask.
+        Remove the probability of the dummy event from the mask.
+
+        ### Args
+            * ```torch.tensor``` mask
+              shape: [batch_size, seq_len]
+              The input mask tensor.
+        
+        ### Outputs
+            * ```torch.tensor``` mask_without_dummy
+              shape: [batch_size, seq_len]
+              The output mask tensor with the last unmask event in each sequence removed.
         '''
         mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
         for idx, mask_per_seq in enumerate(mask):
@@ -60,30 +126,11 @@ class CTLSTMWrapper(BasicModel):
 
     def forward(self, task_name, *args, **kwargs):
         '''
-        The entrance of the FullyNN wrapper.
+        The entrance of the CTLSTM.
         
-        Args:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original time sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original event sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        We use mask to mask out unneeded outputs.
-        * mean          type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * evaluate      type: bool shape: N/A
-                        perform a model training step when evaluate == False
-                        perform a model evaluate step when evaluate == True
-        
-        Outputs:
-        Refers to train() and evaluate()'s documentation for detailed information.
-
+        ### Args
+            * ```str``` task_name
+              The name of the executed task.
         '''
         task_mapper = {
             'train': self.train_procedure,
@@ -106,19 +153,37 @@ class CTLSTMWrapper(BasicModel):
         return task_mapper[task_name](*args, **kwargs)
 
 
-    '''
-    Functions for model training.
-    '''
     def train_procedure(self, time, events, mask, mean, std):
         '''
-        Check if events data is present.
-        Now, we assume that no event data is available.
-        Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-        3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
-        '''
+        CTLSTM's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequence for training.
+            * ```torch.tensor``` events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
 
+        ### Outputs
+            * ```torch.tensor``` loss
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T included).
+            * ```torch.tensor``` log_likeli_loss_without_dummy
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T excluded).
+            * ```torch.tensor``` marker_loss_without_dummy
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+            * ```int``` the_number_of_events
+              The number of legit events.
+        '''
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
@@ -150,18 +215,41 @@ class CTLSTMWrapper(BasicModel):
         return loss, log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
 
 
-    '''
-    Functions for model evaluation
-    '''
     @torch.inference_mode()
     def evaluate_procedure(self, time, events, mask, mean, std):
         '''
-        Check if events data is present.
-        Now, we assume that no event data is available.
-        Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-        3. mask: filter out the padding events in the event batches. shape: [batch_size, seq_len + 1]
+        CTLSTM's forwardpropagation function for evaluation.
+        
+        ### Args
+            * ```torch.tensor``` time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequencalculatesce for training.
+            * ```torch.tensor``` events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` log_likeli_loss_time_next_without_dummy
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
+            * ```torch.tensor``` loss_survival
+              shape: ```[1]```
+              The sum of the integration \\Lambda^*(m, t) from the last observed event to the end time T.
+            * ```torch.tensor``` marker_loss_time_next_without_dummy
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+            * ```int``` the_number_of_events
+              The number of legit events.
         '''
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len] * 2
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len] * 2
@@ -174,7 +262,7 @@ class CTLSTMWrapper(BasicModel):
 
         mae, f1 = self.mean_absolute_error_and_f1(time_history = time_history, time_next = time_next, \
                                                   events_history = events_history, events_next = events_next, \
-                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, \
+                                                  mask_next = mask_next_without_dummy, \
                                                   mean = mean, std = std)      # [batch_size, seq_len] * 2
         mae = mae.sum().item() / the_number_of_events
 
@@ -197,11 +285,32 @@ class CTLSTMWrapper(BasicModel):
                mae, f1, the_number_of_events
 
 
-    '''
-    Loss functions
-    '''
     def loss_function(self, integral_all_events, intensity_all_events, events_next, mask_next):
-        """ Log-likelihood of sequence. """
+        '''
+        This function computes the NLL loss at each legit event in events_next.
+    
+        ### Args
+            * ```torch.tensor``` intensity_all_events
+              shape: ```[batch_size, seq_len, num_events]```
+              intensity values at t_i.
+            * ```torch.tensor``` integral_all_events
+              shape: ```[batch_size, seq_len, num_events]```
+              intensity integral from t_{i - 1} to t_{i} (t_0 = 0).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+              The mark of the events that we need to predict.
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              Needed mask to mask out unneeded loss values.
+        
+        ### Outputs
+            * ```torch.tensor``` mtpp_loss, 
+              shape: ```[1]```
+              The sum of NLL loss on all event.
+            * ```torch.tensor``` events_loss
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+        '''
         type_mask = F.one_hot(events_next, num_classes = self.num_events)      # [batch_size, seq_len, num_events]
         '''
         MTPP loss function
@@ -234,12 +343,40 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.inference_mode()
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_history, mask_next, mean, std, 
-                                   output_mark_distribution = False):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, 
+                                   mean, std, output_mark_distribution = False, opt = None):
+        '''
+        Called by evaluate_procedure(), debug() and get_mae_and_f1(), this function computed the MAE and macro-F1 of one minibatch.
+
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              The event history \\mathcal{H}_{t_l}. We use these history info and time history for \\(\\lambda^*(m, t)\\) and \\(\\Lambda^*(m, t)\\).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` time_next
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              The real-world event sequence. We use events in this sequence to evaluate the predicted events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` mae
+              shape: ```[batch_size, seq_len]```
+              Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
+            * ```float``` f1
+              macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
+        '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
-                                     number_of_total_samples = self.sample_time_rate, step = self.mae_step, mean = mean, std = std)
-                                                                               # [sample_rate, batch_size, seq_len]
+                                     number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate, 
+                                     step = self.mae_step if opt is None else opt.mae_step, 
+                                     mean = mean, std = std)                   # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
         _, intensity_all_events = self.model(time_history, pred_time, events_history)
@@ -259,14 +396,63 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.inference_mode()
-    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = True):
+    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, 
+                              mask_next, mean, std, return_mean = True, opt = None):
         '''
-        The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
-        be recorded as part of the output.
-        '''
-        '''
-        set a relatively large number as the infinity and decide resolution based on this large value and
-        the memory_ceiling.
+        Called by debug() and get_mae_e_and_f1(), this function computed the MAE-E and macro-F1 of one minibatch.
+
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+              The mark of the events that we need to predict.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` time_next
+              shape: ```[batch_size, seq_len, num_events]```
+              When the next event actually happens. 
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              Needed mask to mask out unneeded loss values.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` return_mean
+              If true, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next on all events in the minibatch.
+              If false, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next per sequence.
+            * ```namespace``` opt
+              One may bring custom settings into this function through this argument during evaluation. Please refers to
+              debug() and get_mae_e_and_f1() for more information about what custom settings are available.
+
+        ### Outputs
+            * ```float``` f1
+              macro-F1 value between events predicted and the ground truths.
+            * ```list``` top_k_acc
+              top-1 to top-N accuracy value between events predicted and the ground truths.
+            * ```torch.tensor``` probability_integral_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of p(m) over m.
+            * ```torch.tensor``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of p(m) over the different mark m.
+            * ```torch.tensor``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              Time predicted by p(t|m) over all marks m.
+            * ```torch.tensor``` mae_per_event_with_predict_index_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using real marks.
+            * ```torch.tensor``` mae_per_event_with_predict_index
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
         '''
         inf_val, resolution_inf, resolution_between_events \
             = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
@@ -287,7 +473,9 @@ class CTLSTMWrapper(BasicModel):
 
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
                                               events_history = events_history, time_history = time_history,
-                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = self.sample_time_rate, step = self.mae_e_step, inf_val = inf_val, 
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events,
+                                              number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate,
+                                              step = self.mae_e_step if opt is None else opt.mae_e_step, 
                                               mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
         tau_pred_all_event = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
  
@@ -334,23 +522,27 @@ class CTLSTMWrapper(BasicModel):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
 
-        Args:
-        * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, std)]
-        
-        Outputs:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event timestamp sequence.
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event marks sequence.
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw mask sequence.
-        * mean          type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
+        ### Args
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+              
+        ### Outputs
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event timestamp sequence.
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event marks sequence.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size, seq_len + 1]```
+              Raw mask sequence.
+            * ```int``` mean
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
+            * ```int``` std
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
         '''
         input_time, input_events, _, mask, input_intensity = minibatch[0]
         mean, std = minibatch[1]
@@ -361,14 +553,23 @@ class CTLSTMWrapper(BasicModel):
     @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
+        Function prober, used by evaluator to draw plots of the intensity function.
 
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, {'resolution': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -389,24 +590,32 @@ class CTLSTMWrapper(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_intensity': expand_intensity,
-            'input_intensity': input_intensity
-            }
-        plots = generate_intensity_figure(data, timestamp, opt)
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
         
-        return plots
+        generate_intensity_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_integral(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots of the integral of the intensity function.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, {'resolution': int})
+
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -426,23 +635,33 @@ class CTLSTMWrapper(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_integral': expand_integral,
-            'input_intensity': input_intensity
-            }
-        plots = generate_integral_figure(data, timestamp, opt)
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
+        
+        plots = generate_integral_figure(data, opt)
         return plots
 
 
     @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots of the probability distribution.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, {'resolution': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -465,21 +684,36 @@ class CTLSTMWrapper(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_probability': expand_probability,
-            'input_intensity': input_intensity
-            }
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
         
-        generate_probability_figure(data, timestamp, opt)
+        generate_probability_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
-        Args:
-        time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
-        resolution: int
-              How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots for deeper insight of intensity functions and other metrics.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        3. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        4. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, {'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -488,41 +722,59 @@ class CTLSTMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+                                                    time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_next, opt.resolution)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution)
         f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std,  return_mean = False)
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_next, mean, std,
+                                         return_mean = False, opt = opt)
 
-        time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
-            = self.sample_time_event(None, None, mean, std, end_sampling_requirement = 'time_and_event_num', \
-                                     number_of_sampled_sequences = 1, end_time = self.end_time - self.start_time, max_seq_len = 250)
-                                                                               # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
+        # Append additional info into the data dict.
+        data.update({
+            'events_next': events_next,
+            'time_next': time_next,
+            'mask_next': mask_next,
+            'f1_after_time_pred': f1_1,
+            'mae_before_event': mae,
+            'f1_before_time_pred': f1_2,
+            'top_k': top_k,
+            'probability_sum': probability_sum,
+            'tau_pred_all_event': tau_pred_all_event,
+            'maes_after_event_avg': maes_avg,
+            'maes_after_event': maes,
+            'timestamp': timestamp
+        })
 
-        '''
-        Append additional info into the data dict.
-        '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
-        data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
-        data['mae_before_event'] = mae
-        data['f1_before_time_pred'] = f1_2
-        data['top_k'] = top_k
-        data['probability_sum'] = probability_sum
-        data['tau_pred_all_event'] = tau_pred_all_event
-        data['maes_after_event_avg'] = maes_avg
-        data['maes_after_event'] = maes
-
-        generate_debug_figure(data, timestamp, opt)
+        generate_debug_figure(data, opt)
 
 
-    '''
-    Evaluation over the entire dataset.
-    '''
+    # Evaluation over the entire dataset.
     @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
+        '''
+        Used by evaluator to calculate the average gap between the predicted and real distribution using L1 distance and spearman coefficient.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```float``` spearman
+              The spearman coefficient between the predicted and real distribution.
+            * ```float``` l1
+              The l1 distance between the predicted and real distribution.
+        '''
+        argument_check(opt, {'resolution', int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -567,6 +819,38 @@ class CTLSTMWrapper(BasicModel):
 
     @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```np.ndarray``` mae
+              shape: ```[batch_size, seq_len]```
+              The MAE value, which is the time gap between each predicted and real event.
+            * ```float``` f1_1
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` p_m
+              shape: ```[batch_size, seq_len]```
+              Predicted mark distribution at when an event is observed.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, {'sample_rate': int, 'mae_step': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -574,7 +858,8 @@ class CTLSTMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                         time_next, mask_history, mask_next, mean, std, output_mark_distribution = True)
+                                                         time_next, mask_next, mean, std, \
+                                                         output_mark_distribution = True, opt = opt)
                                                                                # [batch_size, seq_len]
         mae, events_next, p_m = move_from_tensor_to_ndarray(mae, events_next, p_m)
 
@@ -583,6 +868,41 @@ class CTLSTMWrapper(BasicModel):
     
     @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` maes
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
+            * ```float``` f1_2
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` probability_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of calculated p(m) over all marks.
+            * ```np.adarray``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of calculated p(m).
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, {'sample_rate': int, 'mae_e_step': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -591,7 +911,7 @@ class CTLSTMWrapper(BasicModel):
 
         f1_2, top_k, probability_sum, p_m, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
-                                         events_next, mask_history, mask_next, mean, std)
+                                         events_next, mask_next, mean, std, opt = opt)
         
         _, maes, probability_sum, p_m, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, events_next)
 
@@ -696,17 +1016,34 @@ class CTLSTMWrapper(BasicModel):
         return all_roauc_area
 
 
-    '''
-    Static methods
-    '''
     def train_step(model, minibatch, device):
-        ''' Epoch operation in training phase'''
+        '''
+        This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss_without_dummy
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+            * ```float``` events_loss
+              The average cross-entropy loss of the event prediction distribution. The value is only for performance measure porpose.
+              The training loss does not and should not include this value.
+        '''
         model.train()
 
-        '''
-        Maybe need another function to extract data from minibatches.
-        Currently, we don't acquire any prediction loss to assist the model training.  
-        '''
+        # Maybe need another function to extract data from minibatches.
+        # For now, we don't acquire any prediction loss to assist the model training.  
         (time, events, score, mask), (mean, std) = minibatch                   # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         loss, time_loss_without_dummy, events_loss, the_number_of_events \
             = model('train', time, events, mask, mean = mean, std = std)
@@ -721,7 +1058,34 @@ class CTLSTMWrapper(BasicModel):
     
 
     def evaluation_step(model, minibatch, device):
-        ''' Epoch operation in evaluation phase '''
+        '''
+        This function unpacks the minibatch, calls the evaluation_procedure() to calculate the metrics.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` loss_survival
+              The average NLL loss of the end event, which is the integral of the intensity function from the last occurred event to the end time.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+            * ```float``` events_loss
+              The average cross-entropy loss of the event prediction distribution. The value is only for performance measure porpose.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+        '''
         model.eval()
         
         (time, events, score, mask), (mean, std) = minibatch                   # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
@@ -737,6 +1101,19 @@ class CTLSTMWrapper(BasicModel):
 
 
     def postprocess(input, procedure):
+        '''
+        This function makes some modifications to the output of training_step() and evaluation_step().
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```list```
+              The postprocessed outputs.
+        '''
         def train_postprocess(input):
             '''
             Training process
@@ -755,6 +1132,21 @@ class CTLSTMWrapper(BasicModel):
     
     
     def log_print_format(input, procedure):
+        '''
+        This function packs the procedure input into a dict that can be handled by trainer and evaluator for logging.
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```dict``` format_dict
+              format: {..., <variable name>: {'data': <value>, 'num_format': <num_format>, 'suffix': <suffix>}, ...}
+              example: {..., 'memory': {'data': 12.123456, 'num_format': ':2.4f', 'suffix': 'GiB'}, ...}
+              The formated results.
+        '''
         def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
@@ -774,16 +1166,32 @@ class CTLSTMWrapper(BasicModel):
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
-
+    '''
+    The maximum length of the format_dict in different procedures.
+    '''
     format_dict_length = 6
 
     
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
+        This function helps the trainer to pick the best checkpoint based on several metrics.
+
+        ### Args
+            * ```dict``` evaluation_report_format_dict
+            * ```dict``` test_report_format_dict
+              The formated output of training_step() and evaluation_step().
+
+        ### Outputs:
+            * ```list```
+              The picked metrics used for model select.
+            * ```list```
+              The name of these metrics.
         '''
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
+    '''
+    metric number is the length of the output of choose_metric
+    '''
     metric_number = 2 # metric number is the length of the output of choose_metric

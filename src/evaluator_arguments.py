@@ -33,14 +33,14 @@ class BasicEvaluatorArguments:
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/input.')
         self.parser.add_argument('--dataset_type', type=str, default='pkl.lzma', help='File type of the selected dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in {root}/src/TPP/dataloader.')
-        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
+        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{main_procedure_name}/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--used_dataloader_config', type=str, default = None, help='The name of dataloader config file used during training. We only need the filename, not the relative path.')
         self.parser.add_argument('--combine_used_and_current_dataloader_config', action='store_true', \
                                  help='Combine the settings defined in used_dataloader_config and dataloader_config when set. Settings in dataloader_config will be overwritten by used_dataloader_config if exists in used_dataloader_config.')
 
-        self.parser.add_argument('--training_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
-        self.parser.add_argument('--evaluate_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
-        self.parser.add_argument('--test_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        self.parser.add_argument('--training_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/{main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        self.parser.add_argument('--evaluate_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/{main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
+        self.parser.add_argument('--test_data_name', type=str, default=None, help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/{main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
 
         # Evaluation related hyperparameters
         self.parser.add_argument('--n_training_steps', type=int, default=10000, help='How many steps did we use to train this model?')
@@ -56,11 +56,13 @@ class BasicEvaluatorArguments:
 
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
-        self.parser.add_argument('--model_config', type=str, default=None, help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{model_name}/{model_config}.")
+        self.parser.add_argument('--model_config', type=str, default=None, help="Relative path to the custom model config file used for training. This absolute file path is {root}/config/{main_procedure_name}/{model_name}/{model_config}.")
 
         # Optimizer-related hyperparameters
         self.parser.add_argument('--lr', type=float, default=0.1, 
                             help='The learning rate used when training the model.')
         
+        # Which task you'd like to run and where is the task config file?
         parser.add_argument('--task_name', type=str, help='Define which evaluation task you\'d like to start.')
-        parser.add_argument('--subtask_name', type=str, help='Define which evaluation subtask you\'d like to start.')
+        parser.add_argument('--task_config', type=str, help='Relative path to the custom subtask config file used for training. This absolute file path is {root}/config/{main_procedure_name}/{model_name}/{task_config}.')
+        
