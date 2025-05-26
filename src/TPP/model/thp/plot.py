@@ -11,16 +11,21 @@ from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_p
 logger = get_logger(__name__)
 
 
-def generate_intensity_figure(data, timestamp, opt):
+def generate_intensity_figure(data, opt):
     '''
-    '''
+    This function draws the intensity function given one sequence and store them in the "result" folder.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
+    '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of intensity functions over all markers.
-    '''
+    # Part 1: the sum of intensity functions over all markers.
     expand_intensity = data['expand_intensity']                                # [batch_size, seq_len, resolution, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
@@ -73,16 +78,21 @@ def generate_intensity_figure(data, timestamp, opt):
     return 0
 
 
-def generate_integral_figure(data, timestamp, opt):
+def generate_integral_figure(data, opt):
     '''
-    '''
+    This function draws the integral of the intensity function given one sequence and store them in the "result" folder.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
+    '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of intensity integrals over all markers.
-    '''
+    # Part 1: the sum of intensity integrals over all markers.
     expand_integral = data['expand_integral']                                  # [batch_size, seq_len, resolution]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
@@ -115,16 +125,21 @@ def generate_integral_figure(data, timestamp, opt):
     return 0
 
 
-def generate_probability_figure(data, timestamp, opt):
+def generate_probability_figure(data, opt):
     '''
+    This function draws the probability distribution p^*(m, t) given one sequence and store them in the "result" folder.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
     '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of probability distributions over all markers.
-    '''
+    # Part 1: the sum of probability distributions over all markers.
     expand_probability = data['expand_probability']                            # [batch_size, seq_len, resolution, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
@@ -178,23 +193,17 @@ def generate_probability_figure(data, timestamp, opt):
     return 0
 
 
-def generate_debug_figure(data, timestamp, opt):
+def generate_debug_figure(data, opt):
     '''
-    What is inside dict data?
-    1. expand_intensity_for_each_event  shape: [batch_size, seq_len, resolution, num_events]
-    2. expand_integral_for_each_event   shape: [batch_size, seq_len, resolution, num_events]
-    3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
-    4. macro-f1: measure the event prediction performance without time prediction.
-    5. top_k: measure the event prediction performance without time prediction.
-    6. probability_sum: the value of \\int_{t_l}^{+infty}{p(m, \\tau)d\\tau}
-    7. tau_pred_all_event: The time prediction of all events, with p(m) known.
-    8. mae_before_event: as known as MAE.
-    9. maes_after_event_avg: contains mae_per_event_with_predict_index_avg and mae_per_event_with_event_next_avg
-    10. maes_after_event: contains mae_per_event_with_predict_index and mae_per_event_with_event_next
-    11. event_next: 
-    12. time_next:
-    '''
+    This function draws plots for deeper insight of intensity functions and other metrics.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
+    '''
+    expand_timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     resolution = opt.resolution
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
@@ -208,7 +217,6 @@ def generate_debug_figure(data, timestamp, opt):
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     expand_intensity = data['expand_intensity_for_each_event']                 # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
     expand_integral = data['expand_integral_for_each_event']                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-    expand_timestamp = timestamp                                               # [batch_size, seq_len, resolution]
 
     packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp))
     for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_intensity_per_seq, \

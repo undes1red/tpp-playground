@@ -8,11 +8,33 @@ from src.toolbox.subsequent_mask import get_subsequent_mask
 
 
 class Encoder(nn.Module):
-    """ A encoder model with self attention mechanism. """
     def __init__(self,
                  num_types, d_input, d_hidden,
                  n_layers, n_head, d_qk, d_v, dropout, 
                  device):
+        '''
+        This function builds a Transformer encoder.
+        
+        ### Args
+          * ```int``` num_types
+            The number of all possible marks.
+          * ```torch.device``` device
+            The device where we place this transformer encoder.
+          * ```int``` d_input
+            The dimension of the Transformer input tensor.
+          * ```int``` d_hidden
+              The dimension of the FFN module in the Transformer.  
+          * ```int``` n_layers
+              The number of self attention + FFN layers in the Transformer.  
+          * ```int``` n_head
+            The number of head in self attention.
+          * ```int``` d_qk
+            The dimension of matrices Q and K.
+          * ```int``` d_v
+            The dimension of metrix V.
+          * ```float``` dropout
+            Dropout rate for the history encoder.
+        '''
         super(Encoder, self).__init__()
         self.device = device
         self.d_input = d_input
@@ -32,13 +54,24 @@ class Encoder(nn.Module):
 
 
     def forward(self, event_type, event_time, non_pad_mask):
-        """
-        Encode event sequences via masked self-attention.
-        Args:
-        1. event_type: 
-        2. event_time: input time intervals. shape: [batch_size, seq_len]
-        3. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
-        """
+        '''
+        Encode the input continuous-time event stream using Transformer.
+        
+        ### Args
+          * ```torch.tensor``` event_time
+            shape: ```[batch_size, seq_len]```
+            The length of all time intervals between two adjacent events.
+          * ```torch.tensor``` event_type
+            shape: ```[batch_size, seq_len]```
+            Vectors containing the information about each event. 
+          * ```torch.tensor``` non_pad_mask
+            shape: ```[batch_size, seq_len]```
+            Padding mask. 1 refers to the existence of an event, while 0 means a dummy event. 
+        ### Outputs
+            * ```torch.tensor``` output
+              shape: ```[batch_size, seq_len, d_input]```
+              The representation of the original input.
+        '''
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
         seq_len = event_type.shape[-1]
@@ -70,6 +103,17 @@ class RNN_layers(nn.Module):
     recurrent layers on top of the Transformer helps language modeling.
     """
     def __init__(self, d_model, d_rnn, device):
+        '''
+        This function builds a RNN module.
+        
+        ### Args:
+          * ```int``` d_model
+            The dimension of the RNN input.
+          * ```int``` d_rnn
+            The dimension of RNN's hidden state.
+          * ```torch.device``` device
+            The device where we place this RNN module.
+        '''
         super(RNN_layers, self).__init__()
         self.device = device
 
@@ -78,6 +122,19 @@ class RNN_layers(nn.Module):
 
 
     def forward(self, data):
+        '''
+        Use the RNN module to transform the input data.
+        
+        ### Args:
+          * ```torch.tensor``` data
+            shape: [batch_size, seq_len, d_model]
+            The RNN module input.
+        
+        ### Outputs
+          * ```torch.tensor``` out
+            shape: [batch_size, seq_len, d_model]
+            The RNN module output. 
+        '''
         out = self.rnn(data)[0]                                                # [batch_size, seq_len, d_rnn]
 
         out = self.projection(out)                                             # [batch_size, seq_len, d_model]
@@ -85,10 +142,34 @@ class RNN_layers(nn.Module):
 
 
 class TransformerTPP(nn.Module):
-    """ A sequence to sequence model with attention mechanism. """
     def __init__(
             self, num_types, device, d_input, d_rnn, d_hidden,
             n_layers, n_head, d_qk, d_v, dropout):
+        '''
+        This function builds a Transformer encoder.
+        
+        ### Args
+          * ```int``` num_types
+            The number of all possible marks.
+          * ```torch.device``` device
+            The device where we place this transformer encoder.
+          * ```int``` d_input
+            The dimension of the Transformer input tensor.
+          * ```int``` d_rnn
+            The dimension of RNN's hidden state.
+          * ```int``` d_hidden
+              The dimension of the FFN module in the Transformer.  
+          * ```int``` n_layers
+              The number of self attention + FFN layers in the Transformer.  
+          * ```int``` n_head
+            The number of head in self attention.
+          * ```int``` d_qk
+            The dimension of matrices Q and K.
+          * ```int``` d_v
+            The dimension of metrix V.
+          * ```float``` dropout
+            Dropout rate for the history encoder.
+        '''
         super(TransformerTPP, self).__init__()
         self.device = device
         self.num_types = num_types if num_types > 0 else 1
@@ -110,14 +191,24 @@ class TransformerTPP(nn.Module):
 
 
     def forward(self, event_time, event_type, non_pad_mask):
-        """
-        Return intensity functions' values for all events and time and events, if possible, predictions.
-        Args:
-        1. event_time: the length of all time intervals between two adjacent events. shape: [batch_size, seq_len]
-        2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
-        3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
-        """
-
+        '''
+        Encode the input continuous-time event stream using Transformer.
+        
+        ### Args
+          * ```torch.tensor``` event_time
+            shape: ```[batch_size, seq_len]```
+            The length of all time intervals between two adjacent events.
+          * ```torch.tensor``` event_type
+            shape: ```[batch_size, seq_len]```
+            Vectors containing the information about each event. 
+          * ```torch.tensor``` non_pad_mask
+            shape: ```[batch_size, seq_len]```
+            Padding mask. 1 refers to the existence of an event, while 0 means a dummy event. 
+        ### Outputs
+            * ```torch.tensor``` enc_output
+              shape: ```[batch_size, seq_len, d_input]```
+              The representation of the original input.
+        '''
         enc_output = self.encoder(event_type, event_time, non_pad_mask)        # [batch_size, seq_len, d_input]
         enc_output = self.rnn(enc_output)                                      # [batch_size, seq_len, d_input]
 

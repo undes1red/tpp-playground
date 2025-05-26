@@ -92,9 +92,7 @@ def generate_integral_figure(data, opt):
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of intensity integrals over all markers.
-    '''
+    # Part 1: the sum of intensity integrals over all markers.
     expand_integral = data['expand_integral']                                  # [batch_size, seq_len, resolution]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
@@ -141,9 +139,7 @@ def generate_probability_figure(data, opt):
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of probability distributions over all markers.
-    '''
+    # Part 1: the sum of probability distributions over all markers.
     expand_probability = data['expand_probability']                            # [batch_size, seq_len, resolution, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]

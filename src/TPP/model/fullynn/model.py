@@ -285,7 +285,7 @@ class FullyNNModel(BasicModel):
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        mae, f1 = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history,\
+        mae, f1, _ = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history,\
                                                          events_next = events_next, time_next = time_next, 
                                                          mask_next = mask_next_without_dummy, mean = mean, std = std)
                                                                                # 2 * [batch_size, seq_len]
@@ -397,6 +397,9 @@ class FullyNNModel(BasicModel):
               Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
             * ```float``` f1
               macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
+            * ```torch.tensor``` events_probability
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at the real time.
         '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
@@ -406,20 +409,20 @@ class FullyNNModel(BasicModel):
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
 
-        pred_time = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
+        time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)   # [batch_size, seq_len, num_events]
 
         # preparing for multi-event training when needed
-        pred_time.requires_grad = True
-        integral_for_each_event = self.model(events_history, time_history, pred_time, mean = mean, std = std)
+        time_next.requires_grad = True
+        integral_for_each_event = self.model(events_history, time_history, time_next, mean = mean, std = std)
                                                                                # [batch_size, seq_len, num_events]
         # Obtains intensity values.
         intensity_for_each_event = torch.autograd.grad(
             outputs = integral_for_each_event,
-            inputs = pred_time,
+            inputs = time_next,
             grad_outputs = torch.ones_like(integral_for_each_event),
         )[0]
         check_tensor(intensity_for_each_event)                                 # [batch_size, seq_len, num_events]
-        pred_time.requires_grad = False
+        time_next.requires_grad = False
         assert intensity_for_each_event.shape == integral_for_each_event.shape
 
         # Calculate the event loss, macro-F1, and other possible metrics measuring event prediction accuracy.
@@ -434,7 +437,7 @@ class FullyNNModel(BasicModel):
         events_pred_index, events_true = move_from_tensor_to_ndarray(events_pred_index, events_true)
         f1 = f1_score(y_true = events_true, y_pred = events_pred_index, average = 'macro')
 
-        return mae, f1
+        return mae, f1, events_probability
 
 
     def mean_absolute_error_e(self, events_history, events_next, time_history, time_next, mask_next, mean, std,
@@ -615,7 +618,7 @@ class FullyNNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -660,7 +663,7 @@ class FullyNNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -704,7 +707,7 @@ class FullyNNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -754,7 +757,7 @@ class FullyNNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+        argument_check(opt, **{'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
@@ -763,8 +766,8 @@ class FullyNNModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_next, mean, std, opt = opt)
+        mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                       time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, \
                                                           opt.resolution, mean, std)
@@ -815,7 +818,7 @@ class FullyNNModel(BasicModel):
             * ```float``` l1
               The l1 distance between the predicted and real distribution.
         '''
-        argument_check(opt, {'resolution', int})
+        argument_check(opt, **{'resolution', int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -882,11 +885,14 @@ class FullyNNModel(BasicModel):
               The MAE value, which is the time gap between each predicted and real event.
             * ```float``` f1_1
               The f1 value shows the accuracy of the predicted marks.
+            * ```torch.tensor``` dist
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at when the real event happens.
             * ```np.ndarray``` events_next
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -894,12 +900,12 @@ class FullyNNModel(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+        mae, f1_1, dist = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                     time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
-        mae, events_next = move_from_tensor_to_ndarray(mae, events_next)
+        mae, events_next, dist = move_from_tensor_to_ndarray(mae, events_next, dist)
 
-        return mae, f1_1, events_next
+        return mae, f1_1, dist, events_next
     
 
     def get_mae_e_and_f1(self, input_data, opt):
@@ -931,11 +937,17 @@ class FullyNNModel(BasicModel):
             * ```np.adarray``` p_m
               shape: ```[batch_size, seq_len, num_events]```
               The value of calculated p(m).
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              The predicted time for each mark using p(t|m).
+            * ```np.ndarray``` time_next
+              shape: ```[batch_size, seq_len]```
+              Real time of observed events.
             * ```np.ndarray``` events_next
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_e_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_e_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -946,9 +958,10 @@ class FullyNNModel(BasicModel):
         f1_2, top_k, probability_sum, p_m, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std, opt = opt)
         
-        _, maes, probability_sum, p_m, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, events_next)
+        _, maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next \
+          = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next)
 
-        return maes, f1_2, probability_sum, p_m, events_next
+        return maes, f1_2, probability_sum, p_m, tau_pred_all_event, time_next, events_next
 
 
     def get_which_event_first(self, input_data, opt):
@@ -976,7 +989,7 @@ class FullyNNModel(BasicModel):
             * ```float``` f1
               The f1 value shows the accuracy of the predicted marks.
         '''
-        argument_check(opt, {'sample_rate': int, 'which_event_first_step': int})
+        argument_check(opt, **{'sample_rate': int, 'which_event_first_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1042,7 +1055,7 @@ class FullyNNModel(BasicModel):
               shape: ```[batch_size, seq_len, num_events]```
               The value of p(m).
         '''
-        argument_check(opt, {'sample_rate': int, 'sample_substep': int})
+        argument_check(opt, **{'sample_rate': int, 'sample_substep': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]

@@ -95,7 +95,7 @@ class Evaluator:
     
 
     def evaluation_per_seq(self):
-        argument_check(self.opt, {'num_data_samples': int})
+        argument_check(self.opt, **{'num_data_samples': int})
         
         # We will get three records from the training set, test set, and evaluation set, respectively.
         if self.opt.training_data_name is not None:

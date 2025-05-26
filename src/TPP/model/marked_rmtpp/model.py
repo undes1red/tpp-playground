@@ -4,20 +4,59 @@ from sklearn.metrics import f1_score
 from einops import rearrange
 
 from src.TPP.model.utils import predict_event, decide_resolution_inf_and_resolution_between_events, get_f1_and_top_k_acc_in_mae_e
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, conditional_decorator, pack_one_value_to_dict
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, argument_check, pack_one_value_to_dict
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
 from src.TPP.model.marked_rmtpp.plot import *
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling
-from src.TPP.model.lognormmix.sample import sample_time
+from src.TPP.model.marked_rmtpp.sample import sample_time
 
 
 class MRMTPP(BasicModel):
+    '''
+    Another RMTPP implementation. We combine multiple RMTPP modules to estimate the joint distribution p^*(m, t).
+    Reason: the original RMTPP by Du et al. uses a external classifier to predict the mark rather than using p(m, t), which is not the common practice of MTPP.
+    '''
     def __init__(self, device, input_size, hidden_size, history_encoder_layers, dropout, opt, 
                  output_size, limited_history_norm, time_scalar_min = 1e-2, epsilon = 1e-20, sample_rate = 32, 
-                 bisect_early_stop_threshold = 1e-5, survival_loss_during_training = True, mae_step = 32, mae_e_step = 32):
+                 survival_loss_during_training = True, mae_step = 32, mae_e_step = 32):
+        '''
+        This function creates a MRMTPP model.
+        
+        ### Args
+            * ```int``` input_size
+              The dimension of the event representation that is fed into the history encoder.
+            * ```int``` hidden_size
+              The dimension of the history representation.
+            * ```int``` history_encoder_layers
+              How many layer of RNN our model will have?
+            * ```float``` dropout
+              Dropout rate for the history encoder. Only works when history_encoder_layers > 1.
+            * ```int``` output_size
+              The dimension of the intensity representation.
+            * ```bool``` limited_history_norm
+              If true, we will normalize the intensity representation by tanh()
+            * ```float``` time_scalar_min
+              The integral of the intensity function has the reciprocal of the time_scalar. This means the time scalar
+              can not be 0. This parameter sets how small the time_scalar can be.
+            * ```float``` epsilon
+              Shiftting the calculated intensity function and probability distribution by a little bit so that ```torch.log()``` won't fail.
+            * ```namespace``` opt
+              Model arguments.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+            * ```int``` sample_rate
+              This tells how many time samples from the time distribution are needed for one time prediction.
+            * ```int``` mae_step
+              This parameter controls how many samples are generated in one shot when sampling from p(t).
+            * ```int``` mae_e_step
+              This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+              mae_step and mae_e_step are useful when you cannot get sample_rate time samples from time distributions because of insufficient GPU memory.
+            * ```bool``` survival_loss_during_training
+              When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
+        '''
         super(MRMTPP, self).__init__()
         self.device = device
         self.compile_or_not = opt.compile
@@ -30,7 +69,7 @@ class MRMTPP(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = bisect_early_stop_threshold
+        self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
 
         self.model = MRMTPPModule(input_size = input_size, hidden_size = hidden_size, history_encoder_layers = history_encoder_layers, 
@@ -40,29 +79,11 @@ class MRMTPP(BasicModel):
 
     def forward(self, task_name, *args, **kwargs):
         '''
-        The entrance of the FullyNN wrapper.
+        The entrance of the MRMTPP.
         
-        Args:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original time sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original event sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        We use mask to mask out unneeded outputs.
-        * mean          type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * evaluate      type: bool shape: N/A
-                        perform a model training step when evaluate == False
-                        perform a model evaluate step when evaluate == True
-        
-        Outputs:
-        Refers to train() and evaluate()'s documentation for detailed information.\
+        ### Args
+            * ```str``` task_name
+              The name of the executed task.
         '''
         task_mapper = {
             'train': self.train_procedure,
@@ -84,13 +105,39 @@ class MRMTPP(BasicModel):
 
 
     def divide_history_and_next(self, input):
+        '''
+        Extract the history and prediction sequences from the input sequence.
+        
+        ### Args
+            * ```torch.tensor``` input
+              shape: [batch_size, seq_len + 1]
+              The input sequence.
+        
+        ### Outputs
+            * ```torch.tensor``` input_history
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+            * ```torch.tensor``` input_next
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+        '''
         history, next = input[:, :-1].clone(), input[:, 1:].clone()
         return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
 
 
     def remove_dummy_event_from_mask(self, mask):
         '''
-        Remove the probability of the dummy event by mask.
+        Remove the probability of the dummy event from the mask.
+
+        ### Args
+            * ```torch.tensor``` mask
+              shape: [batch_size, seq_len]
+              The input mask tensor.
+        
+        ### Outputs
+            * ```torch.tensor``` mask_without_dummy
+              shape: [batch_size, seq_len]
+              The output mask tensor with the last unmask event in each sequence removed.
         '''
         mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
         for idx, mask_per_seq in enumerate(mask):
@@ -103,6 +150,36 @@ class MRMTPP(BasicModel):
 
 
     def train_procedure(self, events, time, mask, mean, std):
+        '''
+        MRMTPP's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequence for training.
+            * ```torch.tensor``` events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` training_loss
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T included).
+            * ```torch.tensor``` time_loss_without_dummy
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T excluded).
+            * ```torch.tensor``` events_loss_without_dummy
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+            * ```int``` the_number_of_events
+              The number of legit events.
+        '''
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
@@ -134,6 +211,40 @@ class MRMTPP(BasicModel):
 
     @torch.inference_mode()
     def evaluate_procedure(self, events, time, mask, mean, std):
+        '''
+        MRMTPP's forwardpropagation function for evaluation.
+        
+        ### Args
+            * ```torch.tensor``` time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequencalculatesce for training.
+            * ```torch.tensor``` events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` time_loss_time_next_without_dummy
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
+            * ```torch.tensor``` time_loss_survival
+              shape: ```[1]```
+              The sum of the integration \\Lambda^*(m, t) from the last observed event to the end time T.
+            * ```torch.tensor``` events_loss_time_next_without_dummy
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+            * ```int``` the_number_of_events
+              The number of legit events.
+        '''
         events_history, events_next = self.divide_history_and_next(events)     # [batch_size, seq_len]
         time_history, time_next = self.divide_history_and_next(time)           # [batch_size, seq_len]
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
@@ -141,10 +252,9 @@ class MRMTPP(BasicModel):
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
         events_next_without_dummy = events_next * mask_next_without_dummy      # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
-        '''
-        Calculating MAE here.
-        '''
-        mae, f1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_next_without_dummy, mean, std)
+
+        # Calculating MAE here.
+        mae, f1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, time_next, mask_next_without_dummy, mean, std)
                                                                                # [batch_size, seq_len] * 2
         mae = mae.sum().item() / the_number_of_events
         integral_time_next, intensity_time_next, _ = self.model(events_history, time_history, time_next, mean, std)
@@ -164,9 +274,31 @@ class MRMTPP(BasicModel):
 
 
     def loss_function(self, intensity, integral, events_next, mask_next):
-        # temporal point process loss
-        # intensity shape: [batch, seq_length]
-        # so does tensor mask.
+        '''
+        This function computes the NLL loss at each legit event in events_next.
+    
+        ### Args
+            * ```torch.tensor``` intensity
+              shape: ```[batch_size, seq_len, num_events]```
+              intensity values at t_i.
+            * ```torch.tensor``` integral
+              shape: ```[batch_size, seq_len, num_events]```
+              intensity integral from t_{i - 1} to t_{i} (t_0 = 0).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+              The mark of the events that we need to predict.
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              Needed mask to mask out unneeded loss values.
+        
+        ### Outputs
+            * ```torch.tensor``` time_loss, 
+              shape: ```[1]```
+              The sum of NLL loss on all event.
+            * ```torch.tensor``` events_loss
+              shape: ```[1]```
+              The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
+        '''
 
         # Time loss, also the training loss.
         intensity_mask = torch.nn.functional.one_hot(events_next.long(), num_classes = self.num_events)
@@ -191,40 +323,123 @@ class MRMTPP(BasicModel):
         return time_loss, events_loss
 
 
-    def sample_time(self, *args, **kwargs):
-        return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
+    sample_time = sample_time
 
 
     @torch.inference_mode()
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next,
+                                   mean, std, opt = None):
+        '''
+        Called by evaluate_procedure(), debug() and get_mae_and_f1(), this function computed the MAE and macro-F1 of one minibatch.
+
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              The event history \\mathcal{H}_{t_l}. We use these history info and time history for \\(\\lambda^*(m, t)\\) and \\(\\Lambda^*(m, t)\\).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` time_next
+              shape: ```[batch_size, seq_len]```
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              The real-world event sequence. We use events in this sequence to evaluate the predicted events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` mae
+              shape: ```[batch_size, seq_len]```
+              Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
+            * ```float``` f1
+              macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
+            * ```torch.tensor``` mark_distribution
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at the real time.
+        '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                events_history = events_history, time_history = time_history, 
-                                number_of_total_samples = self.sample_rate, step = self.mae_step, mean = mean, std = std)
-                                                                               # [sample_rate, batch_size, seq_len]
+                                     events_history = events_history, time_history = time_history, 
+                                     number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate, 
+                                     step = self.mae_step if opt is None else opt.mae_step, 
+                                     mean = mean, std = std)                   # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
-        _, intensity_at_pred_time, _ = self.model(events_history, time_history, pred_time, mean, std)
+        _, intensity_at_pred_time, _ = self.model(events_history, time_history, time_next, mean, std)
                                                                                # [batch_size, seq_len, num_events]
         predicted_events = predict_event(intensity_at_pred_time)[mask_next == 1]
                                                                                # [batch_size, seq_len]
+        mark_distribution = intensity_at_pred_time / intensity_at_pred_time.sum(dim = -1, keepdim = True)
+                                                                               # [batch_size, seq_len, num_events]
         events_true = events_next[mask_next == 1]                              # [batch_size, seq_len]
 
         predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
-        return mae, f1
+        return mae, f1, mark_distribution
 
 
     @torch.inference_mode()
-    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_next, mean, std, return_mean = True):
+    def mean_absolute_error_e(self, time_history, time_next, events_history, events_next, mask_next,
+                              mean, std, return_mean = True, opt = None):
         '''
-        The precedure resembles the compute_integral_unbiased() but the output of small step MC takes would
-        be recorded as part of the output.
+        Called by debug() and get_mae_e_and_f1(), this function computed the MAE-E and macro-F1 of one minibatch.
+
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` events_next
+              shape: ```[batch_size, seq_len]```
+              The mark of the events that we need to predict.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` time_next
+              shape: ```[batch_size, seq_len, num_events]```
+              When the next event actually happens. 
+            * ```torch.tensor``` mask_next
+              shape: ```[batch_size, seq_len]```
+              Needed mask to mask out unneeded loss values.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` return_mean
+              If true, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next on all events in the minibatch.
+              If false, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next per sequence.
+            * ```namespace``` opt
+              One may bring custom settings into this function through this argument during evaluation. Please refers to
+              debug() and get_mae_e_and_f1() for more information about what custom settings are available.
+        ### Outputs
+            * ```float``` f1
+              macro-F1 value between events predicted and the ground truths.
+            * ```list``` top_k_acc
+              top-1 to top-N accuracy value between events predicted and the ground truths.
+            * ```torch.tensor``` probability_integral_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of p(m) over m.
+            * ```torch.tensor``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of p(m) over the different mark m.
+            * ```torch.tensor``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              Time predicted by p(t|m) over all marks m.
+            * ```torch.tensor``` mae_per_event_with_predict_index_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using real marks.
+            * ```torch.tensor``` mae_per_event_with_predict_index
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
         '''
-        '''
-        set a relatively large number as the infinity and decide resolution based on this large value and
-        the memory_ceiling.
-        '''
+        # set a relatively large number as the infinity and decide resolution based on this large value and
+        # the memory_ceiling.
         inf_val, resolution_inf, resolution_between_events \
             = decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, self.num_events, mean, std)
         time_next_inf = torch.ones_like(time_history, device = self.device) * inf_val
@@ -245,9 +460,11 @@ class MRMTPP(BasicModel):
 
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt',
                                               events_history = events_history, time_history = time_history, 
-                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, max_val = inf_val, 
-                                              number_of_total_samples = self.sample_rate, step = self.mae_e_step, mean = mean, std = std)
-                                                                               # [sample_rate, batch_size, seq_len, num_events]
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events,
+                                              max_val = inf_val, 
+                                              number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate,
+                                              step = self.mae_e_step if opt is None else opt.mae_e_step, 
+                                              mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
         predicted_event_mask = F.one_hot(predicted_events.long(), num_classes = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
         event_next_mask = F.one_hot(events_next.long(), num_classes = self.num_events)
@@ -283,7 +500,7 @@ class MRMTPP(BasicModel):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
 
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+        return f1, top_k_acc, probability_integral_sum, probability_integral_to_inf, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
@@ -291,23 +508,27 @@ class MRMTPP(BasicModel):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
 
-        Args:
-        * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, std)]
-        
-        Outputs:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event timestamp sequence.
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event marks sequence.
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw mask sequence.
-        * mean          type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
+        ### Args
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+              
+        ### Outputs
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event timestamp sequence.
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event marks sequence.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size, seq_len + 1]```
+              Raw mask sequence.
+            * ```int``` mean
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
+            * ```int``` std
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
         '''
         input_time, input_events, _, mask, input_intensity = minibatch[0]
         mean, std = minibatch[1]
@@ -318,14 +539,23 @@ class MRMTPP(BasicModel):
     @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
+        Function prober, used by evaluator to draw plots of the intensity function.
 
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -334,7 +564,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         
         check_tensor(expand_integral)
@@ -346,24 +576,32 @@ class MRMTPP(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_intensity': expand_intensity,
-            'input_intensity': input_intensity
-            }
-        plots = generate_intensity_figure(data, timestamp, opt)
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
         
-        return plots
+        generate_intensity_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_integral(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots of the integral of the intensity function.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -372,7 +610,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
@@ -383,23 +621,32 @@ class MRMTPP(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_integral': expand_integral,
-            'input_intensity': input_intensity
-            }
-        plots = generate_integral_figure(data, timestamp, opt)
-        return plots
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
+        
+        generate_integral_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots of the probability distribution.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -408,7 +655,7 @@ class MRMTPP(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = \
-            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution)
+            self.model.integral_intensity_time_next_2d(events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # 3 * [batch_size, seq_len, resolution, num_events]
 
         check_tensor(expand_integral)
@@ -422,21 +669,36 @@ class MRMTPP(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_probability': expand_probability,
-            'input_intensity': input_intensity
-            }
+            'input_intensity': input_intensity,
+            'timestamp': timestamp}
         
-        generate_probability_figure(data, timestamp, opt)
+        generate_probability_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
-        Args:
-        time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
-        resolution: int
-              How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots for deeper insight of intensity functions and other metrics.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        3. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        4. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -444,37 +706,61 @@ class MRMTPP(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_history, mask_next, mean, std)
+        mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                       time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, \
-                                                          mask_next, opt.resolution)
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_history, mask_next, mean, std, return_mean = False)
+                                                          mask_next, opt.resolution, mean, std)
+        f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
+            = self.mean_absolute_error_e(time_history, time_next, events_history, events_next, mask_next,
+                                         mean, std, return_mean = False, opt = opt)
 
-        '''
-        Append additional info into the data dict.
-        '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
-        data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
-        data['mae_before_event'] = mae
-        data['f1_before_time_pred'] = f1_2
-        data['top_k'] = top_k
-        data['probability_sum'] = probability_sum
-        data['tau_pred_all_event'] = tau_pred_all_event
-        data['maes_after_event_avg'] = maes_avg
-        data['maes_after_event'] = maes
+        # Append additional info into the data dict.
+        data.update({
+            'events_next': events_next,
+            'time_next': time_next,
+            'mask_next': mask_next,
+            'f1_after_time_pred': f1_1,
+            'mae_before_event': mae,
+            'f1_before_time_pred': f1_2,
+            'top_k': top_k,
+            'probability_sum': probability_sum,
+            'tau_pred_all_event': tau_pred_all_event,
+            'maes_after_event_avg': maes_avg,
+            'maes_after_event': maes,
+            'timestamp': timestamp
+        })
 
-        generate_debug_figure(data, timestamp, opt)
+        generate_debug_figure(data, opt)
 
 
-    '''
-    Evaluation over the entire dataset.
-    '''
+    # Evaluation over the entire dataset.
     @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
+        '''
+        Used by evaluator to calculate the average gap between the predicted and real distribution using L1 distance and spearman coefficient.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```float``` spearman
+              The spearman coefficient between the predicted and real distribution.
+            * ```float``` l1
+              The l1 distance between the predicted and real distribution.
+        '''
+        argument_check(opt, **{'resolution', int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
@@ -518,44 +804,138 @@ class MRMTPP(BasicModel):
 
     @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```np.ndarray``` mae
+              shape: ```[batch_size, seq_len]```
+              The MAE value, which is the time gap between each predicted and real event.
+            * ```float``` f1_1
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` p_m
+              shape: ```[batch_size, seq_len]```
+              Predicted mark distribution at when an event is observed.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_next, mean, std)
+        mae, f1_1, dist = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                          time_next, mask_next, mean, std)
                                                                                # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
+        mae, dist = move_from_tensor_to_ndarray(mae, dist)
 
-        return mae, f1_1
+        return mae, f1_1, dist, events_next
 
 
     @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` maes
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
+            * ```float``` f1_2
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` probability_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of calculated p(m) over all marks.
+            * ```np.adarray``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of calculated p(m).
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              The predicted time for each mark using p(t|m).
+            * ```np.ndarray``` time_next
+              shape: ```[batch_size, seq_len]```
+              Real time of observed events.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'sample_rate': int, 'mae_e_step': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
+        f1_2, top_k, probability_sum, p_m, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
-                                         events_next, mask_next, mean, std)
+                                         events_next, mask_next, mean, std, opt = opt)
         
-        _, maes, probability_sum = move_from_tensor_to_ndarray(*maes, probability_sum)
+        _, maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next \
+            = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next)
 
-        return maes, f1_2, probability_sum
+        return maes, f1_2, probability_sum, p_m, tau_pred_all_event, time_next, events_next
 
 
     @torch.inference_mode()
     def get_which_event_first(self, input_data, opt):
         '''
-        Hyperparameters
+        Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
+        Instead of picking the most probable event, we pick the event predicted to happen first.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
+        2. ```int``` which_event_first_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` maes
+              shape: ```[batch_size, seq_len]```
+              The MAE values when we pick predicted times using real marks.
+            * ```float``` f1
+              The f1 value shows the accuracy of the predicted marks.
         '''
-        the_number_of_samples = 10000
-        substep = 500
+        argument_check(opt, **{'sample_rate': int, 'which_event_first_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -578,7 +958,9 @@ class MRMTPP(BasicModel):
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
                                               events_history = events_history, time_history = time_history, mask_history = mask_history,
-                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = the_number_of_samples, step = substep, inf_val = inf_val, 
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events,
+                                              number_of_total_samples = opt.sample_rate, step = opt.which_event_first_step,
+                                              inf_val = inf_val, 
                                               mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
 
         sampled_times_mean = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
@@ -596,12 +978,37 @@ class MRMTPP(BasicModel):
 
 
     def samples_from_et(self, input_data, opt):
+        '''
+        This function samples from the distribution p(m, t) by sampling the mark first from p(m) then time from p(t|m).
+        All samples can later be used to draw the distribution plot.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
+        2. ```int``` sample_substep: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              Predicted time for all marks using p(t|m)
+            * ```np.ndarray``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of p(m).
+        '''
+        argument_check(opt, **{'sample_rate': int, 'sample_substep': int})
+        
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
-        the_number_of_samples = 3000
-        substep = 500
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -624,13 +1031,38 @@ class MRMTPP(BasicModel):
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(sampling_approach = 'its', task = 'mt', 
                                               events_history = events_history, time_history = time_history, mask_history = mask_history,
-                                              p_m = probability_integral_to_inf, resolution = resolution_between_events, number_of_total_samples = the_number_of_samples, step = substep, inf_val = inf_val, 
+                                              p_m = probability_integral_to_inf, resolution = resolution_between_events,
+                                              number_of_total_samples = opt.sample_rate, step = opt.sample_substep,
+                                              inf_val = inf_val, 
                                               mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
 
         return tau_pred_all_event, probability_integral_to_inf
 
 
     def train_step(model, minibatch, device):
+        '''
+        This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss_without_dummy
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+            * ```float``` events_loss_without_dummy
+              The average cross-entropy loss of the event prediction distribution. The value is only for performance measure porpose.
+              The training loss does not and should not include this value.
+        '''
         model.train()
 
         [time, events, score, mask], (mean, std) = minibatch                   # 4 * [batch_size, seq_len + 1]
@@ -647,6 +1079,34 @@ class MRMTPP(BasicModel):
 
 
     def evaluation_step(model, minibatch, device):
+        '''
+        This function unpacks the minibatch, calls the evaluation_procedure() to calculate the metrics.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss_time_next_without_dummy
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` time_loss_survival
+              The average NLL loss of the end event, which is the integral of the intensity function from the last occurred event to the end time.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+            * ```float``` events_loss_time_next_without_dummy
+              The average cross-entropy loss of the event prediction distribution. The value is only for performance measure porpose.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+        '''
         model.eval()
 
         [time, events, score, mask], (mean, std) = minibatch                   # 4 * [batch_size, seq_len + 1]
@@ -662,6 +1122,19 @@ class MRMTPP(BasicModel):
 
 
     def postprocess(input, procedure):
+        '''
+        This function makes some modifications to the output of training_step() and evaluation_step().
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```list```
+              The postprocessed outputs.
+        '''
         def train_postprocess(input):
             '''
             Training process
@@ -678,11 +1151,23 @@ class MRMTPP(BasicModel):
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
 
-
-    format_dict_length = 6
-
     
     def log_print_format(input, procedure):
+        '''
+        This function packs the procedure input into a dict that can be handled by trainer and evaluator for logging.
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```dict``` format_dict
+              format: {..., <variable name>: {'data': <value>, 'num_format': <num_format>, 'suffix': <suffix>}, ...}
+              example: {..., 'memory': {'data': 12.123456, 'num_format': ':2.4f', 'suffix': 'GiB'}, ...}
+              The formated results.
+        '''
         def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
@@ -701,15 +1186,34 @@ class MRMTPP(BasicModel):
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
+
+    '''
+    The maximum length of the format_dict in different procedures.
+    '''
+    format_dict_length = 6
     
 
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
+        This function helps the trainer to pick the best checkpoint based on several metrics.
+
+        ### Args
+            * ```dict``` evaluation_report_format_dict
+            * ```dict``` test_report_format_dict
+              The formated output of training_step() and evaluation_step().
+
+        ### Outputs:
+            * ```list```
+              The picked metrics used for model select.
+            * ```list```
+              The name of these metrics.
         '''
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
 
+    '''
+    metric number is the length of the output of choose_metric
+    '''
     metric_number = 2 # metric number is the length of the output of choose_metric

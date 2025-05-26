@@ -534,17 +534,17 @@ class IFNModel(BasicModel):
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
 
-        time_next_pred = repeat(pred_time, 'b s -> b s ne', ne = self.num_events)
+        time_next = repeat(time_next, 'b s -> b s ne', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events]
-        time_next_pred.requires_grad = True                                    # [batch_size, seq_len, num_events]
-        probability_integral_from_pred_to_infinite = self.model('default_forward', events_history, time_history, time_next_pred, mean = mean, std = std)
+        time_next.requires_grad = True                                    # [batch_size, seq_len, num_events]
+        probability_integral_from_pred_to_infinite = self.model('default_forward', events_history, time_history, time_next, mean = mean, std = std)
                                                                                # [batch_size, seq_len, num_events]
         probability_for_each_event = - torch.autograd.grad(
             outputs = probability_integral_from_pred_to_infinite,
-            inputs = time_next_pred,
+            inputs = time_next,
             grad_outputs = torch.ones_like(probability_integral_from_pred_to_infinite)
         )[0]                                                                   # [batch_size, seq_len, num_events]
-        time_next_pred.requires_grad = False                                   # [batch_size, seq_len, num_events]
+        time_next.requires_grad = False                                   # [batch_size, seq_len, num_events]
         
         events_pred_index = predict_event(probability_for_each_event)[mask_next == 1]
         distribution_at_pred_time = probability_for_each_event / probability_for_each_event.sum(dim = -1, keepdim = True)
@@ -847,7 +847,7 @@ class IFNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -891,7 +891,7 @@ class IFNModel(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+        argument_check(opt, **{'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
@@ -903,7 +903,7 @@ class IFNModel(BasicModel):
         mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                        time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, opt.resolution, mean, std, mask_next)
+        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution, mean, std)
 
         f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std,
@@ -925,7 +925,7 @@ class IFNModel(BasicModel):
 
         sampled_data_event_time, sampled_timestamp_event_time \
             = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, opt.resolution, mean, std, sampled_mask_next_event_time)
+                                              sampled_time_next_event_time, sampled_mask_next_event_time, opt.resolution, mean, std)
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
@@ -942,7 +942,7 @@ class IFNModel(BasicModel):
 
         sampled_data_time_event, sampled_timestamp_time_event \
             = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, opt.resolution, mean, std, sampled_mask_next_time_event)
+                                              sampled_time_next_time_event, sampled_mask_next_time_event, opt.resolution, mean, std)
     
         # Append additional info into the data dict.
         data.update({
@@ -1001,7 +1001,7 @@ class IFNModel(BasicModel):
             * ```float``` l1
               The l1 distance between the predicted and real distribution.
         '''
-        argument_check(opt, {'resolution', int})
+        argument_check(opt, **{'resolution', int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1063,11 +1063,14 @@ class IFNModel(BasicModel):
               The MAE value, which is the time gap between each predicted and real event.
             * ```float``` f1_1
               The f1 value shows the accuracy of the predicted marks.
+            * ```torch.tensor``` dist
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at when the real event happens.
             * ```np.ndarray``` events_next
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1122,7 +1125,7 @@ class IFNModel(BasicModel):
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_e_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_e_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1166,7 +1169,7 @@ class IFNModel(BasicModel):
             * ```np.ndarray``` events_next
               Real marks of the next event.
         '''
-        argument_check(opt, {'sample_rate': int, 'sample_step': int})
+        argument_check(opt, **{'sample_rate': int, 'sample_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1208,7 +1211,7 @@ class IFNModel(BasicModel):
             * ```float``` f1
               The f1 value shows the accuracy of the predicted marks.
         '''
-        argument_check(opt, {'sample_rate': int, 'which_event_first_step': int})
+        argument_check(opt, **{'sample_rate': int, 'which_event_first_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -1269,7 +1272,7 @@ class IFNModel(BasicModel):
               shape: ```[batch_size, seq_len, num_events]```
               The value of p(m).
         '''
-        argument_check(opt, {'sample_rate': int, 'sample_substep': int})
+        argument_check(opt, **{'sample_rate': int, 'sample_substep': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]

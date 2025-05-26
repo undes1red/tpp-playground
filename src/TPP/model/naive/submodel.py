@@ -14,10 +14,14 @@ import src.TPP.model.naive.naive_tpp as naive_tpp
 class NaiveModule(nn.Module):
     def __init__(self, device, num_events, process_name):
         '''
-        This is the Naive Module.
-        In this module, we set up some simple MTPPs, like the homogenous possion, hawkes process, and self correct process to learn
-        the MTPP from the dataset.
-        They are some simple baselines.
+        This function creates a NaiveMTPP model.
+        
+        ### Args
+            * ```str``` process_name
+              Which classic MTPP process do you want?
+              Available classic MTPPs: 1. Poisson process 2. Hawkes process.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
         '''
         super(NaiveModule, self).__init__()
         self.num_events = num_events
@@ -26,6 +30,27 @@ class NaiveModule(nn.Module):
 
 
     def forward(self, time_history, time_next, events_history):
+        '''
+        SAHP's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+        '''
         integral, intensity = self.naive_tpp(events_history, time_history, time_next)
                                                                                # [batch_size, seq_len, num_events]
 
@@ -33,6 +58,34 @@ class NaiveModule(nn.Module):
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` expanded_integral_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_intensity_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_time
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
 
@@ -44,6 +97,35 @@ class NaiveModule(nn.Module):
 
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` expanded_integral_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_intensity_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_time
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, num_events, integration_sample_rate]
         
@@ -55,6 +137,34 @@ class NaiveModule(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_next
+              shape: ```[..., batch_size, seq_len]```
+              Tell which event in *_next is the real event so should be considered in metric calculation.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```dict``` data
+              Probed data used for plot drawing.
+            * ```torch.tensor``` expanded_time
+              shape: ```[batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [batch_size, seq_len, integration_sample_rate]
 

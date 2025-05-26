@@ -256,7 +256,6 @@ class FullyNN(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         '''
-
         # Prepare the history embedding.
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 

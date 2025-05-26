@@ -9,8 +9,30 @@ from src.toolbox.metrics import L1_distance_across_events
 
 
 class MRMTPPModule(nn.Module):
-    def __init__(self, input_size, hidden_size, history_encoder_layers, dropout, 
-                 num_events, output_size, limited_history_norm, time_scalar_min, device):
+    def __init__(self, num_events, input_size, hidden_size, history_encoder_layers, dropout, 
+                 output_size, limited_history_norm, time_scalar_min, device):
+        '''
+        This function creates a MRMTPP model.
+        
+        ### Args
+            * ```int``` input_size
+              The dimension of the event representation that is fed into the history encoder.
+            * ```int``` hidden_size
+              The dimension of the history representation.
+            * ```int``` history_encoder_layers
+              How many layer of RNN our model will have?
+            * ```float``` dropout
+              Dropout rate for the history encoder. Only works when history_encoder_layers > 1.
+            * ```int``` output_size
+              The dimension of the intensity representation.
+            * ```bool``` limited_history_norm
+              If true, we will normalize the intensity representation by tanh()
+            * ```float``` time_scalar_min
+              The integral of the intensity function has the reciprocal of the time_scalar. This means the time scalar
+              can not be 0. This parameter sets how small the time_scalar can be.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+        '''
         super(MRMTPPModule, self).__init__()
         self.device = device
         self.hidden_size = hidden_size
@@ -35,16 +57,54 @@ class MRMTPPModule(nn.Module):
 
 
     def clamp_time_scalar(self, time_scalar):
-        time_scalar_sign = (time_scalar >= 0).int() - (time_scalar < 0).int()  # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
+        '''
+        This function clamp the time_scalar so that the integral won't be affected by divided-by-zero issue.
+        
+        ### Args
+            * ```torch.tensor``` time_scalar
+              shape: [batch_size, seq_len, num_events]
+              The original time_scalar.
+              
+        ### Outputs
+            * ```torch.tensor``` time_scalar
+              shape: [batch_size, seq_len, num_events]
+              The clamped time_scalar with gradients attached.
+        '''
+        time_scalar_sign = (time_scalar >= 0).int() - (time_scalar < 0).int()  # [batch_size, seq_len, num_events]
         shifted_time_scalar_abs_value = torch.abs(time_scalar).clamp(min = self.time_scalar_min)
-                                                                               # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
-        time_scalar = shifted_time_scalar_abs_value * time_scalar_sign         # [batch_size, seq_len, num_events] if self.event_toggle else [batch_size, seq_len, 1]
+                                                                               # [batch_size, seq_len, num_events]
+        time_scalar = shifted_time_scalar_abs_value * time_scalar_sign         # [batch_size, seq_len, num_events]
         return time_scalar
 
 
     def forward(self, events_history, time_history, time_next, mean, std, custom_events_history = False):
         '''
-        This implementation is in fact an advanced RMTPP with history-event-related time scaler and base intensity.
+        CTLSTM's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` custom_events_history
+              when true, the events_history will be the mark embedding of historical events.
+        ### Outputs
+            * ```torch.tensor``` integral_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+            * ```torch.tensor``` history_part
+              shape: ```[batch_size, seq_len, num_events]```
         '''
         time_history = (time_history - mean) / std
         time_history = time_history.unsqueeze(dim = -1)                        # [batch_size, seq_len, 1]
@@ -94,6 +154,37 @@ class MRMTPPModule(nn.Module):
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, resolution, mean, std):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         time_history = ((time_history - mean) / std).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
@@ -135,7 +226,36 @@ class MRMTPPModule(nn.Module):
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, resolution, mean, std):
         '''
-        Shape of time_next: [..., batch_size, seq_len, num_events]
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```torch.tensor``` integral_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
         '''
         time_history = ((time_history - mean) / std).unsqueeze(dim = -1)
 
@@ -177,6 +297,37 @@ class MRMTPPModule(nn.Module):
 
 
     def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, std):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_next
+              shape: ```[..., batch_size, seq_len]```
+              Tell which event in *_next is the real event so should be considered in metric calculation.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```dict``` data
+              Probed data used for plot drawing.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         time_history = ((time_history - mean) / std).unsqueeze(dim = -1)
 
         time_vec = self.time_embedding(time_history)                           # [batch_size, seq_len, input_size]
@@ -212,9 +363,7 @@ class MRMTPPModule(nn.Module):
         intensity = rearrange(intensity_events, 'b s ne r -> b s r ne')        # [batch_size, seq_len, resolution, num_events]
         integral = rearrange(integral_events, 'b s ne r -> b s r ne')          # [batch_size, seq_len, resolution, num_events]
 
-        '''
-        Here we start constructing data dict.
-        '''
+        # Here we start constructing data dict.
         data = {}
         data['expand_intensity_for_each_event'] = intensity                    # [batch_size, seq_len, resolution, num_events]
         data['expand_integral_for_each_event'] = integral                      # [batch_size, seq_len, resolution, num_events]
@@ -240,7 +389,7 @@ class MRMTPPModule(nn.Module):
                     spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
 
             # r: pearson coefficient
-            pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowstd = False)
+            pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * resolution], rowvar = False)
             if self.num_events == 1:
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             

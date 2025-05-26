@@ -15,7 +15,37 @@ from src.TPP.model.thp.transformers import TransformerTPP
 
 class THP(nn.Module):
     def __init__(self, device, num_events, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk,\
-                 d_v, dropout, beta, integration_sample_rate, history_time_offset):
+                 d_v, dropout, integration_sample_rate, history_time_offset):
+        '''
+        This function creates a SAHP model.
+        
+        ### Args
+            * ```int``` d_input
+            The dimension of the Transformer input tensor.
+            * ```int``` d_hidden
+              The dimension of the FFN module in the Transformer.  
+            * ```int``` n_layers
+              The number of self attention + FFN layers in the Transformer.  
+            * ```int``` n_head
+              The number of head in self attention.
+            * ```int``` d_qk
+              The dimension of matrices Q and K.
+            * ```int``` d_v
+              The dimension of metrix V.
+            * ```float``` dropout
+              Dropout rate for the history encoder.
+            * ```int``` d_rnn
+              The dimension of RNN's hidden state.
+            * ```float``` history_time_offset
+              THP scales the input time by dividing it with the time interval from start to the latest event in history.
+              This can cause issues when there is no event in history-the input time will be divided by 0.
+              So, we add this offset to the time interval to avoid this divided-by-0 case.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        '''
         super(THP, self).__init__()
         self.device = device
         self.num_events = num_events
@@ -28,8 +58,8 @@ class THP(nn.Module):
         nn.init.normal_(self.alpha)
 
         # parameter for the softplus function
-        self.beta = nn.Parameter(torch.ones((self.num_events), dtype = torch.float32, \
-                                  device = self.device, requires_grad = True) * beta)
+        self.beta = nn.Parameter(torch.zeros((self.num_events), dtype = torch.float32, \
+                                 device = self.device, requires_grad = True))
         nn.init.normal_(self.beta)
 
         # convert hidden vectors into valid intensity function values.
@@ -43,12 +73,26 @@ class THP(nn.Module):
 
     def extract_history_embeddings(self, time, events, mask):
         '''
-        Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
-        3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
+        Extract history from the provided event sequence and encode it into history representations.
+        
+        ### Args
+            * ```torch.tensor``` time
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` events
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask
+              shape: ```[..., batch_size, seq_len]```
+              Used to mask out padding events from the attention map.
+        ### Outputs
+            * ```torch.tensor``` integral_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
         '''
-
         time_history, _ = self.divide_history_and_next(time)                   # [batch_size, seq_len]
         events_history, _ = self.divide_history_and_next(events)               # [batch_size, seq_len]
         mask_history, _ = self.divide_history_and_next(mask)                   # [batch_size, seq_len]
@@ -59,6 +103,30 @@ class THP(nn.Module):
 
 
     def forward(self, time_history, time_next, events_history, mask_history):
+        '''
+        THP's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_history
+              shape: ```[..., batch_size, seq_len]```
+              Used to mask out padding events from the attention map.
+        ### Outputs
+            * ```torch.tensor``` integral_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+        '''
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
@@ -95,6 +163,41 @@ class THP(nn.Module):
 
 
     def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, time_next_start = None):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_history
+              shape: ```[..., batch_size, seq_len]```
+              Used to mask out padding events from the attention map.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```torch,tensor``` time_next_start
+              shape: ```[..., batch_size, seq_len]``` if not None
+              When given, this function computes the integral between [time_next_start, t_i]. time_next_start are expected to be non-negative.
+              This affects the integral, intensity, and timestamp.
+        ### Outputs
+            * ```torch.tensor``` expanded_integral_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_intensity_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_time
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         if time_next_start == None:
             time_next_start = torch.zeros_like(time_next)                      # [..., batch_size, seq_len]
 
@@ -124,6 +227,38 @@ class THP(nn.Module):
         
 
     def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_history
+              shape: ```[..., batch_size, seq_len]```
+              Used to mask out padding events from the attention map.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` expanded_integral_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_intensity_all_events
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` expanded_time
+              shape: ```[..., batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
 
@@ -156,6 +291,37 @@ class THP(nn.Module):
     
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_history
+              shape: ```[..., batch_size, seq_len]```
+              Used to mask out padding events from the attention map.
+            * ```torch.tensor``` mask_next
+              shape: ```[..., batch_size, seq_len]```
+              Tell which event in *_next is the real event so should be considered in metric calculation.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```dict``` data
+              Probed data used for plot drawing.
+            * ```torch.tensor``` expanded_time
+              shape: ```[batch_size, seq_len, resolution]```
+              The value of sampled times.
+        '''
         history = self.history_encoder(time_history, events_history, mask_history)
                                                                                # [batch_size, seq_len, d_input]
         history = repeat(history, 'b s di -> b s 1 di')                        # [batch_size, seq_len, 1, d_input]

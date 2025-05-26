@@ -86,7 +86,7 @@ if __name__ == '__main__':
     required_class = {'a': float, 'b': int}
     required_arguments = ['a', ]
     try:
-        argument_check(argument_dict, *required_arguments, **required_class)
+        argument_check(sn, **required_class)
     except Exception as e:
         print(e)
         
@@ -96,7 +96,7 @@ if __name__ == '__main__':
     sn.a = 1
     sn.b = 2
     required_arguments = ['a', 'b']
-    argument_check(argument_dict, *required_arguments)
+    argument_check(sn, *required_arguments)
 
     # Test 8
     # Should error out.
@@ -105,6 +105,6 @@ if __name__ == '__main__':
     sn.b = 2
     required_arguments = ['a', 'b', 'c']
     try:
-        argument_check(argument_dict, *required_arguments)
+        argument_check(sn, *required_arguments)
     except Exception as e:
         print(e)

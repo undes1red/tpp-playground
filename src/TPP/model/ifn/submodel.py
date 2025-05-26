@@ -215,7 +215,6 @@ class IFN(nn.Module):
               shape: ```# [number_of_sampled_sequences, num_events]```
               The value of \\Gamma^*(m, t) on [t_{i-1}, t_i).
         '''
-
         # Obtain historical embeddings.
         sampled_time_history = (sampled_time_history - mean) / std             # [number_of_sampled_sequences, sampled_seq_len]
 
@@ -395,7 +394,7 @@ class IFN(nn.Module):
         return self.events(input_event)                                        # [batch_size, seq_len, d_history]
 
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, std, ):
+    def model_probe_function(self, events_history, time_history, time_next, mask_next, resolution, mean, std):
         '''
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.

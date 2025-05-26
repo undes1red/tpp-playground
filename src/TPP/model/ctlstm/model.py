@@ -27,7 +27,7 @@ class CTLSTMWrapper(BasicModel):
         ### Args
             * ```int``` d_mark_embedding
               The dimension of the mark embeddings.
-            * ```str``` history_module
+            * ```str``` history_module_name
               Which RNN model do we use to encode the history? Default is LSTM. We don't recommend to change it to something else.
             * ```int``` d_hidden
               The dimension of the history representation.
@@ -37,8 +37,6 @@ class CTLSTMWrapper(BasicModel):
               How many layer of RNN our model will have?
             * ```int``` d_input
               The dimension of the cumulative hazard function network.
-            * ```int``` mlp_layers
-              The number of layers in the cumulative hazard function network.
             * ```namespace``` opt
               Model arguments.
             * ```torch.device``` device
@@ -260,10 +258,10 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        mae, f1 = self.mean_absolute_error_and_f1(time_history = time_history, time_next = time_next, \
-                                                  events_history = events_history, events_next = events_next, \
-                                                  mask_next = mask_next_without_dummy, \
-                                                  mean = mean, std = std)      # [batch_size, seq_len] * 2
+        mae, f1, _ = self.mean_absolute_error_and_f1(time_history = time_history, time_next = time_next, \
+                                                     events_history = events_history, events_next = events_next, \
+                                                     mask_next = mask_next_without_dummy, \
+                                                     mean = mean, std = std)   # [batch_size, seq_len] * 2
         mae = mae.sum().item() / the_number_of_events
 
         integral_all_events_time_next, intensity_all_events_time_next \
@@ -312,18 +310,15 @@ class CTLSTMWrapper(BasicModel):
               The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
         '''
         type_mask = F.one_hot(events_next, num_classes = self.num_events)      # [batch_size, seq_len, num_events]
-        '''
-        MTPP loss function
-        '''
+
+        # MTPP loss function
         selected_intensity = (intensity_all_events * type_mask).sum(dim = -1)  # [batch_size, seq_len]
         log_intensity = torch.log(selected_intensity + self.epsilon)           # [batch_size, seq_len]
         nll = -log_intensity + integral_all_events.sum(dim = -1)               # [batch_size, seq_len]
     
         mtpp_loss = torch.sum(nll * mask_next)
 
-        '''
-        Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
-        '''
+        # Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
         events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
                                                                                # [batch_size, seq_len, num_events]
         events_prediction_probability = F.softmax(events_prediction_probability, dim = -1)
@@ -344,7 +339,7 @@ class CTLSTMWrapper(BasicModel):
 
     @torch.inference_mode()
     def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, 
-                                   mean, std, output_mark_distribution = False, opt = None):
+                                   mean, std, opt = None):
         '''
         Called by evaluate_procedure(), debug() and get_mae_and_f1(), this function computed the MAE and macro-F1 of one minibatch.
 
@@ -371,6 +366,9 @@ class CTLSTMWrapper(BasicModel):
               Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
             * ```float``` f1
               macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
+            * ```torch.tensor``` mark_distribution
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at the real time.
         '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                      events_history = events_history, time_history = time_history,
@@ -379,20 +377,16 @@ class CTLSTMWrapper(BasicModel):
                                      mean = mean, std = std)                   # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
-        _, intensity_all_events = self.model(time_history, pred_time, events_history)
+        _, intensity_all_events = self.model(time_history, time_next, events_history)
                                                                                # [batch_size, seq_len, num_events]
-        if output_mark_distribution:
-            mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
+        mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, num_events]
         predicted_events = torch.argmax(intensity_all_events, dim = -1)[mask_next == 1]
         events_true = events_next[mask_next == 1]
         predicted_events, events_true = move_from_tensor_to_ndarray(predicted_events, events_true)
         f1 = f1_score(y_pred = predicted_events, y_true = events_true, average = 'macro')
 
-        if output_mark_distribution:
-            return mae, f1, mark_distribution
-        else:
-            return mae, f1
+        return mae, f1, mark_distribution
 
 
     @torch.inference_mode()
@@ -476,6 +470,7 @@ class CTLSTMWrapper(BasicModel):
                                               p_m = probability_integral_to_inf, resolution = resolution_between_events,
                                               number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate,
                                               step = self.mae_e_step if opt is None else opt.mae_e_step, 
+                                              inf_val = inf_val, 
                                               mean = mean, std = std)          # [sample_rate, batch_size, seq_len, num_events]
         tau_pred_all_event = tau_pred_all_event.mean(dim = 0)                  # [batch_size, seq_len, num_events]
  
@@ -568,7 +563,7 @@ class CTLSTMWrapper(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -614,7 +609,7 @@ class CTLSTMWrapper(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -638,8 +633,7 @@ class CTLSTMWrapper(BasicModel):
             'input_intensity': input_intensity,
             'timestamp': timestamp}
         
-        plots = generate_integral_figure(data, opt)
-        return plots
+        generate_integral_figure(data, opt)
 
 
     @torch.inference_mode()
@@ -660,7 +654,7 @@ class CTLSTMWrapper(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int})
+        argument_check(opt, **{'resolution': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         
@@ -712,7 +706,7 @@ class CTLSTMWrapper(BasicModel):
             * ```namespace``` opt
               plot and model configs
         '''
-        argument_check(opt, {'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+        argument_check(opt, **{'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
@@ -721,8 +715,8 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                    time_next, mask_next, mean, std, opt = opt)
+        mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                       time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
         data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution)
         f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
@@ -773,7 +767,7 @@ class CTLSTMWrapper(BasicModel):
             * ```float``` l1
               The l1 distance between the predicted and real distribution.
         '''
-        argument_check(opt, {'resolution', int})
+        argument_check(opt, **{'resolution', int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -849,7 +843,7 @@ class CTLSTMWrapper(BasicModel):
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -858,8 +852,7 @@ class CTLSTMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
 
         mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                         time_next, mask_next, mean, std, \
-                                                         output_mark_distribution = True, opt = opt)
+                                                         time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
         mae, events_next, p_m = move_from_tensor_to_ndarray(mae, events_next, p_m)
 
@@ -897,11 +890,17 @@ class CTLSTMWrapper(BasicModel):
             * ```np.adarray``` p_m
               shape: ```[batch_size, seq_len, num_events]```
               The value of calculated p(m).
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              The predicted time for each mark using p(t|m).
+            * ```np.ndarray``` time_next
+              shape: ```[batch_size, seq_len]```
+              Real time of observed events.
             * ```np.ndarray``` events_next
               shape: ```[batch_size, seq_len]```
               Real marks of observed events.
         '''
-        argument_check(opt, {'sample_rate': int, 'mae_e_step': int})
+        argument_check(opt, **{'sample_rate': int, 'mae_e_step': int})
         
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
@@ -913,9 +912,10 @@ class CTLSTMWrapper(BasicModel):
             = self.mean_absolute_error_e(time_history, time_next, events_history, \
                                          events_next, mask_next, mean, std, opt = opt)
         
-        _, maes, probability_sum, p_m, events_next = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, events_next)
+        _, maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next \
+            = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next)
 
-        return maes, f1_2, probability_sum, p_m, events_next
+        return maes, f1_2, probability_sum, p_m, tau_pred_all_event, time_next, events_next
 
 
     def convert_missing_mask_to_gap_mask(self, missing_mask):

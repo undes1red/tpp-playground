@@ -6,19 +6,51 @@ from einops import repeat, reduce, rearrange, pack, unpack
 
 class Poisson(nn.Module):
     def __init__(self, num_events, device):
+        '''
+        This function creates a poisson-process-based MTPP model.
+        
+        Poisson process:
+        \\lambda^*(m, t) = c_m
+        \\Lambda(t) = c_m * (t - t_l)
+
+        ### Args
+            * ```int``` num_events
+              The number of all possible marks.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+        '''
         super(Poisson, self).__init__()
 
         self.device = device
         self.num_events = num_events
 
-        '''
-        \\the learned intensity function
-        '''
+        # the learned intensity function
         self.intensities = nn.Parameter(torch.ones(num_events, device = self.device))
         torch.nn.init.normal_(self.intensities)
 
 
     def forward(self, events_history, time_history, time_next):
+        '''
+        The forwardpropagation function of the Poisson process.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+        '''
         # Get the integral.
         integral = time_next.unsqueeze(dim = -1) * F.softplus(self.intensities)# [..., batch_size, seq_len, num_events]
 
@@ -29,6 +61,31 @@ class Poisson(nn.Module):
 
 
     def forward_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, integration_sample_rate]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+        '''
         # confirm that the last dimension is integration_sample_rate
         assert time_next.shape[-1] == integration_sample_rate
 
@@ -42,6 +99,32 @@ class Poisson(nn.Module):
     
 
     def forward_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, integration_sample_rate, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+        '''
         # confirm that the last dimension is integration_sample_rate
         assert time_next.shape[-1] == integration_sample_rate
 
@@ -55,15 +138,30 @@ class Poisson(nn.Module):
     
 
     def get_model_parameter(self):
+        '''
+        Report the learned c_m.
+        
+        ### Outputs
+            * ```dict``` integral
+              Learned parameters that are used the intensity function.
+        '''
         return {'mu': F.softplus(self.intensities)}
 
 
 class Hawkes(nn.Module):
     def __init__(self, num_events, device):
         '''
+        This function creates a hawkes-process-based MTPP model.
+
         Hawkes process:
         \\lambda(m, t) = \\mu + \\sum_{e = (m_i, t_i) \\in \\history}{a_{m_i, m} * b_m * exp(-b_m(t - t_i))}.
         \\Lambda(t) = \\mu * (t - t_l) + \\sum_{e = (m_i, t_i) \\in \\history}{a_{m_i, m} - a_{m_i, m} * exp(-b_m(t - t_l))}. When t = t_l, \\Lambda(t) = 0.
+        
+        ### Args
+            * ```int``` num_events
+              The number of all possible marks.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
         '''
         super(Hawkes, self).__init__()
         self.device = device
@@ -86,11 +184,30 @@ class Hawkes(nn.Module):
         
 
     def forward(self, events_history, time_history, time_next):
+        '''
+        The forwardpropagation function of the Poisson process.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+        '''
         batch_size, seq_len = events_history.shape
 
-        '''
-        Forward function of the hawkes process.
-        '''
+        # Forward function of the hawkes process.
         base_intensity = F.softplus(self.base_intensity)
         transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
                                                                                # [..., num_events + 1, num_events + 1]
@@ -161,15 +278,38 @@ class Hawkes(nn.Module):
 
 
     def forward_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, integration_sample_rate]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+        '''
         # confirm that the last dimension is integration_sample_rate
         assert time_next.shape[-1] == integration_sample_rate
         # shape of time_next: [batch_size, seq_len, integration_sample_rate]
 
         batch_size, seq_len = events_history.shape
 
-        '''
-        Forward function of the hawkes process.
-        '''
+        # Forward function of the hawkes process.
         base_intensity = F.softplus(self.base_intensity)
         transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
                                                                                # [..., num_events + 1, num_events + 1]
@@ -231,15 +371,39 @@ class Hawkes(nn.Module):
     
 
     def forward_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate):
+        '''
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len, integration_sample_rate, num_events]```
+              Guessed or real time when the next event will happen.
+            * ```int``` integration_sample_rate
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+        ### Outputs
+            * ```torch.tensor``` integral
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\Lambda^*(m, t) at sampled times.
+            * ```torch.tensor``` intensity
+              shape: ```[..., batch_size, seq_len, resolution, num_events]```
+              The value of \\lambda^*(m, t) at sampled times.
+        '''
         # confirm that the last dimension is integration_sample_rate
         assert time_next.shape[-1] == integration_sample_rate
         # shape of time_next: [..., batch_size, seq_len, num_events, integration_sample_rate]
 
         batch_size, seq_len = events_history.shape
 
-        '''
-        Forward function of the hawkes process.
-        '''
+        # Forward function of the hawkes process.
         base_intensity = F.softplus(self.base_intensity)
         transition_matrix = F.softplus(F.pad(self.transition_matrix, (0, 1, 0, 1), 'constant', -torch.inf)).T
                                                                                # [..., num_events + 1, num_events + 1]
@@ -302,6 +466,13 @@ class Hawkes(nn.Module):
 
 
     def get_model_parameter(self):
+        '''
+        Report the learned \\mu, \\alpha matrix, and \\beta.
+        
+        ### Outputs
+            * ```dict``` integral
+              Learned parameters that are used the intensity function.
+        '''
         return {'mu': F.softplus(self.base_intensity),
                 'alpha': F.softplus(self.transition_matrix),
                 'beta': F.softplus(self.time_scaling_factors)}
