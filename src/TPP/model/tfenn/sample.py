@@ -2,19 +2,91 @@ import torch
 
 from einops import rearrange, reduce, repeat
 
-from src.TPP.model.utils import step_split, median_prediction
 from src.toolbox.integration import approximate_integration
+from src.toolbox.misc import conditional_compile_class_method
+
+from src.TPP.model.utils import step_split, median_prediction, thinning_sampling
 from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 
 
+@conditional_compile_class_method
 def sample_time(self, sampling_approach = 'its', task = 'mt', *args, **kwargs):
     '''
-    number_of_total_samples: how many samples do we need to predict one next event.
-    step: we output "step" samples to reduce memory comsumption during inference.
-    sampling_approach: 'its' for invert transform sampling and 'thinning' for thinning algorithm.
-    task: 'mt' for mark first time second, 'tm' for time first mark second.
-    '''
+    Sample time from the learned MTPP model using p(t) or p(t|m) using different methods.
 
+    ### Args
+        * ```str``` sampling_approach
+          Use which method to sample from a distribution.
+          its      -> Inverse Transform Sampling.
+          thinning -> Thinning algorithm.
+        * ```str``` task
+          Use which distribution to sample time, p(t) or p(t|m)?
+          mt -> p(t|m)
+          tm -> p(t)
+        * ```bool``` autoregressive
+          If true, we autoregressively generate a sequence using the learned MTPP model.
+          If false, we sample one next event given a history sequence.
+    
+    ### Args required when sampling from p(t|m) using its.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` p_m
+          shape: ```[batch_size, seq_len, num_events]```
+          The value of p(m) over the different mark m.
+        * ```int``` resolution
+          The number of interpolated points in a time interval between two adjoint events for integration estimation.
+          The number of interpolated points counts the start and end point of the interval.
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
+
+    ### Args required when sampling from p(t) using its.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
+
+    ### Args required when sampling from p(t|m) using thinning.
+        Do not exist since it is impossible for now to sample from p(t|m) using thinning.
+    
+    ### Args required when sampling from p(t) using thinning.
+        * ```torch.tensor``` events_history
+          shape: ```[batch_size, seq_len]```
+          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+        * ```torch.tensor``` time_history
+          shape: ```[batch_size, seq_len]```
+          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+        * ```int``` number_of_total_samples
+          This tells how many time samples are generated from the time distribution.
+        * ```int``` step
+          This parameter controls how many samples are generated in one shot when sampling from p(t|m).
+        * ```float``` inf_val
+          the upper limit of the bisection method.
+        * ```float``` mean
+        * ```float``` std
+          Used for input time scaling.
+    '''
     dict_sampling_apparoch = {
         'its': sampling_by_its,
         'thinning': sampling_by_thinning
@@ -55,7 +127,7 @@ def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m
                                                                             # [sample_rate, batch_size, seq_len, resolution, num_events]
         
         p_dist = intensity_all_events * torch.exp(-integral_all_events)    # [sample_rate, batch_size, seq_len, resolution, num_events]
-        probability = approximate_integration(p_dist, time_interval, dim = -2, only_integral = True)
+        probability = approximate_integration(p_dist, time_interval, dim = -2, only_integral = True, func_val_x_having_same_shape = True)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
         return probability
 
@@ -75,9 +147,9 @@ def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m
         torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
         tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                            bisect_target, probability_threshold, r_val = inf_val))
+                                          bisect_target, probability_threshold, r_val = inf_val))
                                                                             # [sample_rate, batch_size, seq_len, num_events]
-    tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
+    tau_pred = torch.cat(tau_pred, dim = 0)                                 # [sample_rate, batch_size, seq_len, num_events]
 
     return tau_pred
                                                                                 

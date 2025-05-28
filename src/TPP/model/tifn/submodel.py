@@ -9,15 +9,48 @@ from src.toolbox.nonneg_mlp import NonNegLinear
 from src.toolbox.metrics import L1_distance_across_events
 from src.toolbox.activations import scaled_tanh
 
-from src.TPP.model.tifib_c.transformers import TransEncoder
+from src.TPP.model.tifn.transformers import TransEncoder
 
 
-class TIFIBC(nn.Module):
+class TIFN(nn.Module):
     '''
+    TIFN (Transformer Integration-free Neural Marked Temporal Point Process)
     '''
     def __init__(self, d_history, d_intensity, num_events, dropout, d_hidden, n_layers, \
                  n_head, d_qk, d_v, mlp_layers, epsilon, removes_tail, tanh_parameter, device):
-        super(TIFIBC, self).__init__()
+        '''
+        This function creates a TIFN model.
+        
+        ### Args
+            * ```int``` d_history
+              The dimension of the history representation.
+            * ```float``` dropout
+              Dropout rate for the history encoder. Only works when history_module_layers > 1.
+            * ```int``` n_layers
+              How many self attention layers our model will have?
+            * ```int``` n_head
+              The number of head in self attention.
+            * ```int``` d_qk
+              The dimension of matrices Q and K.
+            * ```int``` d_v
+              The dimension of metrix V.
+            * ```int``` d_hidden
+              The dimension of the FFN module in the Transformer.
+            * ```int``` d_intensity
+              The dimension of the cumulative hazard function network.
+            * ```int``` mlp_layers
+              The number of layers in the cumulative hazard function network.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+            * ```float``` epsilon
+              Shiftting the calculated intensity function and probability distribution by a little bit so that ```torch.log()``` won't fail.
+            * ```bool``` removes_tail
+              In some cases, the calculated \\Gamma(m, t) failed to converge to a small number instead of 0 when t -> +\\infty.
+              This trick somehow mitigates this issue by slightly offsetting the value of \\Gamma(m, t) so its value is 0 when t -> +\\infty.
+            * ```float``` tanh_parameter
+              Hyperparameter of scaled_tanh(). Please check scaled_tanh for detailed information.
+        '''
+        super(TIFN, self).__init__()
         self.device = device
         self.num_events = num_events
         self.epsilon = epsilon
@@ -48,12 +81,19 @@ class TIFIBC(nn.Module):
 
 
     def forward(self, task_name, *args, **kwargs):
+        '''
+        The entrance of the TIFN.
+        
+        ### Args
+            * ```str``` task_name
+              The name of the executed task.
+        '''
         task_mapper = {
             'default_forward': self.default_forward,
             'sample': self.sample,
             'probability': self.probability,
             # 'get_event_embedding': self.get_event_embedding,
-            'model_probe_function': self.model_probe_function
+            'model_probe': self.model_probe_function
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -61,16 +101,30 @@ class TIFIBC(nn.Module):
 
     def default_forward(self, events_history, time_history, time_next, mask_history, mean, std):
         '''
-        Args:
-            events_history: [batch_size, seq_len]
-            time_history:   [batch_size, seq_len]
-            time_next:      [batch_size, seq_len, num_events] if we need events else [batch_size, seq_len]
-            mask:           [batch_size, seq_len]
+        IFN's forwardpropagation function.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` custom_events_history
+              when true, the events_history will be the mark embedding of historical events.
+        ### Outputs
+            * ```torch.tensor``` \\Gamma^*(m, t)
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Gamma^*(m, t) on [t_{i-1}, t_i).
         '''
 
-        '''
-        Obtain historical embeddings.
-        '''
+        # Obtain historical embeddings.
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
@@ -79,9 +133,7 @@ class TIFIBC(nn.Module):
                                                                                # [batch_size, seq_len, num_events, d_history]
         hidden_history = self.history_mapper(hidden_history)                   # [batch_size, seq_len, num_events, d_intensity]
 
-        '''
-        Obtain timestamp embeddings.
-        '''
+        # Obtain timestamp embeddings.
         time_next = (time_next - mean) / std                                   # [..., batch_size, seq_len, num_events]
         time_next_zero = torch.ones_like(time_next) * (-mean / std)            # [..., batch_size, seq_len, num_events]
 
@@ -139,37 +191,39 @@ class TIFIBC(nn.Module):
 
     def sample(self, sampled_events_history, sampled_time_history, tau, mean, std):
         '''
-        Args:
-            events_history: [number_of_sampled_sequences, sampled_seq_len]
-            time_history:   [number_of_sampled_sequences, sampled_seq_len]
-            tau:            [number_of_sampled_sequences, 1, num_events] if we need events else [batch_size, 1]
-            mask:           [number_of_sampled_sequences, sampled_seq_len]
+        IFN's forwardpropagation function specific for sampling.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` tau
+              shape: ```[number_of_sampled_sequences, num_events]```
+              Guessed time when the next event will happen.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```torch.tensor``` \\Gamma^*(m, t)
+              shape: ```# [number_of_sampled_sequences, num_events]```
+              The value of \\Gamma^*(m, t) on [t_{i-1}, t_i).
         '''
 
-        '''
-        Obtain historical embeddings.
-        '''
+        # Obtain historical embeddings.
         sampled_time_history = (sampled_time_history - mean) / std             # [number_of_sampled_sequences, sampled_seq_len]
 
-        # FIXME: history embedding from Transformer.
         sampled_history_embedding = self.his_encoder(sampled_events_history, sampled_time_history, torch.ones_like(sampled_events_history))
-                                                                               # [batch_size, seq_len, d_history]
-        '''
-        sampled_events_embeddings = self.events(sampled_events_history)        # [number_of_sampled_sequences, sampled_seq_len, d_history]
-        sampled_history, sampled_history_ps = pack([sampled_events_embeddings, sampled_time_history], 'b s *')
-                                                                               # [number_of_sampled_sequences, sampled_seq_len, d_history + 1]
-        _, (sampled_history_embedding, _) = self.his_encoder(sampled_history)  # [1, number_of_sampled_sequences, d_history]
-        '''
-        # Reshape hidden output for full connection layers.
-        sampled_history_embedding = rearrange(sampled_history_embedding, 'l nss dh -> nss l dh')
-                                                                               # [number_of_sampled_sequences, 1, d_history]
+                                                                               # [number_of_sampled_sequences, sampled_seq_len, d_history]
+        sampled_history_embedding = sampled_history_embedding[:, -1:, :]       # [number_of_sampled_sequences, 1, d_history]
+
         sampled_history_embedding = repeat(sampled_history_embedding, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [number_of_sampled_sequences, 1, num_events, d_history]
         sampled_history_embedding = self.history_mapper(sampled_history_embedding)
                                                                                # [number_of_sampled_sequences, 1, num_events, d_intensity]
-        '''
-        Obtain timestamp embeddings.
-        '''
+        # Obtain timestamp embeddings.
         tau = (tau - mean) / std                                               # [number_of_sampled_sequences, batch_size, num_events]
         time_next_zero = torch.ones_like(tau) * (-mean / std)                  # [number_of_sampled_sequences, batch_size, num_events]
 
@@ -226,17 +280,34 @@ class TIFIBC(nn.Module):
 
     def probability(self, events_history, time_history, time_next, mask_history, resolution, mean, std):
         '''
-        Intensity integral & intensity function prober. Perhaps, we can support intensity integral as well.
-        Args:
-        events_history:[batch_size, seq_len]
-        time_history:  [batch_size, seq_len]
-        time_next:     [batch_size, seq_len]
-        resolution:    int
+        IFN's forwardpropagation function specifically for probability function probe.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```torch.tensor``` expand_probability
+              shape: ```[batch_size, seq_len, resolution, num_events]```
+              The value of the probability distribution at interpolated timestamps.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[batch_size, seq_len, resolution]```
+              What all interpolated timestamps are.
         '''
-
-        '''
-        History embeddings
-        '''
+        
+        # History embeddings
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
@@ -246,9 +317,7 @@ class TIFIBC(nn.Module):
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Expanded time embedding 
-        '''
+        # Expanded time embedding 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_multiplier * time_next.unsqueeze(dim = -1) # [batch_size, seq_len, resolution]
@@ -304,16 +373,38 @@ class TIFIBC(nn.Module):
 
     def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, resolution, mean, std):
         '''
-        We use this function to dive into the fullynn and find the reason of abrupt gradient drop around 0
-        Args:
-        time_history: [batch_size, seq_len]
-        time_next:    [batch_size, seq_len]
-        resolution:   int
+        Probe the value of the intensity function and its integral at sampled timestamps.
+        In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
+        This function is supposed to be much slower than integral_intensity_time_next_2d().
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```torch.tensor``` mask_next
+              shape: ```[..., batch_size, seq_len]```
+              Tell which event in *_next is the real event so should be considered in metric calculation.
+            * ```int``` resolution
+              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points counts the start and end point of the interval.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+        ### Outputs
+            * ```dict``` data
+              Probed data used for plot drawing.
+            * ```torch.tensor``` original_time_expand
+              shape: ```[batch_size, seq_len, resolution]```
+              The value of sampled times.
         '''
 
-        '''
-        History embeddings
-        '''
+        # History embeddings
         time_history = (time_history - mean) / std                             # [batch_size, seq_len]
 
         hidden_history = self.his_encoder(events_history, time_history, mask_history)
@@ -323,9 +414,7 @@ class TIFIBC(nn.Module):
         hidden_history = repeat(hidden_history, 'b s di -> b s r ne di', r = resolution, ne = self.num_events)
                                                                                # [batch_size, seq_len, resolution, num_events, d_intensity]
 
-        '''
-        Expanded time embedding 
-        '''
+        # Expanded time embedding 
         time_multiplier = torch.linspace(0, 1, resolution, device = self.device)
                                                                                # [resolution]
         original_time_expand = time_multiplier * rearrange(time_next, '... -> ... 1')
@@ -381,10 +470,8 @@ class TIFIBC(nn.Module):
                 
         time_expand.requires_grad = False
 
-        '''
-        The data dict is defined here.
-        This dict should pack all data required by plot().
-        '''
+        # The data dict is defined here.
+        # This dict should pack all data required by plot().
         data = {}
         data['expand_probability_for_each_event'] = events_probability_at_each_interpolated_timestamp
                                                                                # [batch_size, seq_len, resolution, num_events]
@@ -415,7 +502,7 @@ class TIFIBC(nn.Module):
 
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * resolution], 
-                                                          time_next = original_time_expand_per_seq[:seq_len])
+                                                          time_next = original_time_expand_per_seq[:seq_len], has_flatten = True)
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)

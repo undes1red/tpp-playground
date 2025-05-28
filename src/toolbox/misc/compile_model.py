@@ -11,7 +11,6 @@ def compile_model(model, use_compile, *args, **kwargs):
         
     return torch.compile(
         model,
-        mode = 'max-autotune',
         *args,
         disable = not use_compile, 
         **kwargs)
@@ -19,7 +18,7 @@ def compile_model(model, use_compile, *args, **kwargs):
 
 def conditional_compile_func(func, compile_or_not = False):
     def wrapper(*args, **kwargs):
-        return torch.compile(func, mode = 'max-autotune', disable = not compile_or_not)(*args, **kwargs)
+        return torch.compile(func, disable = not compile_or_not)(*args, **kwargs)
     
     return wrapper
 
@@ -33,6 +32,6 @@ def conditional_compile_class_method(func):
         else:
             logger.debug('compile_or_not undefined in the class object! For compatibility, we will not compile the decorated function.')
             compile_or_not = False
-        return torch.compile(func, mode = 'max-autotune', disable = not compile_or_not)(*args, **kwargs)
+        return torch.compile(func, disable = not compile_or_not)(*args, **kwargs)
     
     return wrapper

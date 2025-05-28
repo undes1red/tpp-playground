@@ -124,7 +124,7 @@ def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m
                                                                             # [sample_rate, batch_size, seq_len, num_events, resolution]
         expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
                                                                             # [sample_rate, batch_size, seq_len, num_events, resolution]
-        probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True)
+        probability = approximate_integration(expanded_probability_per_event, timestamp, dim = -1, only_integral = True, func_val_x_having_same_shape = True)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
         return probability
 
@@ -144,7 +144,7 @@ def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m
         torch.nn.init.uniform_(probability_threshold, a = its_lower_bound, b = its_upper_bound)
                                                                             # [sample_rate, batch_size, seq_len, num_events]
         tau_pred.append(median_prediction(self.max_step, self.bisect_early_stop_threshold, \
-                                            bisect_target, probability_threshold, r_val = inf_val))
+                                          bisect_target, probability_threshold, r_val = inf_val))
                                                                             # [sample_rate, batch_size, seq_len, num_events]
     tau_pred = torch.cat(tau_pred, dim = 0)                                # [sample_rate, batch_size, seq_len, num_events]
     

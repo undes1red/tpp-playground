@@ -79,7 +79,7 @@ class MRMTPPModule(nn.Module):
 
     def forward(self, events_history, time_history, time_next, mean, std, custom_events_history = False):
         '''
-        CTLSTM's forwardpropagation function for training.
+        MRMTPP's forwardpropagation function for training.
         
         ### Args
             * ```torch.tensor``` events_history

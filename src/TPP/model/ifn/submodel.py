@@ -17,30 +17,27 @@ class IFN(nn.Module):
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
                  mlp_layers, removes_tail, tanh_parameter, epsilon, device):
         '''
-        This function creates a IFNMTPP model.
+        This function creates a IFN model.
         
         ### Args
-            * ```str``` history_module
-              Which RNN model do we use to encode the history? Default is LSTM. We don't recommend to change it to something else.
             * ```int``` d_history
               The dimension of the history representation.
             * ```float``` dropout
               Dropout rate for the history encoder. Only works when history_module_layers > 1.
-            * ```int``` history_module_layers
-              How many layer of RNN our model will have?
+            * ```int``` n_layers
+              How many self attention layers our model will have?
+            * ```int``` n_head
+              The number of head in self attention.
+            * ```int``` d_qk
+              The dimension of matrices Q and K.
+            * ```int``` d_v
+              The dimension of metrix V.
             * ```int``` d_intensity
               The dimension of the cumulative hazard function network.
             * ```int``` mlp_layers
               The number of layers in the cumulative hazard function network.
-            * ```torch.device``` device
-              Running models on GPU or CPU?
-            * ```float``` epsilon
-              Shiftting the calculated intensity function and probability distribution by a little bit so that ```torch.log()``` won't fail.
-            * ```bool``` removes_tail
-              In some cases, the calculated \\Gamma(m, t) failed to converge to a small number instead of 0 when t -> +\\infty.
-              This trick somehow mitigates this issue by slightly offsetting the value of \\Gamma(m, t) so its value is 0 when t -> +\\infty.
-            * ```float``` tanh_parameter
-              Hyperparameter of scaled_tanh(). Please check scaled_tanh for detailed information.
+            * ```namespace``` opt
+              Model arguments.
         '''
         super(IFN, self).__init__()
         self.device = device
@@ -90,7 +87,7 @@ class IFN(nn.Module):
             'sample': self.sample,
             'probability': self.probability,
             'get_event_embedding': self.get_event_embedding,
-            'model_probe_function': self.model_probe_function
+            'model_probe': self.model_probe_function
         }
 
         return task_mapper[task_name](*args, **kwargs)

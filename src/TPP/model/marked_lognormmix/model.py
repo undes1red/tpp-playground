@@ -13,54 +13,61 @@ from src.TPP.model.marked_lognormmix.sample import sample_time
 
 
 class MarkedLogNormMixWrapper(BasicModel):
+    '''
+    A variant of LogNormmix with mark support inspired by Wagmare et al. @ CIKM 2022.
+    '''
     def __init__(self, opt, device, context_size: int = 32, mark_embedding_size: int = 32, \
                  num_mix_components: int = 16, rnn_type: str = "LSTM", \
+                 sample_rate: int = 32, mae_step: int = 32, mae_e_step: int = 32, \
                  survival_loss_during_training = True):
+        '''
+        This function creates a MarkedLogNormMix model.
+        
+        ### Args
+            * ```int``` context_size
+              The dimension of the history embedding.
+            * ```int``` mark_embedding_size
+              The dimension of the mark embedding.
+            * ```int``` num_mix_components
+              How many log-norm distribution are they in a LogNormMix?
+            * ```str``` rnn_type
+              The structure of the RNN module. Defualt: LSTM.
+            * ```namespace``` opt
+              Model arguments.
+            * ```torch.device``` device
+              Running models on GPU or CPU?
+            * ```int``` sample_rate
+              This tells how many time samples from the time distribution are needed for one time prediction.
+            * ```int``` mae_step
+              This parameter controls how many samples are generated in one shot when sampling from p(t).
+            * ```int``` mae_e_step
+              This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+              mae_step and mae_e_step are useful when you cannot get sample_rate time samples from time distributions because of insufficient GPU memory.
+            * ```bool``` survival_loss_during_training
+              When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
+        '''
         super(MarkedLogNormMixWrapper, self).__init__()
         self.device = device
         self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_rate = 32
+        self.sample_rate = sample_rate
+        self.mae_step = mae_step
+        self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
 
-        self.model = MarkedLogNormMix(
-            self.num_events + 1,
-            self.device,
-            context_size,
-            mark_embedding_size,
-            num_mix_components,
-            rnn_type,
-        )
+        self.model = MarkedLogNormMix(self.num_events + 1, self.device, context_size, 
+                                      mark_embedding_size, num_mix_components, rnn_type)
     
 
     def forward(self, task_name, *args, **kwargs):
         '''
-        The entrance of the FullyNN wrapper.
+        The entrance of the MarkedLogNormMix.
         
-        Args:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original time sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        The original event sequence. We should extract the history and target sequence from it
-                        by divide_history_and_next().
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        We use mask to mask out unneeded outputs.
-        * mean          type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: float shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * evaluate      type: bool shape: N/A
-                        perform a model training step when evaluate == False
-                        perform a model evaluate step when evaluate == True
-        
-        Outputs:
-        Refers to train() and evaluate()'s documentation for detailed information.
-
+        ### Args
+            * ```str``` task_name
+              The name of the executed task.
         '''
         task_mapper = {
             'train': self.train_procedure,

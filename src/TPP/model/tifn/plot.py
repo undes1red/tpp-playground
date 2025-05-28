@@ -11,23 +11,21 @@ from src.TPP.resources.syn_tpp_utils import expand_true_probability
 logger = get_logger(__name__)
 
 
-'''
-What is a plot_instruction?
-plot_instruction is a dict. Each key in the plot_instruction is the plot name, also the file name of the stored plot. 
-The value corresponding to the key is a list. This list comprises dicts. Each dict is an instruction defining a plot.
-The framework will loop over the instruction list, so you can use multiple dicts to draw a rather complicated plot.
-'''
-
-def generate_probability_figure(data, timestamp, opt):
+def generate_probability_figure(data, opt):
     '''
+    This function draws the probability distribution p^*(m, t) given one sequence and store them in the "result" folder.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
     '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of probability distributions over all markers.
-    '''
+    # Part 1: the sum of probability distributions over all markers.
     expand_probability = data['expand_probability']                            # [batch_size, seq_len, resolution, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
@@ -81,51 +79,39 @@ def generate_probability_figure(data, timestamp, opt):
     return 0
 
 
-def generate_debug_figure(data, timestamp, opt):
+def generate_debug_figure(data, opt):
     '''
-    What is inside dict data?
-    1. expand_intensity_for_each_event  shape: [batch_size, seq_len, resolution, num_events]
-    2. expand_integral_for_each_event   shape: [batch_size, seq_len, resolution, num_events]
-    3. spearman, pearson, and L1 distance matrix if self.event_toggle = True
-    4. macro-f1: measure the event prediction performance without time prediction.
-    5. top_k: measure the event prediction performance without time prediction.
-    6. probability_sum: the value of \\int_{t_l}^{+infty}{p(m, \\tau)d\\tau}
-    7. tau_pred_all_event: The time prediction of all events, with p(m) known.
-    8. mae_before_event: as known as MAE.
-    9. maes_after_event_avg: contains mae_per_event_with_predict_index_avg and mae_per_event_with_event_next_avg
-    10. maes_after_event: contains mae_per_event_with_predict_index and mae_per_event_with_event_next
-    11. event_next: 
-    12. time_next:
-    '''
+    This function draws plots for deeper insight of intensity functions and other metrics.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
+    '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     resolution = opt.resolution
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: expand intensity and expand integral
-    Required plots: lineplot and scatterplot
-    '''
+    # Part 1: probability distribution
+    # Required plots: lineplot and scatterplot
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    expand_intensity = data['expand_intensity_for_each_event']                 # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
-    expand_integral = data['expand_integral_for_each_event']                   # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+    expand_probability = data['expand_probability_for_each_event']             # [batch_size, seq_len, resolution, num_events] if self.event_toggle else [batch_size, seq_len, resolution, 1]
     expand_timestamp = timestamp                                               # [batch_size, seq_len, resolution]
 
-    packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp))
-    for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_intensity_per_seq, \
-              expand_integral_per_seq, timestamp_per_seq) in enumerate(packed_data):
+    packed_data = zip(*move_from_tensor_to_ndarray(events_next, time_next, mask_next, expand_probability, expand_timestamp))
+    for idx, (events_next_per_seq, time_next_per_seq, mask_next_per_seq, expand_probability_per_seq, timestamp_per_seq) in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
         start_time = time_next_per_seq[:seq_len].cumsum(axis = -1)
         timestamp_offset = np.concatenate((np.array([0.]), start_time[:-1]), axis = -1)
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
         timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis = -1)
 
-        '''
-        Figure 1 and 2: Mark-wise intensity and integral function.
-        Required plots: lineplot
-        '''
+        # Figure 1 and 2: Mark-wise intensity and integral function.
+        # Required plots: lineplot
         df_event = pd.DataFrame.from_dict(
                 {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
@@ -133,30 +119,18 @@ def generate_debug_figure(data, timestamp, opt):
 
         event_list = [f'Mark {i}' for i in range(num_events)]
     
-        df_intensity = pd.DataFrame.from_dict(
+        df_probability = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(), 
-                 'Mark': event_list * (seq_len * resolution)}
-            )
-        df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Integral': expand_integral_per_seq[:seq_len, :, :].flatten(),
+                 'Probability': expand_probability_per_seq[:seq_len, :, :].flatten(), 
                  'Mark': event_list * (seq_len * resolution)}
             )
         
-        fig1 = draw_intensity_integral_per_mark(df_intensity, df_event, 'Intensity', color_palette, num_events)
-        save_fig(fig1, opt.plot_store_dir_for_this_batch, f'mark_wise_intensity_{idx}.pdf')
-        logger.info(f'mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
+        fig1 = draw_intensity_integral_per_mark(df_probability, df_event, 'Probability', color_palette, num_events)
+        save_fig(fig1, opt.plot_store_dir_for_this_batch, f'mark_wise_probability_{idx}.pdf')
+        logger.info(f'mark_wise_probability_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-        fig2 = draw_intensity_integral_per_mark(df_integral, df_event, 'Integral', color_palette, num_events)
-        save_fig(fig2, opt.plot_store_dir_for_this_batch, f'mark_wise_integral_{idx}.pdf')
-        logger.info(f'mark_wise_integral_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
-
-
-    '''
-    Part 3, 4, 5: plot for spearman, pearson, and L1 distance matrix
-    Required plots: heatmap
-    '''
+    # Part 3, 4, 5: plot for spearman, pearson, and L1 distance matrix
+    # Required plots: heatmap
     for value in ['spearman', 'pearson', 'L1']:
         matrices = data[f'{value}_matrix']
         for idx, matrix in enumerate(matrices):
@@ -164,11 +138,8 @@ def generate_debug_figure(data, timestamp, opt):
             save_fig(fig, opt.plot_store_dir_for_this_batch, f'{value}_{idx}.pdf')
             logger.info(f'{value}_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    '''
-    Part 6: plot for Top-K accuracy
-    Required plots: lineplot
-    '''
+    # Part 6: plot for Top-K accuracy
+    # Required plots: lineplot
     top_k = data['top_k']                                                      # [batch_size, num_events - 1]
     for idx, top_k_per_seq in enumerate(top_k):
         data_top_k_per_seq = {
@@ -183,10 +154,7 @@ def generate_debug_figure(data, timestamp, opt):
         save_fig(fig6, opt.plot_store_dir_for_this_batch, f'topk_{idx}.pdf')
         logger.info(f'Top-K_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    '''
-    Part 7: Logarithm of MAE at each event
-    '''
+    # Part 7: Logarithm of MAE at each event
     mae_per_event_with_predict_index, mae_per_event_with_event_next = data['maes_after_event']
                                                                                # [batch_size, seq_len]
     mae = data['mae_before_event']                                             # [batch_size, seq_len]
@@ -211,10 +179,7 @@ def generate_debug_figure(data, timestamp, opt):
         save_fig(fig7, opt.plot_store_dir_for_this_batch, f'MAE_{idx}.pdf')
         logger.info(f'MAE_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    '''
-    Part 8: the value of \\sum_{m \\in M}{p^*(m)} given different history.
-    '''
+    # Part 8: the value of \\sum_{m \\in M}{p^*(m)} given different history.
     probability_sum = data['probability_sum']                                  # [batch_size, seq_len]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
 
@@ -234,10 +199,7 @@ def generate_debug_figure(data, timestamp, opt):
         save_fig(fig8, opt.plot_store_dir_for_this_batch, f'sum_of_p_{idx}.pdf')
         logger.info(f'sum_of_p_m_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    '''
-    Part 9: The Logarithm of time prediction against all events
-    '''
+    # Part 9: The Logarithm of time prediction against all events
     tau_pred_all_event = data['tau_pred_all_event']                            # [batch_size, seq_len, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
@@ -256,11 +218,8 @@ def generate_debug_figure(data, timestamp, opt):
         save_fig(fig9, opt.plot_store_dir_for_this_batch, f'log_pred_time_{idx}.pdf')
         logger.info(f'log_pred_time_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    '''
-    Part 10 and 11: expand intensity and expand integral on sampled event sequences.
-    Required plots: lineplot and scatterplot
-    '''
+    # Part 10 and 11: expand intensity and expand integral on sampled event sequences.
+    # Required plots: lineplot and scatterplot
     sampled_events_next_event_time = data['sampled_events_next_event_time']    # [batch_size, seq_len]
     sampled_time_next_event_time = data['sampled_time_next_event_time']        # [batch_size, seq_len]
     sampled_mask_next_event_time = data['sampled_mask_next_event_time']        # [batch_size, seq_len]

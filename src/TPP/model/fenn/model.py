@@ -402,7 +402,9 @@ class FENNModel(BasicModel):
             * ```float``` mean
             * ```float``` std
               Used for input time scaling.
-
+            * ```namespace``` opt
+              One may bring custom settings into this function through this argument during evaluation. Please refers to
+              debug() and get_mae_e_and_f1() for more information about what custom settings are available.
         ### Outputs
             * ```torch.tensor``` mae
               shape: ```[batch_size, seq_len]```
@@ -481,7 +483,6 @@ class FENNModel(BasicModel):
             * ```namespace``` opt
               One may bring custom settings into this function through this argument during evaluation. Please refers to
               debug() and get_mae_e_and_f1() for more information about what custom settings are available.
-
         ### Outputs
             * ```float``` f1
               macro-F1 value between events predicted and the ground truths.

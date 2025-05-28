@@ -350,12 +350,9 @@ class IFNModel(BasicModel):
         This function computes the NLL loss at each legit event in events_next.
     
         ### Args
-            * ```torch.tensor``` intensity
+            * ```torch.tensor``` probability
               shape: ```[batch_size, seq_len, num_events]```
-              intensity values at t_i.
-            * ```torch.tensor``` intensity_integral
-              shape: ```[batch_size, seq_len, num_events]```
-              intensity integral from t_{i - 1} to t_{i} (t_0 = 0).
+              values of the p(m = m_k, t) at t_i.
             * ```torch.tensor``` events_next
               shape: ```[batch_size, seq_len]```
               The mark of the events that we need to predict.
@@ -717,7 +714,7 @@ class IFNModel(BasicModel):
               This tensor shows the probability of one mark being predicted at different time.
             * ```list``` events_next
               The real mark of the next event.
-        '''        
+        '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm', \
                                      events_history = events_history, time_history = time_history,
                                      number_of_total_samples = opt.sample_rate, step = opt.sample_step, mean = mean, std = std)
@@ -857,7 +854,7 @@ class IFNModel(BasicModel):
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, std)
+            self.model('probability', events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # [batch_size, seq_len, resolution, num_events]
         data = {
             'time_next': time_next,
@@ -903,7 +900,7 @@ class IFNModel(BasicModel):
         mae, f1_1, _ = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                        time_next, mask_next, mean, std, opt = opt)
                                                                                # [batch_size, seq_len]
-        data, timestamp = self.model.model_probe_function(events_history, time_history, time_next, mask_next, opt.resolution, mean, std)
+        data, timestamp = self.model('model_probe', events_history, time_history, time_next, mask_next, opt.resolution, mean, std)
 
         f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
             = self.mean_absolute_error_e(events_history, events_next, time_history, time_next, mask_next, mean, std,
@@ -924,8 +921,8 @@ class IFNModel(BasicModel):
                                                                                # 2 * [batch_size, seq_len]
 
         sampled_data_event_time, sampled_timestamp_event_time \
-            = self.model.model_probe_function(sampled_events_history_event_time, sampled_time_history_event_time, \
-                                              sampled_time_next_event_time, sampled_mask_next_event_time, opt.resolution, mean, std)
+            = self.model('model_probe', sampled_events_history_event_time, sampled_time_history_event_time, \
+                         sampled_time_next_event_time, sampled_mask_next_event_time, opt.resolution, mean, std)
 
 
         time_history_for_sampling_time_event, events_history_for_sampling_time_event, sampled_mask_time_event \
@@ -941,8 +938,8 @@ class IFNModel(BasicModel):
                                                                                # 2 * [batch_size, seq_len]
 
         sampled_data_time_event, sampled_timestamp_time_event \
-            = self.model.model_probe_function(sampled_events_history_time_event, sampled_time_history_time_event, \
-                                              sampled_time_next_time_event, sampled_mask_next_time_event, opt.resolution, mean, std)
+            = self.model('model_probe', sampled_events_history_time_event, sampled_time_history_time_event, \
+                         sampled_time_next_time_event, sampled_mask_next_time_event, opt.resolution, mean, std)
     
         # Append additional info into the data dict.
         data.update({
@@ -1009,7 +1006,7 @@ class IFNModel(BasicModel):
         _, mask_next = self.divide_history_and_next(mask)                      # [batch_size, seq_len]
 
         expand_probability, timestamp = \
-            self.model.probability(events_history, time_history, time_next, opt.resolution, mean, std)
+            self.model('probability', events_history, time_history, time_next, opt.resolution, mean, std)
                                                                                # [batch_size, seq_len, resolution, num_events]
 
         expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]

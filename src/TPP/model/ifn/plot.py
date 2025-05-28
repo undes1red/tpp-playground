@@ -94,7 +94,7 @@ def generate_debug_figure(data, opt):
     resolution = opt.resolution
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    # Part 1: expand intensity and expand integral
+    # Part 1: probability distribution
     # Required plots: lineplot and scatterplot
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]

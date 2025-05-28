@@ -35,8 +35,6 @@ class FENN(nn.Module):
         self.device = device
         self.num_events = num_events
 
-        # FullyNN can not distinguish different markers because of computation graph overlap.
-        # It is expected that the original FullyNN achieves very bad marker prediction performance regardless the model size.
         self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
         
         try:
