@@ -19,7 +19,8 @@ class CTLSTMWrapper(BasicModel):
     continuous-time LSTM, the backbone of the Neural Hawkes Process, proposed by Mei et al. at NeurIPS 2017.
     '''
     def __init__(self, opt, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
-                 d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, mae_step = 8, mae_e_step = 8, \
+                 d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, 
+                 sample_rate = 32, mae_step = 8, mae_e_step = 8, \
                  integration_sample_rate = 100, survival_loss_during_training = True):
         '''
         This function creates a CTLSTM model.
@@ -65,7 +66,7 @@ class CTLSTMWrapper(BasicModel):
         self.integration_sample_rate = integration_sample_rate
         self.epsilon = epsilon
         self.survival_loss_during_training = survival_loss_during_training
-        self.sample_time_rate = 32
+        self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-4
