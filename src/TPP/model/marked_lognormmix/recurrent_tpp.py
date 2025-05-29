@@ -207,7 +207,7 @@ class RecurrentTPP(nn.Module):
         log_p = inter_time_dist.get_log_prob(input_time)                       # [batch_size, seq_len + 1, num_mark]
         predicted_events = log_p.argmax(dim = -1)                              # [batch_size, seq_len + 1]
         
-        return predicted_events
+        return predicted_events, log_p
 
 
     def probability_prober(self, input_events, input_time, input_mask, resolution, mean, std) -> torch.Tensor:
@@ -292,7 +292,7 @@ class RecurrentTPP(nn.Module):
         context = self.get_context(features)                                   # [batch_size, seq_len, mark_embedding_size + 1]
         inter_time_dist = self.get_inter_time_dist(context)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
-        cdf_from_0_to_t = inter_time_dist.get_cdf(taus)                        # [..., batch_size, seq_len + 1, num_marks]
+        cdf_from_0_to_t = inter_time_dist.get_cdf(taus)                        # [..., batch_size, seq_len + 1, num_marks + 1]
         cdf_from_0_to_t = cdf_from_0_to_t.sum(dim = -1)                        # [..., batch_size, seq_len + 1]
         the_number_of_events = input_mask.sum().item()
 

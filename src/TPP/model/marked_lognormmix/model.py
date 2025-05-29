@@ -2,7 +2,7 @@ import torch, copy
 from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 from einops import rearrange, reduce, repeat
 
-from src.toolbox.misc import move_from_tensor_to_ndarray, conditional_decorator, pack_one_value_to_dict
+from src.toolbox.misc import move_from_tensor_to_ndarray, argument_check, pack_one_value_to_dict
 from src.toolbox.metrics import L1_distance_across_events
 
 from src.TPP.model.marked_lognormmix.log_norm_mix import MarkedLogNormMix
@@ -89,13 +89,39 @@ class MarkedLogNormMixWrapper(BasicModel):
 
 
     def divide_history_and_next(self, input):
-        history, next = input[:, :-1].clone(), input[:, 1:].clone()
-        return history, next                                                   # [batch_size, seq_len, 1] or [batch_size, seq_len]
+        '''
+        Extract the history and prediction sequences from the input sequence.
+        
+        ### Args
+            * ```torch.tensor``` input
+              shape: [batch_size, seq_len + 1]
+              The input sequence.
+        
+        ### Outputs
+            * ```torch.tensor``` input_history
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+            * ```torch.tensor``` input_next
+              shape: [batch_size, seq_len]
+              The history sequence extracted from the original input.
+        '''
+        input_history, input_next = input[:, :-1].clone(), input[:, 1:].clone()
+        return input_history, input_next                                       # [batch_size, seq_len, 1] or [batch_size, seq_len]
 
 
     def remove_dummy_event_from_mask(self, mask):
         '''
-        Remove the probability of the dummy event by mask.
+        Remove the probability of the dummy event from the mask.
+
+        ### Args
+            * ```torch.tensor``` mask
+              shape: [batch_size, seq_len]
+              The input mask tensor.
+        
+        ### Outputs
+            * ```torch.tensor``` mask_without_dummy
+              shape: [batch_size, seq_len]
+              The output mask tensor with the last unmask event in each sequence removed.
         '''
         mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
         for idx, mask_per_seq in enumerate(mask):
@@ -109,19 +135,31 @@ class MarkedLogNormMixWrapper(BasicModel):
 
     def train_procedure(self, input_events, input_time, input_mask, mean, std):
         '''
-        The shape of minibatch
-        [
-            [
-                event_tensor,
-                time_tensor,
-                mask_tensor
-            ],
-            score,
-            [
-                mean,
-                std
-            ](if self.input_norm_data is True)
-        ]
+        MarkedLogNormMix's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequence for training.
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` input_mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` loss
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T included).
+            * ```torch.tensor``` time_loss
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event (the dummy event at end time T excluded).
+            * ```int``` the_number_of_events
+              The number of legit events.
         '''
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last = self.model.log_prob(input_events, input_time, input_mask, mean, std)
@@ -133,26 +171,44 @@ class MarkedLogNormMixWrapper(BasicModel):
         surv_last_loss = 0
         if self.survival_loss_during_training:
             surv_last_loss = self.loss_f(log_surv_last)
+        
+        loss = time_loss + surv_last_loss
 
-        return time_loss + surv_last_loss, time_loss, the_number_of_events
+        return loss, time_loss, the_number_of_events
 
 
     @torch.inference_mode()
     def evaluate_procedure(self, input_events, input_time, input_mask, mean, std):
         '''
-        The shape of minibatch
-        [
-            [
-                event_tensor,
-                time_tensor,
-                mask_tensor
-            ],
-            score,
-            [
-                mean,
-                std
-            ](if self.input_norm_data is True)
-        ]
+        MarkedLogNormMix's forwardpropagation function for evaluation.
+        
+        ### Args
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Time sequencalculatesce for training.
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Event sequence for training.
+            * ```torch.tensor``` input_mask
+              shape: ```[batch_size,, seq_len + 1]```
+              Mask sequence. Events whose corresponding mask is 0 are dummy events.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` time_loss
+              shape: ```[1]```
+              The sum of NLL loss L = -log \\frac{\\partial \\Lambda^*(m, t)}{\\partial t} + \\Lambda^*(m, t) at each happened event.
+            * ```torch.tensor``` surv_last_loss
+              shape: ```[1]```
+              The sum of the integration \\Lambda^*(m, t) from the last observed event to the end time T.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+            * ```int``` the_number_of_events
+              The number of legit events.
         '''
         the_number_of_events = input_mask.sum().item()
         log_prob, log_surv_last = self.model.log_prob(input_events, input_time, input_mask, mean, std)
@@ -162,7 +218,7 @@ class MarkedLogNormMixWrapper(BasicModel):
         time_loss = self.loss_f(log_prob)
         surv_last_loss = self.loss_f(log_surv_last)
 
-        mae, f1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
+        mae, f1, _ = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
                                                                                # [batch_size, seq_len + 1]
         mae = mae.sum().item() / the_number_of_events
 
@@ -171,40 +227,120 @@ class MarkedLogNormMixWrapper(BasicModel):
 
     def loss_f(self, loglik):
         '''
-        The definition of loss.
+        This function computes the NLL loss at each event in events_next.
+        Please note that this function does not care if the corresponding event is real or dummy.
+        They should be handled before calling this loss funtion.
+    
+        ### Args
+            * ```torch.tensor``` loglik
+              shape: ```[batch_size, seq_len, num_events]```
+              values of the p(m = m_k, t) at t_i.
+        
+        ### Outputs
+            * ```torch.tensor``` loss
+              shape: ```[1]```
+              The sum of NLL loss on all event.
         '''
-        return (-loglik).sum()
+        loss = (-loglik).sum()
+        
+        return loss
 
 
-    def sample_time(self, *args, **kwargs):
-        return conditional_decorator(torch.compile, self.compile_or_not, sample_time)(self, *args, **kwargs)
+    sample_time = sample_time
 
 
     @torch.inference_mode()
-    def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, std):
-        # Obtain dedicated MAE and predicted time.
-        tau_pred = self.sample_time('its', 'tm', input_events, input_time, input_mask, mean, std)
-                                                                               # [batch_size, seq_len + 1]
-        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len]
-        mae = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len]
+    def mean_absolute_error_and_f1(self, input_events, input_time, input_mask, mean, std, opt = None):
+        '''
+        Called by evaluate_procedure(), debug() and get_mae_and_f1(), this function computed the MAE and macro-F1 of one minibatch.
 
-        predicted_events  = self.model.event_prober(input_events, input_time, input_mask, mean, std)
-                                                                               # [batch_size, seq_len + 1]
+        ### Args
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+            * ```torch.tensor``` input_mask
+              shape: ```[batch_size, seq_len + 1]```
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+
+        ### Outputs
+            * ```torch.tensor``` mae
+              shape: ```[batch_size, seq_len]```
+              Mean Absolute Error(MAE) between predicted times \\(t_p\\) and ground truths \\(t_i\\). MAE = |t_p - t_i|.
+            * ```float``` f1
+              macro-F1 value between events predicted at \\(t_p\\) and the ground truths.
+        '''
+        tau_pred = self.sample_time('its', 'tm', input_events, input_time, input_mask, 
+                                    number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate, \
+                                    step = self.mae_step if opt is None else opt.mae_step, \
+                                    mean = mean, std = std)                    # [sample_rate, batch_size, seq_len + 1]
+        tau_pred = tau_pred.mean(dim = 0)                                      # [batch_size, seq_len + 1]
+        mae = torch.abs(tau_pred - input_time) * input_mask                    # [batch_size, seq_len + 1]
+
+        predicted_events, log_p = self.model.event_prober(input_events, input_time, input_mask, mean, std)
+                                                                               # [batch_size, seq_len + 1] + [batch_size, seq_len + 1, num_events + 1]
         
-        predicted_events = predicted_events[input_mask == 1]                   # [batch_size * seq_len]
-        input_events = input_events[input_mask == 1]                           # [batch_size * seq_len]
+        predicted_events = predicted_events[input_mask == 1]
+        input_events = input_events[input_mask == 1]
         predicted_events, input_events = move_from_tensor_to_ndarray(predicted_events, input_events)
         f1 = f1_score(y_pred = predicted_events, y_true = input_events, average = 'macro')
 
-        return mae, f1
+        return mae, f1, log_p.exp()
 
 
     @torch.inference_mode()
     def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, std, return_mean = True):
         '''
-        Well...We will do something totally different by performing event-wise MAE.
-        First, predict the event types by \\int_{t_i}^{+\\infty}{\\lambda^*_i(t)\\exp(-\\int_{t_0}^{\\tau}{\\lambda^*_i(t)dt})d\\tau}
-        Next, given time predictions. (Expectation? or probability bigger than 0.5?)
+        Called by debug() and get_mae_e_and_f1(), this function computed the MAE-E and macro-F1 of one minibatch.
+
+        ### Args
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+            * ```torch.tensor``` input_mask
+              shape: ```[batch_size, seq_len + 1]```
+              When the next event actually happens.
+            * ```float``` mean
+            * ```float``` std
+              Used for input time scaling.
+            * ```bool``` return_mean
+              If true, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next on all events in the minibatch.
+              If false, we compute the mean of mae_per_event_with_predict_index and mae_per_event_with_event_next per sequence.
+            * ```namespace``` opt
+              One may bring custom settings into this function through this argument during evaluation. Please refers to
+              debug() and get_mae_e_and_f1() for more information about what custom settings are available.
+
+        ### Outputs
+            * ```float``` f1
+              macro-F1 value between events predicted and the ground truths.
+            * ```list``` top_k_acc
+              top-1 to top-N accuracy value between events predicted and the ground truths.
+            * ```torch.tensor``` probability_integral_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of p(m) over m.
+            * ```torch.tensor``` probability_distribution_of_mark
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of p(m) over the different mark m.
+            * ```torch.tensor``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              Time predicted by p(t|m) over all marks m.
+            * ```torch.tensor``` mae_per_event_with_predict_index_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next_avg
+              shape: ```[batch_size]``` if return_mean else ```[1]```
+              The average of MAE-E when we pick predicted times using real marks.
+            * ```torch.tensor``` mae_per_event_with_predict_index
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using predicted marks.
+            * ```torch.tensor``` mae_per_event_with_event_next
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
         '''
         probability_distribution_of_mark = self.model.mark_distribution(input_events, input_time, input_mask, mean, std)
                                                                                # [batch_size, seq_len + 1, num_events + 1]
@@ -258,7 +394,8 @@ class MarkedLogNormMixWrapper(BasicModel):
             mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim = 0)
                                                                                # [batch_size]
         
-        return f1, top_k_acc, probability_integral_sum, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
+        return f1, top_k_acc, probability_integral_sum, probability_distribution_of_mark, \
+               tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), \
                (mae_per_event_with_predict_index, mae_per_event_with_event_next)
 
 
@@ -266,23 +403,27 @@ class MarkedLogNormMixWrapper(BasicModel):
         '''
         This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
 
-        Args:
-        * minibatch  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                     data structure: [[input_time, input_events, score, mask], (mean, std)]
-        
-        Outputs:
-        * input_time    type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event timestamp sequence.
-        * input_events  type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw event marks sequence.
-        * mask          type: torch.tensor shape: [batch_size, seq_len + 1]
-                        Raw mask sequence.
-        * mean          type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
-        * std           type: int shape: N/A
-                        The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide
-                        this value if needed.
+        ### Args
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+              
+        ### Outputs
+            * ```torch.tensor``` input_time
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event timestamp sequence.
+            * ```torch.tensor``` input_events
+              shape: ```[batch_size, seq_len + 1]```
+              Raw event marks sequence.
+            * ```torch.tensor``` mask
+              shape: ```[batch_size, seq_len + 1]```
+              Raw mask sequence.
+            * ```int``` mean
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
+            * ```int``` std
+              The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
         '''
         (input_events, input_time, padded_score, input_mask, input_intensity), mean_and_std  = minibatch
         mean, std = 0, 1
@@ -295,27 +436,34 @@ class MarkedLogNormMixWrapper(BasicModel):
     @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
+        Function prober, used by evaluator to draw plots of the intensity function.
+        Not implemented for MarkedLogNormMix since this model does not provide the intensity function.
 
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
-
         return NotImplementedError('IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function.')
 
 
     def figure_integral(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
+        Function prober, used by evaluator to draw plots of integral of the intensity function.
+        Not implemented for MarkedLogNormMix since this model does not provide the intensity function.
 
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
         return NotImplementedError('LogNormMix is intensity-free. Therefore, it can not provide the plot for the intensity integral.')
 
@@ -323,14 +471,23 @@ class MarkedLogNormMixWrapper(BasicModel):
     @torch.inference_mode()
     def figure_probability(self, input_data, opt):
         '''
-        Function prober, used by tpp_ploter to draw plots.
-
-        Args:
-        * input_data  type: list shape: [[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]
-                      The original minibatch. Detailed information is available in extract_plot_data()
-        * resolution  type: int shape: N/A
-                      How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots of the probability distribution.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int})
+        
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
         batch_size, _ = input_time.shape
@@ -355,20 +512,36 @@ class MarkedLogNormMixWrapper(BasicModel):
             'events_next': events_next,
             'mask_next': mask_next,
             'expand_probability': expand_probability,
-            'input_intensity': input_intensity
+            'input_intensity': input_intensity,
+            'timestamp': timestamp
             }
-        generate_probability_figure(data, timestamp, opt)
+        generate_probability_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
-        Args:
-        time: [batch_size(always 1), seq_len + 1]
-              The original dataset records. 
-        resolution: int
-              How many interpretive numbers we have between an event interval?
+        Function prober, used by evaluator to draw plots for deeper insight of intensity functions and other metrics.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        2. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                  The number of interpolated points counts the start and end point of the interval.
+        3. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        4. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
         '''
+        argument_check(opt, **{'resolution': int, 'sample_rate': int, 'mae_step': int, 'mae_e_step': int})
+        
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
         time_next, _ = self.divide_history_and_next(input_time)                # [batch_size, seq_len]
