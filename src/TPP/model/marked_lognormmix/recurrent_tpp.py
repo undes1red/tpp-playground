@@ -289,7 +289,7 @@ class RecurrentTPP(nn.Module):
         distribution.
         inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
         '''
-        context = self.get_context(features)                                   # [batch_size, seq_len, mark_embedding_size + 1]
+        context = self.get_context(features)                                   # [batch_size, seq_len, context_size]
         inter_time_dist = self.get_inter_time_dist(context)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
         cdf_from_0_to_t = inter_time_dist.get_cdf(taus)                        # [..., batch_size, seq_len + 1, num_marks + 1]
@@ -328,7 +328,7 @@ class RecurrentTPP(nn.Module):
         distribution.
         inter_time_dist is the p(\\tau | w, \\mu, s) defined in Equation 2.
         '''
-        context = self.get_context(features)                                   # [batch_size, seq_len, mark_embedding_size + 1]
+        context = self.get_context(features)                                   # [batch_size, seq_len, context_size]
         inter_time_dist = self.get_inter_time_dist(context)
         # Using obtained invertible distribution we can obatin the log probability for each inter time.
         cdf_from_0_to_t = inter_time_dist.get_cdf_3d(taus)                     # [..., batch_size, seq_len + 1, num_marks]

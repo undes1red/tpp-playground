@@ -291,7 +291,7 @@ class MarkedLogNormMixWrapper(BasicModel):
 
 
     @torch.inference_mode()
-    def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, std, return_mean = True):
+    def mean_absolute_error_e(self, input_events, input_time, input_mask, mean, std, return_mean = True, opt = None):
         '''
         Called by debug() and get_mae_e_and_f1(), this function computed the MAE-E and macro-F1 of one minibatch.
 
@@ -362,8 +362,9 @@ class MarkedLogNormMixWrapper(BasicModel):
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time('its', 'mt',
                                               input_events, input_time, input_mask,
-                                              probability_distribution_of_mark, mean, std)
-                                                                               # [batch_size, seq_len, num_events]
+                                              probability_distribution_of_mark, 
+                                              self.sample_rate if opt is None else opt.sample_rate, self.mae_e_step if opt is None else opt.mae_e_step,
+                                              mean, std)                       # [batch_size, seq_len, num_events]
         if return_mean:
             tau_pred_all_event = tau_pred_all_event.mean(dim = 0)              # [batch_size, seq_len, num_events]
             mae_per_event_with_predict_index = torch.abs((tau_pred_all_event * predict_index_one_hot).sum(dim = -1) - input_time) * input_mask
@@ -506,7 +507,7 @@ class MarkedLogNormMixWrapper(BasicModel):
             self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, std)
                                                                                # [batch_size, seq_len, resolution, num_events] + [batch_size, seq_len, resolution]
         expand_probability = expand_probability.sum(dim = -1)                  # [batch_size, seq_len, resolution]
-
+        
         data = {
             'time_next': time_next,
             'events_next': events_next,
@@ -515,13 +516,14 @@ class MarkedLogNormMixWrapper(BasicModel):
             'input_intensity': input_intensity,
             'timestamp': timestamp
             }
+        
         generate_probability_figure(data, opt)
 
 
     @torch.inference_mode()
     def figure_debug(self, input_data, opt):
         '''
-        Function prober, used by evaluator to draw plots for deeper insight of intensity functions and other metrics.
+        Function prober, used by evaluator to draw plots for deeper insight of the learned distribution and other metrics.
         
         You should declare the following arguments in your config file:
         1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
@@ -548,18 +550,25 @@ class MarkedLogNormMixWrapper(BasicModel):
         events_next, _ = self.divide_history_and_next(input_events)            # [batch_size, seq_len]
         mask_next, _ = self.divide_history_and_next(input_mask)                # [batch_size, seq_len]
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
-                                                                               # [batch_size, seq_len]
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes \
-              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, std, return_mean = False)
-                                                                               # [batch_size, seq_len]
+        mae, f1_1, _ = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std, opt = opt)
+                                                                               # [batch_size, seq_len + 1] + float
+        f1_2, top_k, probability_sum, _, tau_pred_all_event, maes_avg, maes \
+              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, std, return_mean = False, opt = opt)
+                                                                               # float + list + [batch_size, seq_len + 1] + [sample_rate, batch_size, seq_len + 1, num_marks + 1] + ([1,], [1,]) + ([batch_size, seq_len + 1], [batch_size, seq_len + 1])
         expand_probability_for_each_event, timestamp = \
             self.model.probability_prober(input_events, input_time, input_mask, opt.resolution, mean, std)
-                                                                               # [batch_size, seq_len, resolution, num_marks] + [batch_size, seq_len, resolution]
+                                                                               # [batch_size, seq_len, resolution, num_marks + 1] + [batch_size, seq_len, resolution]
 
-        tau_pred_all_event = tau_pred_all_event[..., :self.num_events]
+        # Remove the dummy event.
+        # Take care that the following code only works when batch_size = 1, which is the default setting during evaluation.
+        mae = mae[..., :-1]                                                    # [batch_size, seq_len]
+        probability_sum = probability_sum[..., :-1]                            # [batch_size, seq_len]
+        tau_pred_all_event = tau_pred_all_event[..., :-1, :self.num_events]    # [sample_rate, batch_size, seq_len, num_marks]
         expand_probability_for_each_event = expand_probability_for_each_event[..., :self.num_events]
-
+                                                                               # [batch_size, seq_len, resolution, num_marks]
+        maes = (maes[0][..., :-1], maes[1][..., :-1])                          # ([batch_size, seq_len], [batch_size, seq_len])
+        maes_avg = (maes[0].mean(), maes[1].mean())
+        
         spearman_matrix = []
         pearson_matrix = []
         L1_matrix = []
@@ -584,41 +593,62 @@ class MarkedLogNormMixWrapper(BasicModel):
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
             # L^1 metric
             L1_matrix_per_seq = L1_distance_across_events(expand_probability_per_seq[:seq_len * opt.resolution], 
-                                                          resolution = opt.resolution,
-                                                          time_next = time_next_per_seq[:seq_len])
+                                                          time_next = time_next_per_seq[:seq_len], has_flatten = True)
 
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
             L1_matrix.append(L1_matrix_per_seq)
 
-        data = {}
-        '''
-        Append additional info into the data dict.
-        '''
-        data['events_next'] = events_next
-        data['time_next'] = time_next
-        data['mask_next'] = mask_next
-        data['f1_after_time_pred'] = f1_1
-        data['f1_before_time_pred'] = f1_2
-        data['top_k'] = top_k
-        data['probability_sum'] = probability_sum
-        data['tau_pred_all_event'] = tau_pred_all_event
-        data['mae_before_event'] = mae
-        data['maes_after_event_avg'] = maes_avg
-        data['maes_after_event'] = maes
-        data['expand_probability_for_each_event'] = expand_probability_for_each_event
-        data['spearman_matrix'] = spearman_matrix
-        data['pearson_matrix'] = pearson_matrix
-        data['L1_matrix'] = L1_matrix
+        # Append info into the data dict.
+        data = {
+            'events_next': events_next,
+            'time_next': time_next,
+            'mask_next': mask_next,
+            'f1_after_time_pred': f1_1,
+            'f1_before_time_pred': f1_2,
+            'top_k': top_k,
+            'probability_sum': probability_sum,
+            'tau_pred_all_event': tau_pred_all_event,
+            'mae_before_event': mae,
+            'maes_after_event_avg': maes_avg,
+            'maes_after_event': maes,
+            'expand_probability_for_each_event': expand_probability_for_each_event,
+            'spearman_matrix': spearman_matrix,
+            'pearson_matrix': pearson_matrix,
+            'L1_matrix': L1_matrix,
+            'timestamp': timestamp
+        }
 
-        generate_debug_figure(data, timestamp, opt)
+        generate_debug_figure(data, opt)
 
 
-    '''
-    Evaluation over the entire dataset.
-    '''
+    # Evaluation over the entire dataset.
     @torch.inference_mode()
     def get_spearman_and_l1(self, input_data, opt):
+        '''
+        Used by evaluator to calculate the average gap between the predicted and real distribution using L1 distance and spearman coefficient.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+                                 The number of interpolated points counts the start and end point of the interval.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```float``` spearman
+              The spearman coefficient between the predicted and real distribution.
+            * ```float``` l1
+              The l1 distance between the predicted and real distribution.
+        '''
+        argument_check(opt, **{'resolution', int})
+        
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
                                                                                # [batch_size, seq_len + 1] * 4 + float + float
         expand_probability, timestamp = \
@@ -653,30 +683,113 @@ class MarkedLogNormMixWrapper(BasicModel):
 
     @torch.inference_mode()
     def get_mae_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
+        2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```np.ndarray``` mae
+              shape: ```[batch_size, seq_len]```
+              The MAE value, which is the time gap between each predicted and real event.
+            * ```float``` f1_1
+              The f1 value shows the accuracy of the predicted marks.
+            * ```torch.tensor``` dist
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at when the real event happens.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int})
+        
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
-        mae, f1_1 = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std)
-                                                                               # [batch_size, seq_len]
-        mae = move_from_tensor_to_ndarray(mae)
+        mae, f1_1, dist = self.mean_absolute_error_and_f1(input_events, input_time, input_mask, mean, std, opt = opt)
+                                                                               # [batch_size, seq_len + 1] + float + [batch_size, seq_len + 1, num_events]
+        mae, dist, input_events = move_from_tensor_to_ndarray(mae, dist, input_events)
 
-        return mae, f1_1
+        return mae[..., :-1], f1_1, dist[..., :-1, :-1], input_events[..., :-1]
 
 
     @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
+        '''
+        Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
+        2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+        
+        ### Outputs:
+            * ```np.ndarray``` mae
+              shape: ```[batch_size, seq_len]```
+              The MAE value, which is the time gap between each predicted and real event.
+            * ```float``` f1_1
+              The f1 value shows the accuracy of the predicted marks.
+            * ```torch.tensor``` dist
+              shape: ```[batch_size, seq_len, num_events]```
+              The mark distribution at when the real event happens.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'sample_rate': int, 'mae_e_step': int})
+        
         input_time, input_events, input_mask, input_intensity, mean, std = self.extract_plot_data(input_data)
 
-        f1_2, top_k, probability_sum, tau_pred_all_event, maes_avg, maes\
-              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, std)
-                                                                               # [batch_size, seq_len]
-        _, mae_e, probability_sum, = move_from_tensor_to_ndarray(*maes, probability_sum)
+        f1_2, top_k, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, maes_avg, maes\
+              = self.mean_absolute_error_e(input_events, input_time, input_mask, mean, std, opt = opt)
+                                                                               # [batch_size, seq_len + 1]
 
-        return mae_e[..., :-1], f1_2, probability_sum[..., :-1], input_events[..., :-1]
+        _, maes, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, input_time, input_events \
+            = move_from_tensor_to_ndarray(*maes, probability_sum, probability_integral_from_zero_to_infinite, tau_pred_all_event, input_time, input_events)
+
+        return maes[..., :-1], f1_2, probability_sum[..., :-1], probability_integral_from_zero_to_infinite[..., :-1, :-1], \
+               tau_pred_all_event[..., :-1, :-1], input_time[..., :-1], input_events[..., :-1]
 
 
     def train_step(model, minibatch, device):
-        ''' Epoch operation in training phase'''
-    
+        '''
+        This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss_without_dummy
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+        '''
         def extract_minibatch(minibatch):
             (input_events, input_time, _, input_mask), mean_and_std = minibatch
             mean, std = 0, 1
@@ -698,8 +811,32 @@ class MarkedLogNormMixWrapper(BasicModel):
     
 
     def evaluation_step(model, minibatch, device):
-        ''' Epoch operation in evaluation phase '''
-    
+        '''
+        This function unpacks the minibatch, calls the evaluation_procedure() to calculate the metrics.
+
+        ### Args
+            * ```torch.nn.Module``` model
+              The MTPP model that we train.
+            * ```list``` minibatch
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```torch.device``` device
+              where we train the model.
+
+        ### Outputs:
+            * ```float``` time_loss
+              The average NLL loss without dummy events, specifically the start and the end event.
+            * ```float``` surv_last_loss
+              The average NLL loss of the end event, which is the integral of the intensity function from the last occurred event to the end time.
+            * ```float``` fact
+              The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
+            * ```float``` mae
+              The average error between predicted time and real time.
+            * ```float``` f1
+              The prediction accuracy of predicted marks.
+        '''
         def extract_minibatch(minibatch):
             (input_events, input_time, _, input_mask), mean_and_std = minibatch
             mean, std = 0, 1
@@ -709,17 +846,30 @@ class MarkedLogNormMixWrapper(BasicModel):
 
         model.eval()
 
-        time_loss, surv_last_loss, mae, f1_pred_time, the_number_of_events \
+        time_loss, surv_last_loss, mae, f1, the_number_of_events \
             = model(task_name = 'evaluate', **extract_minibatch(minibatch))
 
         time_loss = time_loss.item() / the_number_of_events
         surv_last_loss = surv_last_loss.item() / the_number_of_events
         fact = minibatch[0][2].sum().item() / the_number_of_events
     
-        return time_loss, surv_last_loss, fact, mae, f1_pred_time
+        return time_loss, surv_last_loss, fact, mae, f1
 
 
     def postprocess(input, procedure):
+        '''
+        This function makes some modifications to the output of training_step() and evaluation_step().
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```list```
+              The postprocessed outputs.
+        '''
         def train_postprocess(input):
             '''
             Training process
@@ -737,10 +887,22 @@ class MarkedLogNormMixWrapper(BasicModel):
         return train_postprocess(input) if procedure == 'Training' else test_postprocess(input)
 
 
-    format_dict_length = 5
-
-
     def log_print_format(input, procedure):
+        '''
+        This function packs the procedure input into a dict that can be handled by trainer and evaluator for logging.
+
+        ### Args
+            * ```list``` input
+              The output of either training_step() or evaluation_step().
+            * ```str``` procedure
+              This string tells the function which function the input comes from.
+
+        ### Outputs:
+            * ```dict``` format_dict
+              format: {..., <variable name>: {'data': <value>, 'num_format': <num_format>, 'suffix': <suffix>}, ...}
+              example: {..., 'memory': {'data': 12.123456, 'num_format': ':2.4f', 'suffix': 'GiB'}, ...}
+              The formated results.
+        '''
         def train_log_print_format(input):
             format_dict = {}
             format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
@@ -760,12 +922,32 @@ class MarkedLogNormMixWrapper(BasicModel):
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
 
+    '''
+    The maximum length of the format_dict in different procedures.
+    '''
+    format_dict_length = 5
+
+
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
-        [relative loss on evaluation dataset, relative loss on test dataset, event loss on test dataset]
+        This function helps the trainer to pick the best checkpoint based on several metrics.
+
+        ### Args
+            * ```dict``` evaluation_report_format_dict
+            * ```dict``` test_report_format_dict
+              The formated output of training_step() and evaluation_step().
+
+        ### Outputs:
+            * ```list```
+              The picked metrics used for model select.
+            * ```list```
+              The name of these metrics.
         '''
         return [evaluation_report_format_dict['absolute_NLL_loss'], 
                 test_report_format_dict['absolute_NLL_loss']], \
                ['evaluation_absolute_loss', 'test_absolute_loss']
 
+    '''
+    metric number is the length of the output of choose_metric
+    '''
     metric_number = 2 # metric number is the length of the output of choose_metric

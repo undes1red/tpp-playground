@@ -206,8 +206,8 @@ class MarkedLogNormMix(RecurrentTPP):
         log_cdf = torch.stack(log_cdf, dim = -1)                               # [..., batch_size, seq_len + 1, num_marks + 1]
         cdf = torch.exp(log_cdf)                                               # [..., batch_size, seq_len + 1, num_marks + 1]
         needed_einops = f'... -> {"() " * (len(log_cdf.shape) - len(self.mark_dist.shape))}...'
-        log_mark_distribution = rearrange(self.mark_dist, needed_einops)       # [..., batch_size, seq_len + 1, num_marks + 1]
-        cdf *= log_mark_distribution                                           # [..., batch_size, seq_len + 1, num_marks + 1]
+        mark_distribution = rearrange(self.mark_dist, needed_einops)           # [..., batch_size, seq_len + 1, num_marks + 1]
+        cdf *= mark_distribution                                               # [..., batch_size, seq_len + 1, num_marks + 1]
 
         return cdf
 
@@ -222,8 +222,8 @@ class MarkedLogNormMix(RecurrentTPP):
         log_cdf = torch.stack(log_cdf, dim = -1)                               # [..., batch_size, seq_len + 1, num_marks]
         cdf = torch.exp(log_cdf)                                               # [..., batch_size, seq_len + 1, num_marks]
         needed_einops = f'... -> {"() " * (len(log_cdf.shape) - len(self.mark_dist.shape))}...'
-        log_mark_distribution = rearrange(self.mark_dist, needed_einops)       # [..., batch_size, seq_len + 1, num_marks]
-        cdf *= log_mark_distribution                                           # [..., batch_size, seq_len + 1, num_marks]
+        mark_distribution = rearrange(self.mark_dist, needed_einops)           # [..., batch_size, seq_len + 1, num_marks]
+        cdf *= mark_distribution                                               # [..., batch_size, seq_len + 1, num_marks]
 
         return cdf
 
