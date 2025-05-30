@@ -234,17 +234,14 @@ class RecurrentTPP(nn.Module):
         log_surv_last = torch.gather(log_surv_all, dim=-1, index=last_event_idx).squeeze(-1)
                                                                                # [batch_size]
         '''
-        if self.num_marks > 1:
-            mark_logits = torch.log_softmax(self.mark_linear(context), dim = -1)
-                                                                               # [batch_size, seq_len + 1, num_marks]
-            mark_dist = Categorical(logits = mark_logits)
-            log_probe = mark_dist.log_prob(mark_dist.enumerate_support())      # [num_marks, batch_size, seq_len + 1]
-            log_probe = rearrange(log_probe, 'n b s -> b s n')                 # [batch_size, seq_len + 1, num_marks]
-            predicted_events = torch.argmax(log_probe, dim = -1)               # [batch_size, seq_len + 1]
+        
+        mark_logits = torch.log_softmax(self.mark_linear(context), dim = -1)   # [batch_size, seq_len + 1, num_marks]
+        mark_dist = Categorical(logits = mark_logits)
+        log_probe = mark_dist.log_prob(mark_dist.enumerate_support())          # [num_marks, batch_size, seq_len + 1]
+        log_probe = rearrange(log_probe, 'n b s -> b s n')                     # [batch_size, seq_len + 1, num_marks]
+        predicted_events = torch.argmax(log_probe, dim = -1)                   # [batch_size, seq_len + 1]
 
-            return predicted_events
-        else:
-            return 0
+        return predicted_events, log_probe.exp()
 
 
     def probability_prober(self, input_events, input_time, input_mask, resolution, mean, std) -> torch.Tensor:

@@ -6,28 +6,32 @@ from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, save_f
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
 from src.TPP.model.utils import draw_intensity_integral_and_probability, draw_lineplot
-from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
+from src.TPP.resources.syn_tpp_utils import expand_true_probability
 
 logger = get_logger(__name__)
 
 
-def generate_probability_figure(data, timestamp, opt):
+def generate_probability_figure(data, opt):
     '''
+    This function draws the probability distribution p^*(m, t) given one sequence and store them in the "result" folder.
 
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
     '''
+    timestamp = data['timestamp']
     num_events = opt.info_dict['num_events']
     color_palette = stable_palette([f'Mark {i}' for i in range(num_events)])
 
-    '''
-    Part 1: the sum of probability distributions over all markers.
-    '''
-    expand_probability = data['expand_probability']                            # [batch_size, seq_len, resolution, num_events]
+    # Part 1: the sum of probability distributions over all markers.
+    expand_probability = data['expand_probability']                            # [batch_size, seq_len, resolution]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     events_next = data['events_next']                                          # [batch_size, seq_len]
     time_next = data['time_next']                                              # [batch_size, seq_len]
     input_intensity = data['input_intensity']                                  # [batch_size, seq_len + 1]
 
-    expand_probability = expand_probability.sum(dim = -1)                      # [batch_size, seq_len, resolution]
     true_probability = expand_true_probability(time_next, input_intensity, opt)# [batch_size, seq_len, resolution] or batch_size * None
 
     packed_data = zip(*move_from_tensor_to_ndarray(expand_probability, events_next, time_next, mask_next, timestamp, true_probability))
@@ -74,14 +78,19 @@ def generate_probability_figure(data, timestamp, opt):
     return 0
 
 
-def generate_debug_figure(data, timestamp, opt):
+def generate_debug_figure(data, opt):
     '''
+    This function draws plots for deeper insight of intensity functions and other metrics.
+
+    ### Args
+        * ```dict``` data
+          All the data we need to draw the plot. The data type can vary from item to item, so be careful.
+        * ```namespace``` opt
+          Task arguments.
     '''
 
-    '''
-    Only MAE is available.
-    '''
-    mae = data['mae_before_event']                                     # [batch_size, seq_len]
+    # Only MAE is available.
+    mae = data['mae']                                                  # [batch_size, seq_len]
     mask_next = data['mask_next']                                      # [batch_size, seq_len]
 
     packed_data = zip(*move_from_tensor_to_ndarray(mae, mask_next))
@@ -92,10 +101,10 @@ def generate_debug_figure(data, timestamp, opt):
         data_maes_per_seq = {
              'Event Index': list(range(seq_len)),
             r'$\log(1 + \mathrm{MAE})$': np.log(1 + mae_per_seq[:seq_len]),
-             'marks': ['MAE'] * seq_len
+             ' ': ['MAE'] * seq_len
         }
 
-        fig1 = draw_lineplot(data = data_maes_per_seq, x = 'Event Index', y = r'$\log(1 + \mathrm{MAE})$', hue = 'Mark', \
+        fig1 = draw_lineplot(data = data_maes_per_seq, x = 'Event Index', y = r'$\log(1 + \mathrm{MAE})$', hue = ' ', \
                              figure_kwargs = {'font.size': 18, 'figure.figsize': (5, 5)})
         save_fig(fig1, opt.plot_store_dir_for_this_batch, f'MAE_{idx}.pdf')
         logger.info(f'MAE_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')

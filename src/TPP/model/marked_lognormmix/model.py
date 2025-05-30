@@ -109,30 +109,6 @@ class MarkedLogNormMixWrapper(BasicModel):
         return input_history, input_next                                       # [batch_size, seq_len, 1] or [batch_size, seq_len]
 
 
-    def remove_dummy_event_from_mask(self, mask):
-        '''
-        Remove the probability of the dummy event from the mask.
-
-        ### Args
-            * ```torch.tensor``` mask
-              shape: [batch_size, seq_len]
-              The input mask tensor.
-        
-        ### Outputs
-            * ```torch.tensor``` mask_without_dummy
-              shape: [batch_size, seq_len]
-              The output mask tensor with the last unmask event in each sequence removed.
-        '''
-        mask_without_dummy = torch.zeros_like(mask)                            # [batch_size, seq_len - 1]
-        for idx, mask_per_seq in enumerate(mask):
-            dummy_index = mask_per_seq.sum() - 1
-            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
-            mask_without_dummy_per_seq[dummy_index] = 0
-            mask_without_dummy[idx] = mask_without_dummy_per_seq
-        
-        return mask_without_dummy
-
-
     def train_procedure(self, input_events, input_time, input_mask, mean, std):
         '''
         MarkedLogNormMix's forwardpropagation function for training.
