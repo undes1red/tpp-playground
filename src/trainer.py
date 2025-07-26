@@ -18,9 +18,7 @@ logger = get_logger(__name__)
 
 class Trainer:
     def __init__(self, opt, procedure):
-        '''
-        Now, we use pd.DataFrame to record training records.
-        '''
+        # Now, we use pd.DataFrame to record training records.
         self.df_records = {
             'Training': None,
             'Evaluation': None,
@@ -45,10 +43,8 @@ class Trainer:
         self.get_model = getattr(procedure, 'get_model')
         self.get_dataloader = getattr(procedure, 'get_dataloader')
 
-        '''
-        Directory preparation.
-        Create log and model-saving dirs if they are not present.
-        '''
+        # Directory preparation.
+        # Create log and model-saving dirs if they are not present.
         self.output_checkpoint_folder = 'model_' + self.opt.model_identifier
         self.log_folder = 'log_' + self.opt.model_identifier
 
@@ -68,38 +64,35 @@ class Trainer:
 
 
     def work(self):
-        '''
-        The entry function for TaskHost to start the task.
-        '''
+        # The entry function for TaskHost to start the task.
         
-        '''
-        We try to check if models and logs are saved and give some hints if you don't store any models or logs(most time you should store them).
-        '''
+        # We try to check if models and logs are saved and give some hints if you don't store any models or logs(most time you should store them).
         if not self.opt.log and not self.opt.save_model:
             logger.warning('No experiment result will be saved. If it is not intended, please check your training script.')
 
-        '''
-        ========= Load Dataset =========
-        '''
+        logger.warning('Loading Dataset...')
         if self.opt.data_path:
             self.raw_data = prepare_dataloaders(self.opt, self.get_dataloader)
             self.opt.training_size = len(self.raw_data['Training'])
         else:
             raise logger.exception("Wrong input data path.")
-    
+
+        logger.warning('Loading Model...')
+        procedure_param = read_yaml(self.opt.abs_procedure_config) if self.opt.abs_procedure_config else {}
+        self.opt.procedure_param = procedure_param
+        logger.info(f'The hyperparameters for all tasks under procedure {self.opt.procedure} are {procedure_param}')
+        
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
-        self.param_names = list(model_param.keys())
         self.opt.model_params = model_param
         logger.info(f'The input model hyperparameters are {model_param}')
         
-        '''
-        We load the required model by get_model()
-        '''
+        # We load the required model by get_model()
         self.model_class = self.get_model(self.opt)
         self.model = self.model_class(
-            device = self.opt.device, opt = self.opt, **model_param
+            device = self.opt.device, opt = self.opt, **model_param, **procedure_param
         )
         self.opt.__dict__.update(model_param)
+        self.opt.__dict__.update(procedure_param)
 
         trainable_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         total_parameters = sum(p.numel() for p in self.model.parameters())
@@ -109,10 +102,8 @@ class Trainer:
         logger.info(f'For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}')
         logger.info(f'The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}.')
     
-        '''
-        Due to the complexity of learning rate scheduler, the scheduler is fixed. 
-        If you want to use another learning rate scheduler, plz modify it in src.optim.
-        '''
+        # Due to the complexity of learning rate scheduler, the scheduler is fixed. 
+        # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
 
         if self.opt.cuda:
@@ -122,16 +113,12 @@ class Trainer:
     
     
     def task(self):
-        '''
-        Write hyperparameters into the model dir.
-        '''
+        # Write hyperparameters into the model dir.
         hyperparameters = copy.deepcopy(vars(self.opt))
         del hyperparameters['device']
         write_yaml(hyperparameters, os.path.join(self.opt.save_model, self.output_checkpoint_folder), 'model_card.yml')
 
-        '''
-        Setting up file loggers and a wandb online logger.
-        '''
+        # Setting up file loggers and a wandb online logger.
         if self.opt.log and self.opt.wandb:
             import wandb
             wandb.require("core")
@@ -145,9 +132,7 @@ class Trainer:
                        )
             wandb.watch(self.model, log = 'all', log_freq = self.opt.n_report_steps, log_graph = True)
     
-        '''
-        Metric checker for choosing the best model during training.
-        '''
+        # Metric checker for choosing the best model during training.
         self.metric_checker = Metric(self.model_class.metric_number, getattr(self.model_class, 'smaller_is_better', None))
         self.format_dict_length = self.model_class.format_dict_length
         self.report_sum = [0] * self.format_dict_length
@@ -158,9 +143,7 @@ class Trainer:
         training_iter = cycle(iter(self.raw_data['Training']))
         zero_grad(self.optimizer)
 
-        '''
-        Start training.
-        '''
+        # Start training.
         self.evaluation_report(0)
         for current_step in tqdm(step_range, desc = desc, leave = False):
             data = next(training_iter)
@@ -183,16 +166,12 @@ class Trainer:
     
             self.report_sum = list_add(self.report_sum, step_result)
 
-            '''
-            A short report about training.
-            '''
+            # A short report about training.
             if current_step % self.opt.n_report_steps == 0:
                 self.report_sum = list_div(self.report_sum, self.opt.n_report_steps)
                 self.train_report(current_step)
             
-            '''
-            A short report about evaluation and testing.
-            '''
+            # A short report about evaluation and testing.
             if current_step % self.opt.n_evaluation_steps == 0:
                 self.evaluation_report(current_step)
 
@@ -274,9 +253,7 @@ class Trainer:
     def evaluation_report(self, current_step):
         logger.warning(f'Model evaluation and checkpoint saving at step {current_step}.')
 
-        '''
-        Evaluation and checkpoint saving.
-        '''
+        # Evaluation and checkpoint saving.
         evaluation_results = self.evaluation('Evaluation', current_step)
         test_results = self.evaluation('Test', current_step)
         self.save(current_step, evaluation_results, test_results)

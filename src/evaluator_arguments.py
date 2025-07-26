@@ -53,6 +53,8 @@ class BasicEvaluatorArguments:
         # Training procedure related hyperparameters
         self.parser.add_argument('-ub', '--used_batch_size', type=int, default=2048, help='Batch size used for training the model.')
         self.parser.add_argument('-eb', '--evaluation_batch_size', type=int, default=1, help='Batch size used for training the model.')
+        self.parser.add_argument('--used_procedure_config', type=str, default = None, \
+                                 help='Relative path to the custom setting file, in which settings are applied to all tasks under the procedure. The absolute file path is {root}/config/${main_procedure_name}/${procedure_config}')
 
         # Model-related hyperparameters
         self.parser.add_argument('--model_name', default=None, help="The model name.")
@@ -63,6 +65,8 @@ class BasicEvaluatorArguments:
                             help='The learning rate used when training the model.')
         
         # Which task you'd like to run and where is the task config file?
-        parser.add_argument('--task_name', type=str, help='Define which evaluation task you\'d like to start.')
-        parser.add_argument('--task_config', type=str, help='Relative path to the custom subtask config file used for training. This absolute file path is {root}/config/{main_procedure_name}/{model_name}/{task_config}.')
+        self.parser.add_argument('--procedure_config', type=str, default = None, \
+                                 help='Relative path to the custom setting file, in which settings are applied to all tasks under the procedure. The absolute file path is {root}/config/${main_procedure_name}/${procedure_config}')
+        self.parser.add_argument('--task_name', type=str, help='Define which evaluation task you\'d like to start.')
+        self.parser.add_argument('--task_config', type=str, help='Relative path to the custom subtask config file used for training. This absolute file path is {root}/config/{main_procedure_name}/{model_name}/{task_config}.')
         

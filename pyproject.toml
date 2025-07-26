@@ -7,7 +7,7 @@ requires-python = "==3.12.*"
 
 [dependency-groups]
 base = [
-    "torch==2.7.0",
+    "torch",
     "torchvision",
     "torchaudio",
     "numpy",
@@ -31,14 +31,8 @@ optional = [
 
 llm = [
     "openai",
-    "langchain",
-    "langchain-huggingface",
-    "optimum",
-    "gptqmodel",
-    "logbar",
-    "tokenicer",
-    "device_smi",
-    "gguf"
+    "vllm==0.9.2",
+    "flashinfer-python"
 ]
 
 dev = [

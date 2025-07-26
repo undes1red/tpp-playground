@@ -43,7 +43,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
                     list_output_results = [[] for _ in range(result_length)]
                 
                 [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-    
+                
             flops = 0
             elapsed_time = progress_bar.format_dict['elapsed']
             data_size = progress_bar.format_dict['total']

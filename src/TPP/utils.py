@@ -6,7 +6,9 @@ suffix_shortcut_dict = {
     'n_training_steps': 'nts',
     'dataloader_config': '',
     'used_dataloader_config': '',
-    'model_config': ''
+    'model_config': '',
+    'procedure_config': '',
+    'used_procedure_config': '',
 }
 
 

@@ -185,6 +185,27 @@ def generate_hypro_dataset_postprocess(all_evaluation_results, desc, opt):
                opt.store_dir, 'dataset_card.yml')
 
 
+def llm_vs_mtpp_ranking_postprocess(all_evaluation_results, desc, opt):
+    '''
+    This function is called when task_name = llm_ranking.
+    
+    This function computes the average ranking of the real event within a lot of sampled events.
+    We expected that the real event should have a generally higher ranking (lower in the value) than randomly sampled events.
+    '''
+    ranking_from_mtpp, ranking_from_llm = all_evaluation_results
+    
+    average_ranking_from_mtpp = np.mean(ranking_from_mtpp)
+    average_ranking_from_llm = np.mean(ranking_from_llm)
+    
+    result_file = os.path.join(opt.store_dir, f'{desc}_ranking.txt')
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average ranking of true events decided by the MTPP model is {average_ranking_from_mtpp} and ranking of true events decided by the {opt.llm_model} is {average_ranking_from_llm}.'
+    write_to_txt(strings, result_file)
+    
+    ranking_results_file = os.path.join(opt.store_dir, f'{desc}_ranking.pkl')
+    data = {'ranking_from_mtpp': ranking_from_mtpp, 'ranking_from_llm': ranking_from_llm}
+    dump_to_pkl(data, ranking_results_file, compression = 'bz2')
+
+
 def mae_and_f1_of_imputated_events(model, dataset, desc, opt, early_offload):
     '''
     This function is called when task_name = mae_e_and_f1.
@@ -228,6 +249,27 @@ def mae_and_f1_of_imputated_events(model, dataset, desc, opt, early_offload):
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
 
+def llm_mtpp_classification_postprocess(all_evaluation_results, desc, opt):
+    '''
+    This function is called when task_name = llm_mtpp_classification.
+    
+    This function computes the average ranking of the real event within a lot of sampled events.
+    We expected that the real event should have a generally higher ranking (lower in the value) than randomly sampled events.
+    '''
+    ranking_from_mtpp, ranking_from_llm = all_evaluation_results
+    
+    average_ranking_from_mtpp = np.mean(ranking_from_mtpp)
+    average_ranking_from_llm = np.mean(ranking_from_llm)
+    
+    result_file = os.path.join(opt.store_dir, f'{desc}_ranking.txt')
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average ranking of true events decided by the MTPP model is {average_ranking_from_mtpp} and ranking of true events decided by the {opt.llm_model} is {average_ranking_from_llm}.'
+    write_to_txt(strings, result_file)
+    
+    ranking_results_file = os.path.join(opt.store_dir, f'{desc}_ranking.pkl')
+    data = {'ranking_from_mtpp': ranking_from_mtpp, 'ranking_from_llm': ranking_from_llm}
+    dump_to_pkl(data, ranking_results_file, compression = 'bz2')
+
+
 desc_funcs = {
     'spearman_and_l1': {'desc_string': 'Spearman and L1 for {0}', 'postprocess_func': spearman_and_l1_postprocess},
     'mae_and_f1': {'desc_string': 'MAE and macro-f1 for {0}', 'postprocess_func': mae_and_f1_postprocess},
@@ -236,7 +278,10 @@ desc_funcs = {
     'which_event_occurs_first': {'desc_string': 'Predict the next event by finding which event occurs first for {0}', 'postprocess_func': which_event_occurs_first_postprocess},
     'samples_from_et': {'desc_string': 'Samples of {0} for each mark', 'postprocess_func': samples_from_et_postprocess},
     'generate_hypro_dataset': {'desc_string': 'Generate HYPRO dataset for {0}', 'postprocess_func': generate_hypro_dataset_postprocess},
-
+    
+    # experiment 1: real event classification
+    'llm_mtpp_classification': {'desc_string': 'Comparing real event classification accuracy of MTPP and LLM for {0}', 'postprocess_func': llm_mtpp_classification_postprocess},
+    
     # CPPOD task.
     'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},
     'cppod_commission_evaluation': {'desc_string': 'Obtaining CPPOD score on commission outlier for {0}', 'postprocess_func': cppod_commission_evaluation_postprocess},

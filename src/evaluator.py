@@ -28,8 +28,8 @@ class Evaluator:
         '''
         ========= Restore Model from the checkpoint =========
         '''
-        self.checkpoint_folder_suffix = 'model_' + opt.model_identifier
-        self.results_folder_suffix = 'results_' + opt.model_identifier
+        self.checkpoint_folder = 'model_' + opt.model_identifier
+        self.results_folder = 'results_' + opt.model_identifier
 
 
     def work(self):
@@ -41,13 +41,19 @@ class Evaluator:
         else:
             raise logger.exception("Wrong input data path.")
     
+        procedure_param = read_yaml(self.opt.abs_procedure_config) if self.opt.abs_procedure_config else {}
+        self.opt.procedure_param = procedure_param
+        logger.info(f'The hyperparameters for all tasks under procedure {self.opt.procedure} are {procedure_param}')
+    
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         logger.info(f'The input model hyperparameters are {model_param}.')
         self.model_class = self.get_model(self.opt)
         model = self.model_class(device = self.opt.device, opt = self.opt,
-            **model_param
+            **model_param, **procedure_param
         )
         self.opt.__dict__.update(model_param)
+        self.opt.__dict__.update(procedure_param)
+        
         if len(self.opt.replace_index) == 0:
             logger.warning('The evaluation exited because NO checkpoint has been found.')
             logger.warning('Perhaps, you have forgot the --replace in your script.')
@@ -61,9 +67,9 @@ class Evaluator:
             self.opt.checkpoint_folder = os.path.join(self.opt.checkpoint_of_this_procedure, 
                                                       str(index), 
                                                       self.opt.training_dataset_name if self.opt.training_dataset_name is not None else self.opt.dataset_name, 
-                                                      self.checkpoint_folder_suffix)
+                                                      self.checkpoint_folder)
             # where figures, records are stored.
-            self.opt.store_dir = os.path.join(self.opt.results_of_this_procedure, str(index), self.opt.dataset_name, self.results_folder_suffix, self.opt.task_name)
+            self.opt.store_dir = os.path.join(self.opt.results_of_this_procedure, str(index), self.opt.dataset_name, self.results_folder, self.opt.task_name, self.opt.task_identifier)
             logger.info(f'We will load the model checkpoint in {self.opt.checkpoint_folder}.')
             logger.info(f'Results will be stored in {self.opt.store_dir}.')
 

@@ -1,6 +1,6 @@
 from src.toolbox.misc.conditional_decorator import conditional_decorator
 from src.toolbox.misc.check_tensor import check_tensor, check_number
-from src.toolbox.misc.tensor_to_array import move_from_tensor_to_ndarray
+from src.toolbox.misc.tensor_to_array import move_from_tensor_to_ndarray, move_from_tensor_to_list
 from src.toolbox.misc.stable_palette import stable_palette
 from src.toolbox.misc.get_logger import get_logger
 from src.toolbox.misc.mkdir_if_not_exist import mkdir_if_not_exist
@@ -19,5 +19,7 @@ from src.toolbox.misc.should_we_stop_sampling import check_should_we_stop_sampli
 from src.toolbox.misc.easy_model_load import easy_model_load
 from src.toolbox.misc.list_to_string import list_to_string
 from src.toolbox.misc.argument_check import argument_check
+from src.toolbox.misc.predict_event import predict_event
+from src.toolbox.misc.reverse_dict_key_val import reverse_dict_key_val
 
 # from src.toolbox.misc.figure_instruction_generator import figure_instruction_generator

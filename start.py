@@ -8,6 +8,10 @@ main_procedure_translator = {
     'TPP_train': 'TPP',
     'TPP_evaluate': 'TPP',
 
+    # Noted Temporal Point Process
+    'NTPP_train': 'NTPP',
+    'NTPP_evaluate': 'NTPP',
+
     # Long-horizon Temporal Point Process
     'LH_train': 'LH',
     'LH_evaluate': 'LH',
@@ -32,6 +36,10 @@ sub_procedure_translator = {
     # Temporal Point Process
     'TPP_train': 'Trainer',
     'TPP_evaluate': 'Evaluator',
+
+    # Noted Temporal Point Process
+    'NTPP_train': 'Trainer',
+    'NTPP_evaluate': 'Evaluator',
 
     # Long-horizon Temporal Point Process
     'LH_train': 'Trainer',
@@ -58,8 +66,16 @@ def environment_var_settings():
     '''
     Set up custom environment variables.
     '''
+    env_dict = {}
+    
     if os.path.exists(os.path.join(root_path, 'config', 'matplotlibrc')):
-        os.environ['MATPLOTLIBRC'] = os.path.join(root_path, 'config')
+        env_dict['MATPLOTLIBRC'] = os.path.join(root_path, 'config', 'matplotlibrc')
+    
+    # set up PYTORCH_CUDA_ALLOC_CONF to mitigate GPU memory fragmentation.
+    env_dict['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    env_dict['TOKENIZERS_PARALLELISM'] = 'true'
+    
+    os.environ.update(env_dict)
 
 
 if __name__ == '__main__':
@@ -84,6 +100,10 @@ if __name__ == '__main__':
         # Temporal point process
         'TPP_train',
         'TPP_evaluate',
+
+        # Noted Temporal point process
+        'NTPP_train',
+        'NTPP_evaluate',
 
         # Explainable History Distillation.
         'ehd_train',

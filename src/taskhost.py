@@ -115,7 +115,7 @@ class TaskHost:
         elif self.opt.cuda and torch.cuda.is_available():
             logger.warning('We use cuda to speed up model training!')
             logger.info(f'We use PyTorch compiled against CUDA {torch.version.cuda}.')
-            logger.info(f'Found {torch.cuda.device_count()} CUDA devices.')
+            logger.info(f'Found {torch.cuda.device_count()} CUDA device(s).')
             logger.info(f'We use the CUDA device with id {self.opt.cuda_device}.')
             props = torch.cuda.get_device_properties(self.opt.cuda_device)
             logger.info(f'CUDA Device name: {props.name} \t Memory: {props.total_memory / (1024**3):.2f}GiB.')

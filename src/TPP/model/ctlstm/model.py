@@ -1,11 +1,12 @@
 import torch, copy
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict, argument_check
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, move_from_tensor_to_list, pack_one_value_to_dict, argument_check, predict_event
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
+from src.toolbox.llms import CustomOpenAIforVLLM, extract_content, remove_thinking, create_messages
 
 from src.TPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.TPP.model.ctlstm.plot import *
@@ -21,7 +22,10 @@ class CTLSTMWrapper(BasicModel):
     def __init__(self, opt, device, d_input = 64, history_module_name = 'LSTM', history_encoder_layers = 1, \
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, 
                  sample_rate = 32, mae_step = 8, mae_e_step = 8, \
-                 integration_sample_rate = 100, survival_loss_during_training = True):
+                 integration_sample_rate = 100, survival_loss_during_training = True, \
+                 llm_contrastive = False, url_path = '', api_key = '', llm_model = None, \
+                 llm_contrast_sample_num = 8, llm_contrast_sample_step = 8, llm_prompt = None, \
+                 llm_visible_history_length = 5):
         '''
         This function creates a CTLSTM model.
         
@@ -56,6 +60,14 @@ class CTLSTMWrapper(BasicModel):
               The number of interpolated points counts the start and end point of the interval.
             * ```bool``` survival_loss_during_training
               When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
+            * ```bool``` llm_contrastive
+              The training loss will include the contrastive loss if true.
+            * ```str``` url_path
+              The url to access the LLM.
+            * ```str``` api_key
+              The API key used for identification during API calling.
+            * ```str``` llm_model
+              The name of the used LLM.
         '''
         super(CTLSTMWrapper, self).__init__()
         self.device = device
@@ -71,12 +83,26 @@ class CTLSTMWrapper(BasicModel):
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
-
+        
         self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                             d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
                             integration_sample_rate = integration_sample_rate)
-    
+
+        # The following arguments are mandatory if the loss includes the reranking loss.
+        # Please take care that this CTLSTM handles continuous-time event stream without notes.
+        # The CTLSTM with note handling is called CTLSTMN (CTLSTM with Note).
+        self.llm_contrastive = llm_contrastive
+        if self.llm_contrastive:
+            self.url_path = url_path
+            self.api_key = api_key
+            self.llm_model = llm_model
+            self.llm_contrast_sample_num = llm_contrast_sample_num
+            self.llm_contrast_sample_step = llm_contrast_sample_step
+            self.llm = CustomOpenAIforVLLM(self.url_path, self.llm_model, device = self.device, api_key = self.api_key)
+            self.llm_prompt = self.llm.tokenize(llm_prompt)
+            self.llm_visible_history_length = llm_visible_history_length
+
 
     def divide_history_and_next(self, input):
         '''
@@ -137,6 +163,9 @@ class CTLSTMWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
+            
+            # experiment 1: real event classification
+            'llm_mtpp_classification': self.llm_mtpp_classification,
 
             # figure drawing funtions
             'intensity': self.figure_intensity,
@@ -200,6 +229,12 @@ class CTLSTMWrapper(BasicModel):
              integral_all_events = integral_all_events, intensity_all_events = intensity_all_events, \
              events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
         )
+        
+        loss_kl = 0
+        if self.llm_contrastive:
+            loss_kl = self.likelihood_loss(events_history, time_history, \
+                                           event_next_without_dummy, time_next, \
+                                           mask_next_without_dummy, mean, std)
 
         loss_survival = 0
         if self.survival_loss_during_training:
@@ -209,7 +244,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, 1]
             loss_survival = integral_survival.sum()
 
-        loss = log_likeli_loss_without_dummy + loss_survival
+        loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
 
         return loss, log_likeli_loss_without_dummy, marker_loss_without_dummy, the_number_of_events
 
@@ -267,6 +302,8 @@ class CTLSTMWrapper(BasicModel):
 
         integral_all_events_time_next, intensity_all_events_time_next \
             = self.model(time_history, time_next, events_history)              # 2 * [batch_size, seq_len, num_events]
+            
+        # loss_kl = self.likelihood_loss(events_history, time_history, event_next_without_dummy, time_next, mask_next_without_dummy, mean, std)
 
         # NLL loss and event loss at time_next
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
@@ -333,6 +370,127 @@ class CTLSTMWrapper(BasicModel):
         return mtpp_loss, events_loss
 
 
+    def likelihood_loss(self, events_history, time_history, events_next, time_next, mask_next, mean, std):
+        # step 1: get samples from the existing distribution.
+        sampled_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+                                     events_history = events_history, time_history = time_history,
+                                     number_of_total_samples = self.llm_contrast_sample_num, 
+                                     step = self.llm_contrast_sample_step, 
+                                     mean = mean, std = std)                   # [llm_contrast_sample_num, batch_size, seq_len]
+                
+        intensity_integral_all_events, intensity_all_events \
+            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
+        mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
+        sampled_events = predict_event(mark_distribution, sample = True)       # [llm_contrast_sample_num, batch_size, seq_len]
+        # merge the real next event with the pred_time
+        # [real_pred_time, (sampled_times)]
+        sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        sampled_events, _ = pack((events_next, sampled_events), '* b s')       # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        
+        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0)
+                                                                               # [batch_size, seq_len, num_events]
+        all_intensity, _ = pack((intensity, intensity_all_events), '* b s ne') # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        all_intensity_integral, _ = pack((intensity_integral, intensity_integral_all_events), '* b s ne')
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        distribution_all = all_intensity * torch.exp(-all_intensity_integral)  # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        sampled_events_one_hot = F.one_hot(sampled_events, num_classes = self.num_events)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        selected_distribution = (distribution_all * sampled_events_one_hot).sum(dim = -1)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_event_distribution_from_mtpp_model = F.log_softmax(selected_distribution, dim = 0)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_probs_by_llm = self.get_score_from_llm(events_history, time_history, sampled_time, sampled_events, mask_next)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        # KL divengence loss.
+        log_event_distribution_from_mtpp_model = rearrange(log_event_distribution_from_mtpp_model, 'lsn b s -> b s lsn')
+                                                                               # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        log_probs_by_llm = rearrange(log_probs_by_llm, 'lsn b s -> b s lsn')   # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        kl_div = F.kl_div(input = log_event_distribution_from_mtpp_model, target = log_probs_by_llm, \
+                          reduction = 'none', log_target = True)               # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        
+        kl_div = (kl_div.sum(dim = -1) * mask_next).mean()
+        
+        return kl_div
+      
+    
+    def get_score_from_llm(self, events_history, time_history, sampled_time, sampled_events, mask_next, 
+                           llm_contrast_sample_num = None, llm_visible_history_length = None):
+        llm_contrast_sample_num = self.llm_contrast_sample_num if llm_contrast_sample_num is None else llm_contrast_sample_num
+        llm_visible_history_length = self.llm_visible_history_length if llm_visible_history_length is None else llm_visible_history_length
+        batch_size, seq_len = events_history.shape
+        max_token_len = 0
+        
+        probs_by_llm = []
+        for batch_index in range(batch_size):
+            selected_events = events_history[batch_index]                      # [seq_len]
+            selected_time = time_history[batch_index]                          # [seq_len]
+            max_available_length = mask_next[batch_index].sum()
+            
+            assembled_requests = []
+            beacons = []
+            
+            for seq_index in range(max_available_length):
+                llm_history_start_index = max(seq_index + 1 - llm_visible_history_length, 0)
+                llm_history_end_index = seq_index + 1
+                selected_events_history = selected_events[llm_history_start_index:llm_history_end_index]
+                selected_time_history = selected_time[llm_history_start_index:llm_history_end_index]
+                selected_sampled_time = sampled_time[..., batch_index, seq_index]
+                                                                               # [llm_contrast_sample_num + 1]
+                selected_sampled_events = sampled_events[..., batch_index, seq_index]
+                                                                               # [llm_contrast_sample_num + 1]
+                selected_sampled_absolute_time = selected_time_history.sum() + selected_sampled_time
+                                                                               # [llm_contrast_sample_num + 1]
+                selected_time_cum_history = selected_time_history.cumsum(dim = -1)
+                
+                selected_time_history, selected_time_cum_history, selected_events_history, \
+                selected_sampled_time, selected_sampled_absolute_time, selected_sampled_events = \
+                    move_from_tensor_to_list(selected_time_history, selected_time_cum_history, selected_events_history, \
+                                             selected_sampled_time, selected_sampled_absolute_time, selected_sampled_events)
+                
+                history_sequence = 'History: ' + \
+                  ' '.join([f'({selected_time_history_:.4f}, {selected_time_cum_history_:.4f}, {selected_events_history_:.4f})' \
+                            for selected_time_history_, selected_time_cum_history_, selected_events_history_ in \
+                            zip(selected_time_history, selected_time_cum_history, selected_events_history)])
+                sample_candidates = \
+                  [self.llm.tokenize(f'The next most possible event: ({selected_sampled_time_:.4f}, {selected_sampled_absolute_time_:.4f}, {selected_events_history_:.4f})') \
+                            for selected_sampled_time_, selected_sampled_absolute_time_, selected_events_history_ in \
+                            zip(selected_sampled_time, selected_sampled_absolute_time, selected_sampled_events)]
+                
+                tokenized_history = self.llm.tokenize(history_sequence)
+                assembled_request = [self.llm_prompt + tokenized_history + sample_candidate for sample_candidate in sample_candidates]
+                                                                               # [llm_contrast_sample_num + 1]
+                beacon = [-len(sample_candidate) for sample_candidate in sample_candidates]
+                                                                               # [llm_contrast_sample_num + 1]
+                max_token_len = max([max_token_len, *[len(seq) for seq in assembled_request]])
+                assembled_requests.extend(assembled_request)
+                beacons.extend(beacon)
+            
+            assert len(assembled_requests) == len(beacons) == (llm_contrast_sample_num + 1) * max_available_length
+            outputs = self.llm.completions(assembled_requests, n_threads = 16, max_tokens = 0, temperature = 0.0, \
+                                           logprobs = 0, echo = True)          # [max_available_length * (llm_contrast_sample_num + 1)]
+            
+            probs_per_batch = []
+            for idx, output in enumerate(outputs):
+                recorded_logprobs = output.choices[0].logprobs.token_logprobs[beacons[idx]:]
+                prob = np.exp(np.mean(recorded_logprobs))
+                probs_per_batch.append(torch.tensor(prob, device = self.device))
+            probs_per_batch = torch.stack(probs_per_batch)                     # [max_available_length * (llm_contrast_sample_num + 1)]
+            probs_per_batch = rearrange(probs_per_batch, '(sl lcs) -> sl lcs', lcs = llm_contrast_sample_num + 1).T
+                                                                               # [llm_contrast_sample_n-um + 1, max_available_length]
+            probs_per_batch = F.pad(probs_per_batch, (0, seq_len - max_available_length, 0, 0), mode = 'constant', value = 0)
+                                                                               # [llm_contrast_sample_num + 1, seq_len]
+            probs_by_llm.append(probs_per_batch)
+        
+        probs_by_llm = torch.stack(probs_by_llm, axis = -2)                    # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_probs_by_llm = F.log_softmax(probs_by_llm, dim = 0)                # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        
+        print(max_token_len)
+        
+        return log_probs_by_llm
+    
+    
     sample_time = sample_time
     sample_time_event = sample_time_event
     sample_event_time = sample_event_time
@@ -917,6 +1075,116 @@ class CTLSTMWrapper(BasicModel):
             = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next)
 
         return maes, f1_2, probability_sum, p_m, tau_pred_all_event, time_next, events_next
+
+
+    @torch.inference_mode()
+    def llm_mtpp_classification(self, input_data, opt):
+        '''
+        This function is used to confirm that the LLM can decide which next event makes more sense
+        based on history, and potential better than LLM (expected with note while not very expected without note).
+                
+        You should declare the following arguments in your config file:
+        1. ```int``` llm_sample_rate: This parameter controls how many samples are sampled from p(t).
+        2. ```int``` llm_sample_step: This parameter controls how many samples are sampled in one shot from p(t).
+        3. ```str``` llm_prompt: system prompt.
+        
+        # The following arguments are provided in llm.yml.
+        4. ```str``` url_path: the url linked to the LLM service.
+        5. ```str``` api_key: API key for user authentication.
+        6. ```str``` llm_model: Name of the used LLM.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` maes
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
+            * ```float``` f1_2
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` probability_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of calculated p(m) over all marks.
+            * ```np.adarray``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of calculated p(m).
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              The predicted time for each mark using p(t|m).
+            * ```np.ndarray``` time_next
+              shape: ```[batch_size, seq_len]```
+              Real time of observed events.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'llm_sample_rate': int, 'llm_sample_step': int, 'llm_visible_history_length': int, \
+                               'url_path': str, 'api_key': str, 'llm_model': str, 'llm_prompt': str})
+            
+        self.url_path = opt.url_path
+        self.api_key = opt.api_key
+        self.llm_model = opt.llm_model
+        self.llm = CustomOpenAIforVLLM(self.url_path, self.llm_model, device = self.device, api_key = self.api_key)
+        self.llm_prompt = self.llm.tokenize(opt.llm_prompt)
+        
+        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        
+        # step 1: get samples from the existing distribution.
+        sampled_time = self.sample_time(sampling_approach = 'its', task = 'tm',
+                                        events_history = events_history, time_history = time_history,
+                                        number_of_total_samples = opt.llm_sample_rate, 
+                                        step = opt.llm_sample_step, mean = mean, std = std)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len]
+                
+        intensity_integral_all_events, intensity_all_events \
+            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
+        mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
+        sampled_events = predict_event(mark_distribution, sample = True)       # [llm_contrast_sample_num, batch_size, seq_len]
+        # merge the real next event with the pred_time
+        # [real_pred_time, (sampled_times)]
+        sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        sampled_events, _ = pack((events_next, sampled_events), '* b s')       # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        
+        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0)
+                                                                               # [batch_size, seq_len, num_events]
+        all_intensity, _ = pack((intensity, intensity_all_events), '* b s ne') # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        all_intensity_integral, _ = pack((intensity_integral, intensity_integral_all_events), '* b s ne')
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        distribution_all = all_intensity * torch.exp(-all_intensity_integral)  # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        sampled_events_one_hot = F.one_hot(sampled_events, num_classes = self.num_events)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
+        selected_distribution = (distribution_all * sampled_events_one_hot).sum(dim = -1)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_event_distribution_from_mtpp_model = F.log_softmax(selected_distribution, dim = 0)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_probs_by_llm = self.get_score_from_llm(events_history, time_history, sampled_time, sampled_events, mask_next, \
+                                                   llm_contrast_sample_num = opt.llm_sample_rate, llm_visible_history_length = opt.llm_visible_history_length)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        
+        pred_which_real_event_by_mtpp_model = log_event_distribution_from_mtpp_model.argmax(dim = 0)
+                                                                               # [batch_size, seq_len]
+        pred_which_real_event_by_llm = log_probs_by_llm.argmax(dim = 0)        # [batch_size, seq_len]
+        
+        pred_which_real_event_by_mtpp_model, pred_which_real_event_by_llm = \
+            move_from_tensor_to_ndarray(pred_which_real_event_by_mtpp_model, pred_which_real_event_by_llm)
+        
+        # Then we calculate the accuracy.
+        accuracy_by_mtpp = accuracy_score(y_pred = pred_which_real_event_by_mtpp_model.flatten(), y_true = np.zeros_like(pred_which_real_event_by_mtpp_model.flatten()))
+        accuracy_by_llm = accuracy_score(y_pred = pred_which_real_event_by_llm.flatten(), y_true = np.zeros_like(pred_which_real_event_by_mtpp_model.flatten()))
+        
+        return accuracy_by_mtpp, accuracy_by_llm
 
 
     def convert_missing_mask_to_gap_mask(self, missing_mask):

@@ -31,7 +31,7 @@ class BasicTrainerArguments:
         self.parser.add_argument('--dataset_name', type=str, default=None, help='Name of the used dataset. All datasets should be placed in {root}/data/${main_procedure_name}.')
         self.parser.add_argument('--dataset_type', type=str, default='pkl.lzma', help='The format of the required dataset.')
         self.parser.add_argument('--dataloader_name', default=None, help='Name of the used dataloader. All dataloaders are stored in *root*/src/TPP/dataloader.')
-        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/{model_name}/{dataloader_config}.')
+        self.parser.add_argument('--dataloader_config', type=str, default=None, help='Relative path to the custom dataloader config file. This absolute file path is {root}/config/${main_procedure_name}/{model_name}/{dataloader_config}.')
         self.parser.add_argument('--training_data_name', type=str, default='train', help='Name of the dataset used for training the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{training_data_name}.{dataset_type}.')
         self.parser.add_argument('--evaluate_data_name', type=str, default='evaluate', help='Name of the dataset used for evaluating the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{evaluate_data_name}.{dataset_type}.')
         self.parser.add_argument('--test_data_name', type=str, default='test', help='Name of the dataset used for testing the model. This file should be placed in {root}/data/${main_procedure_name}/{dataset_name}/{test_data_name}.{dataset_type}.')
@@ -43,7 +43,9 @@ class BasicTrainerArguments:
         self.parser.add_argument('--agg_update_step', type=int, default=1, help='The number of minibatches between two adjacent optimizer steps. The number of practical training steps is \
                                                                             agg_update_step * n_training_steps')
         self.parser.add_argument('--n_warmup_steps', type=int, default=2000, 
-                            help='The number of warmup steps. We won\'t store any checkpoints during warmup.')
+                                 help='The number of warmup steps. We won\'t store any checkpoints during warmup.')
+        self.parser.add_argument('--procedure_config', type=str, default = None, \
+                                 help='Relative path to the custom setting file, in which settings are applied to all tasks under the procedure. The absolute file path is {root}/config/${main_procedure_name}/${procedure_config}')
 
         # wandb support
         self.parser.add_argument('--wandb', action='store_true', help='Use wandb to record and visualize the training procedure.')

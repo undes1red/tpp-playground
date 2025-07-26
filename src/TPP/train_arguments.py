@@ -41,7 +41,9 @@ def Trainer_postprocess(opt, root_path):
     opt.optim_config = os.path.join(root_path, 'config', opt.procedure, opt.optim_config)
     opt.abs_dataloader_config = os.path.join(root_path, 'config', opt.procedure, opt.model_name, opt.dataloader_config) if opt.dataloader_config else None
     opt.dataloader_config = os.path.basename(opt.abs_dataloader_config) if opt.dataloader_config else None
+    opt.abs_procedure_config = os.path.join(root_path, 'config', opt.procedure, opt.procedure_config) if opt.procedure_config else None
+    opt.procedure_config = os.path.basename(opt.abs_procedure_config) if opt.procedure_config else None
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
-    opt.model_identifier = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'dataloader_config', 'model_config')
+    opt.model_identifier = suffix(opt, 'model_name', 'lr', 'training_batch_size', 'n_training_steps', 'procedure_config', 'dataloader_config', 'model_config')
 
     return opt
