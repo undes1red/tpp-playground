@@ -163,9 +163,6 @@ class CTLSTMWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            
-            # experiment 1: real event classification
-            'llm_mtpp_classification': self.llm_mtpp_classification,
 
             # figure drawing funtions
             'intensity': self.figure_intensity,
@@ -1075,116 +1072,6 @@ class CTLSTMWrapper(BasicModel):
             = move_from_tensor_to_ndarray(*maes, probability_sum, p_m, tau_pred_all_event, time_next, events_next)
 
         return maes, f1_2, probability_sum, p_m, tau_pred_all_event, time_next, events_next
-
-
-    @torch.inference_mode()
-    def llm_mtpp_classification(self, input_data, opt):
-        '''
-        This function is used to confirm that the LLM can decide which next event makes more sense
-        based on history, and potential better than LLM (expected with note while not very expected without note).
-                
-        You should declare the following arguments in your config file:
-        1. ```int``` llm_sample_rate: This parameter controls how many samples are sampled from p(t).
-        2. ```int``` llm_sample_step: This parameter controls how many samples are sampled in one shot from p(t).
-        3. ```str``` llm_prompt: system prompt.
-        
-        # The following arguments are provided in llm.yml.
-        4. ```str``` url_path: the url linked to the LLM service.
-        5. ```str``` api_key: API key for user authentication.
-        6. ```str``` llm_model: Name of the used LLM.
-        
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```np.ndarray``` maes
-              shape: ```[batch_size, seq_len]```
-              The MAE-E values when we pick predicted times using real marks.
-            * ```float``` f1_2
-              The f1 value shows the accuracy of the predicted marks.
-            * ```np.ndarray``` probability_sum
-              shape: ```[batch_size, seq_len]```
-              The sum of calculated p(m) over all marks.
-            * ```np.adarray``` p_m
-              shape: ```[batch_size, seq_len, num_events]```
-              The value of calculated p(m).
-            * ```np.ndarray``` tau_pred_all_event
-              shape: ```[batch_size, seq_len, num_events]```
-              The predicted time for each mark using p(t|m).
-            * ```np.ndarray``` time_next
-              shape: ```[batch_size, seq_len]```
-              Real time of observed events.
-            * ```np.ndarray``` events_next
-              shape: ```[batch_size, seq_len]```
-              Real marks of observed events.
-        '''
-        argument_check(opt, **{'llm_sample_rate': int, 'llm_sample_step': int, 'llm_visible_history_length': int, \
-                               'url_path': str, 'api_key': str, 'llm_model': str, 'llm_prompt': str})
-            
-        self.url_path = opt.url_path
-        self.api_key = opt.api_key
-        self.llm_model = opt.llm_model
-        self.llm = CustomOpenAIforVLLM(self.url_path, self.llm_model, device = self.device, api_key = self.api_key)
-        self.llm_prompt = self.llm.tokenize(opt.llm_prompt)
-        
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
-                                                                               # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
-        
-        # step 1: get samples from the existing distribution.
-        sampled_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                        events_history = events_history, time_history = time_history,
-                                        number_of_total_samples = opt.llm_sample_rate, 
-                                        step = opt.llm_sample_step, mean = mean, std = std)
-                                                                               # [llm_contrast_sample_num, batch_size, seq_len]
-                
-        intensity_integral_all_events, intensity_all_events \
-            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1)
-                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
-        mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
-                                                                               # [llm_contrast_sample_num, batch_size, seq_len, num_events]
-        sampled_events = predict_event(mark_distribution, sample = True)       # [llm_contrast_sample_num, batch_size, seq_len]
-        # merge the real next event with the pred_time
-        # [real_pred_time, (sampled_times)]
-        sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        sampled_events, _ = pack((events_next, sampled_events), '* b s')       # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        
-        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0)
-                                                                               # [batch_size, seq_len, num_events]
-        all_intensity, _ = pack((intensity, intensity_all_events), '* b s ne') # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
-        all_intensity_integral, _ = pack((intensity_integral, intensity_integral_all_events), '* b s ne')
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
-        distribution_all = all_intensity * torch.exp(-all_intensity_integral)  # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
-        sampled_events_one_hot = F.one_hot(sampled_events, num_classes = self.num_events)
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
-        selected_distribution = (distribution_all * sampled_events_one_hot).sum(dim = -1)
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        log_event_distribution_from_mtpp_model = F.log_softmax(selected_distribution, dim = 0)
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        log_probs_by_llm = self.get_score_from_llm(events_history, time_history, sampled_time, sampled_events, mask_next, \
-                                                   llm_contrast_sample_num = opt.llm_sample_rate, llm_visible_history_length = opt.llm_visible_history_length)
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        
-        pred_which_real_event_by_mtpp_model = log_event_distribution_from_mtpp_model.argmax(dim = 0)
-                                                                               # [batch_size, seq_len]
-        pred_which_real_event_by_llm = log_probs_by_llm.argmax(dim = 0)        # [batch_size, seq_len]
-        
-        pred_which_real_event_by_mtpp_model, pred_which_real_event_by_llm = \
-            move_from_tensor_to_ndarray(pred_which_real_event_by_mtpp_model, pred_which_real_event_by_llm)
-        
-        # Then we calculate the accuracy.
-        accuracy_by_mtpp = accuracy_score(y_pred = pred_which_real_event_by_mtpp_model.flatten(), y_true = np.zeros_like(pred_which_real_event_by_mtpp_model.flatten()))
-        accuracy_by_llm = accuracy_score(y_pred = pred_which_real_event_by_llm.flatten(), y_true = np.zeros_like(pred_which_real_event_by_mtpp_model.flatten()))
-        
-        return accuracy_by_mtpp, accuracy_by_llm
 
 
     def convert_missing_mask_to_gap_mask(self, missing_mask):
