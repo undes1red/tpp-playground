@@ -19,10 +19,12 @@ base = [
     "seaborn",
     "pyyaml",
     "termcolor",
-    "transformers[torch]",
+    "transformers[torch]<4.54.0",
     "accelerate",
     "tabulate",
     "datasets",
+    "termcolor",
+    "submitit"
 ]
 
 optional = [

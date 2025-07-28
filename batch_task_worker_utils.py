@@ -282,6 +282,8 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
 
 def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir, slurm_arguments):
     number_of_tasks = len(tasks)
+    if slurm_arguments is None:
+        slurm_arguments = {}
 
     if len(slurm_arguments) > 0:
         logger.info(f'The following slurm environment variables will be updated.')
@@ -357,6 +359,9 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
     number_of_tasks = len(tasks)
+    
+    if slurm_arguments is None:
+        slurm_arguments = {}
 
     if len(slurm_arguments) > 0:
         logger.info(f'The following slurm environment variables will be updated.')
