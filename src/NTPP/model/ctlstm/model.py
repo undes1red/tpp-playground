@@ -1405,15 +1405,20 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
         
+        note_embedding_history = None
+        if self.mtpp_includes_note_embedding:
+            note_embedding_history, _ = self.divide_history_and_next(input_note_embeddings)
+                                                                               # [batch_size, seq_len, dim_note_embedding] * 2
+        
         # step 1: get samples from the existing distribution.
         sampled_time = self.sample_time(sampling_approach = 'its', task = 'tm',
                                         events_history = events_history, time_history = time_history,
                                         number_of_total_samples = opt.llm_sample_rate, 
-                                        step = opt.llm_sample_step, mean = mean, std = std)
+                                        step = opt.llm_sample_step, mean = mean, std = std, note_embedding_history = note_embedding_history)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len]
 
         intensity_integral_all_events, intensity_all_events \
-            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1)
+            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1, note_embedding_history = note_embedding_history)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
         mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
