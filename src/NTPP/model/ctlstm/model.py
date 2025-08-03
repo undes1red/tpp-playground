@@ -1140,9 +1140,14 @@ class CTLSTMWrapper(BasicModel):
         events_history, events_next = self.divide_history_and_next(input_events)
                                                                                # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        note_embedding_history = None
+        if self.mtpp_includes_note_embedding:
+            note_embedding_history, _ = self.divide_history_and_next(input_note_embeddings)
+                                                                               # [batch_size, seq_len, dim_note_embedding] * 2
+        
 
         mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
-                                                         time_next, mask_next, mean, std, opt = opt)
+                                                         time_next, mask_next, mean, std, opt, note_embedding_history)
                                                                                # [batch_size, seq_len]
         mae, events_next, p_m = move_from_tensor_to_ndarray(mae, events_next, p_m)
 
