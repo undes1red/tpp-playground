@@ -8,7 +8,7 @@ logger = get_logger(__name__)
 default_slurm_kwargs = {
     'slurm_partition': 'SCT',
     'slurm_job_name': 'slurm_task',
-    'slurm_cpus_per_task': 4,
+    'slurm_cpus_per_task': 8,
     'slurm_time': 1400,
     'slurm_mem': '16GB',
     'slurm_gres': 'gpu:1',
@@ -16,6 +16,8 @@ default_slurm_kwargs = {
 }
 
 monitor_frequency = 10
+wait_after_task_finished = 10
+
 def monitor_and_automaticly_run_tasks(tasks, use_gpu, available_gpus, num_task_parallel, stdout_dir, use_slurm, **kwargs):  
     if use_slurm:
         if use_gpu:
@@ -213,6 +215,7 @@ def monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_di
                 completed_tasks.add(task['task_id'])
                 task['stdout'].close()
                 number_of_running_tasks -= 1
+                time.sleep(wait_after_task_finished)
         
         # If the task id is bigger than the the number of tasks, quit the loop.
         if all_task_executed and len(completed_tasks) == number_of_tasks:
@@ -270,6 +273,7 @@ def monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_par
                 gpu_pool.add(task["gpu_id"])
                 ticket_pool.add(ticket)
                 running_tasks[ticket] = {}
+                time.sleep(wait_after_task_finished)
                 
         # If all GPUs are free again and the task id is bigger than the the number of tasks, quit the loop.
         if len(gpu_pool) == number_of_gpus and all_task_executed:
@@ -341,7 +345,8 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel
                 
                 completed_tasks.add(task['task_id'])
                 number_of_running_tasks -= 1
-        
+                time.sleep(wait_after_task_finished)
+                                
         # If the task id is bigger than the the number of tasks, quit the loop.
         if all_task_executed and len(completed_tasks) == number_of_tasks:
             break
@@ -417,6 +422,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(tasks, available_gpus, n
                 # gpu_pool.add(task["gpu_id"])
                 ticket_pool.add(ticket)
                 running_tasks[ticket] = {}
+                time.sleep(wait_after_task_finished)
                 
         # If all GPUs are free again and the task id is bigger than the the number of tasks, quit the loop.
         if len(gpu_pool) == number_of_gpus and all_task_executed:

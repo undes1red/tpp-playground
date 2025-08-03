@@ -34,7 +34,8 @@ optional = [
 llm = [
     "openai",
     "vllm==0.9.2",
-    "flashinfer-python"
+    "flashinfer-python",
+    "ninja"
 ]
 
 dev = [

@@ -16,7 +16,7 @@ parser.add_argument('--script_type', type = str, choices = ['normal', 'previous_
                                      help = 'Use this argument to select worker mode.\n \
                                              normal: In this mode, the script will pick job dict according to the received job_name. Failed tasks will be recorded in {model_name}_previous_failed_tasks.txt. \n \
                                              previous_failed_tasks: In this mode, this script will read in tasks from parameter_set/{procedure_name}/{model}_previous_failed_tasks.txt and execute these tasks one by one.')
-parser.add_argument('--procedure_name', type = str, choices = ['TPP', 'LH', 'OD', 'MDI'], \
+parser.add_argument('--procedure_name', type = str, choices = ['TPP', 'NTPP', 'LH', 'OD', 'MDI'], \
                                         help = 'You need this argument to select the proper parameter set.')
 parser.add_argument('--model', type = str, help = 'We use this model name to select correct parameter collection.')
 parser.add_argument('--job_name', nargs='+', default = None, help='Tell us which job do you want to execute. This argument accepts multiple inputs so you can use "--job_name A B C" to run job A B C one by one. \n \

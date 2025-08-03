@@ -1469,7 +1469,7 @@ class CTLSTMWrapper(BasicModel):
                 top_k_accuracy_score(y_true = np.zeros_like(pred_which_real_event_by_mtpp_model.flatten()),
                                      y_score = rearrange(log_event_distribution_from_mtpp_model, 'lcs b s -> (b s) lcs'),
                                      k = k,
-                                     labels = np.arange(opt.llm_sample_rate + 1)).item()
+                                     labels = np.arange(opt.llm_sample_rate + 1))
             )
 
         # Then we calculate the accuracy of the LLM.
@@ -1482,7 +1482,7 @@ class CTLSTMWrapper(BasicModel):
                 top_k_accuracy_score(y_true = np.zeros_like(pred_which_real_event_by_llm.flatten()),
                                      y_score = rearrange(log_probs_by_llm, 'lcs b s -> (b s) lcs'),
                                      k = k,
-                                     labels = np.arange(opt.llm_sample_rate + 1)).item()
+                                     labels = np.arange(opt.llm_sample_rate + 1))
             )
 
         return accuracy_by_mtpp, f1_by_mtpp, top_k_acc_by_mtpp, \
