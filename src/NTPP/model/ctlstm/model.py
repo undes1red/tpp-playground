@@ -129,8 +129,8 @@ class CTLSTMWrapper(BasicModel):
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
             elif self.llm_request_mode == 'offline':
                 self.llm_model = kwargs['llm_model']
-                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
-                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
+                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
+                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
 
 
@@ -484,12 +484,12 @@ class CTLSTMWrapper(BasicModel):
         Version 2: ranking.
         If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, we apply negative log-likelihood on the real next event and 
         the expected event.
-        '''
         event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
         event_ranking_first_event_by_llm = event_ranking_by_llm == 0           # [llm_contrast_sample_num + 1, batch_size, seq_len]
         log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
         kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
+        '''
         
         '''
         Version 3: direct KL divergence
@@ -522,6 +522,19 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
         '''
+
+        '''
+        Version 5: extended ranking.
+        If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, 
+        we apply negative log-likelihood on the real next event and all sampled events ranked higher than the real event.
+        '''
+        event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        event_ranking_of_real_events_by_llm = event_ranking_by_llm[0, ...]     # [batch_size, seq_len]
+        event_ranking_first_event_by_llm = event_ranking_by_llm <= repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
+                                                                               # [batch_size, seq_len]
+        kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
         
         # Our loss is expected to increase the sum of p^*(m, t) at sampled points. Is this true?
         masked_distribution_from_mtpp_model = log_selected_distribution.exp().sum(dim = 0) * mask_next
