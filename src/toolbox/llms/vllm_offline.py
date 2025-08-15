@@ -20,6 +20,13 @@ class VLLMOfflineInference:
         '''
         self.device = device
         self.model = model
+        quantization_keywords = ['awq', 'gptq']
+        
+        if not any(s in self.model.lower() for s in quantization_keywords) and model_args['quantization'] is not None:
+            print('Quantization set but the loaded LLM is not quantized!')
+            print('Something is wrong? Anyway, we will ignore the quantization config so we can continue.')
+            del model_args['quantization']
+        
         self.llm = LLM(self.model, **model_args)
         self.tokenizer = self.llm.get_tokenizer()
 

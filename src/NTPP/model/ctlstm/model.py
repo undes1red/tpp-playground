@@ -1,4 +1,4 @@
-import torch, copy
+import torch, copy, os
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score, top_k_accuracy_score
@@ -24,6 +24,7 @@ class CTLSTMWrapper(BasicModel):
                  d_mark_embedding = 64, d_hidden = 256, dropout = 0.1, epsilon = 1e-20, 
                  sample_rate = 32, mae_step = 8, mae_e_step = 8, \
                  integration_sample_rate = 100, survival_loss_during_training = True, \
+                 model_load = False, 
                  llm_contrastive = False, llm_request_mode = 'online', mtpp_includes_note_embedding = False, \
                  llm_contrast_sample_num = 8, llm_contrast_sample_step = 8, llm_prompt = None, llm_event_template = None, \
                  llm_next_event_template = None, llm_visible_history_length = 5, sparse_rate = 0.25, **kwargs):
@@ -87,6 +88,7 @@ class CTLSTMWrapper(BasicModel):
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
+        self.model_load = model_load
         # Please take care that in the default settings CTLSTM handles continuous-time event stream without notes.
         # You should set mtpp_includes_note_embedding = True to inject note embeddings into the CTLSTM.
         self.mtpp_includes_note_embedding = mtpp_includes_note_embedding
@@ -96,7 +98,18 @@ class CTLSTMWrapper(BasicModel):
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
                             integration_sample_rate = integration_sample_rate, mtpp_includes_note_embedding = self.mtpp_includes_note_embedding, \
                             note_embedding_size = self.note_embedding_size)
-
+        
+        if self.model_load:
+            # load an existing MTPP checkpoint then continue finetuning it.
+            model_raw = torch.load(os.path.join(opt.model_params['mtpp_checkpoint_dir'], 'checkpoint.chkpt'), map_location = self.device, weights_only = False)
+            model_state_dict = model_raw['model']
+            # Remove the "model." prefix from the parameter name.
+            processed_weights = {}
+            for name, value in model_state_dict.items():
+                processed_weights[name[6:]] = value
+            
+            self.model.load_state_dict(processed_weights)
+        
         # The following arguments are mandatory if the loss includes the reranking loss.
         self.llm_contrastive = llm_contrastive
         self.llm_request_mode = llm_request_mode
@@ -116,8 +129,8 @@ class CTLSTMWrapper(BasicModel):
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
             elif self.llm_request_mode == 'offline':
                 self.llm_model = kwargs['llm_model']
-                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
-                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
+                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
+                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
 
 
@@ -206,7 +219,7 @@ class CTLSTMWrapper(BasicModel):
         return task_mapper[task_name](*args, **kwargs)
 
 
-    def train_procedure(self, time, original_time, events, original_events, note, note_embedding, mask, mean, std):
+    def train_procedure(self, time, original_time, events, original_events, note, note_embedding, mask, mean, std, step):
         '''
         CTLSTM's forwardpropagation function for training.
         
@@ -264,7 +277,8 @@ class CTLSTMWrapper(BasicModel):
 
         loss_kl = torch.tensor(0.0, device = self.device)
         average_probability_sum = torch.tensor(0.0, device = self.device)
-        if self.llm_contrastive:
+        
+        if self.llm_contrastive and step % 1 == 0:
             loss_kl, average_probability_sum = self.likelihood_loss(note_history, note_next, events_history, time_history, original_time_history, \
                                                                     event_next_without_dummy, time_next, mask_next_without_dummy, mean, std, sparse_rate = self.sparse_rate)
 
@@ -276,7 +290,8 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, 1]
             loss_survival = integral_survival.sum()
 
-        loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
+        # loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
+        loss = loss_kl
 
         return loss, log_likeli_loss_without_dummy, loss_kl, average_probability_sum, marker_loss_without_dummy, the_number_of_events
 
@@ -443,17 +458,19 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
         log_selected_distribution = (log_distribution_all * sampled_events_one_hot).sum(dim = -1)
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        log_event_distribution_from_mtpp_model = F.log_softmax(log_selected_distribution, dim = 0)
-                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
         # Get score from the LLM.
         log_probs_by_llm, sparse_mask = self.get_score_from_llm(note_history, note_next, events_history, time_history, original_time_history, \
                                                                 sampled_time, sampled_events, mask_next, sparse_rate = sparse_rate)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len] + [batch_size, seq_len]
+        '''
+        Version 1: KL divergence. It does not work.
+        log_event_distribution_from_mtpp_model = F.log_softmax(log_selected_distribution, dim = 0)
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len]
         # KL divengence loss.
         log_event_distribution_from_mtpp_model = rearrange(log_event_distribution_from_mtpp_model, 'lsn b s -> b s lsn')
                                                                                # [batch_size, seq_len, llm_contrast_sample_num + 1]
         log_probs_by_llm = rearrange(log_probs_by_llm, 'lsn b s -> b s lsn')   # [batch_size, seq_len, llm_contrast_sample_num + 1]
-        kl_div = F.kl_div(input = log_event_distribution_from_mtpp_model, target = log_probs_by_llm, \
+        kl_div = F.kl_div(input = log_probs_by_llm, target = log_event_distribution_from_mtpp_model, \
                           reduction = 'none', log_target = True)               # [batch_size, seq_len, llm_contrast_sample_num + 1]
         
         kl_div = (kl_div.sum(dim = -1) * sparse_mask).sum()
@@ -461,12 +478,56 @@ class CTLSTMWrapper(BasicModel):
         # Avoid divided-by-0 exception if sparse_mask.sum() == 0
         if sparse_mask.sum() > 0:
             kl_div = kl_div / sparse_mask.sum().item()
+        '''
+
+        '''
+        Version 2: ranking.
+        If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, we apply negative log-likelihood on the real next event and 
+        the expected event.
+        '''
+        event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        event_ranking_first_event_by_llm = event_ranking_by_llm == 0           # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
+                                                                               # [batch_size, seq_len]
+        kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
+        
+        '''
+        Version 3: direct KL divergence
+        The NLL will be weighted by the score from the LLM. We apply high weight on higher ranked samples with high LLM scores amd 
+        low weight to lower ranked samples with low LLM scores.
+
+        # KL divengence loss.
+        log_event_distribution_from_mtpp_model = rearrange(log_selected_distribution, 'lsn b s -> b s lsn')
+                                                                               # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        log_probs_by_llm = rearrange(log_probs_by_llm, 'lsn b s -> b s lsn')   # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        kl_div = F.kl_div(input = log_probs_by_llm, target = log_event_distribution_from_mtpp_model, \
+                          reduction = 'none', log_target = True)               # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        
+        kl_div = (kl_div.sum(dim = -1) * sparse_mask).sum()
+        
+        # Avoid divided-by-0 exception if sparse_mask.sum() == 0
+        if sparse_mask.sum() > 0:
+            kl_div = kl_div / sparse_mask.sum().item()
+        '''
+
+        '''
+        Version 4: full ranking.
+        If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, we apply negative log-likelihood on the real next event and 
+        the expected event.
+        '''
+        '''
+        event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        event_ranking_first_event_by_llm = event_ranking_by_llm == 0           # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
+                                                                               # [batch_size, seq_len]
+        kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
+        '''
         
         # Our loss is expected to increase the sum of p^*(m, t) at sampled points. Is this true?
         masked_distribution_from_mtpp_model = log_selected_distribution.exp().sum(dim = 0) * mask_next
                                                                                # [batch_size, seq_len]
         average_probability_sum = masked_distribution_from_mtpp_model.sum() / mask_next.sum()
-
+        
         return kl_div, average_probability_sum
       
     
@@ -506,7 +567,8 @@ class CTLSTMWrapper(BasicModel):
             beacons = []
             
             for seq_index in range(max_available_length):
-                # skip this event.
+                # 0: sparse_mask == 0: skip this event.
+                # 1: sparse_mask == 1: continue.
                 if selected_sparse_mask[seq_index] == 0:
                     continue
                 
@@ -611,7 +673,8 @@ class CTLSTMWrapper(BasicModel):
         else:
             probs_by_llm = torch.stack(probs_by_llm, axis = -2)                # [llm_contrast_sample_num + 1, batch_size, seq_len]
             log_probs_by_llm = F.log_softmax(probs_by_llm, dim = 0)            # [llm_contrast_sample_num + 1, batch_size, seq_len]
-        
+            # log_probs_by_llm = probs_by_llm                                  # [llm_contrast_sample_num + 1, batch_size, seq_len]
+
             return log_probs_by_llm, sparse_mask
     
     
@@ -1845,7 +1908,7 @@ class CTLSTMWrapper(BasicModel):
         return all_roauc_area
 
 
-    def train_step(model, minibatch, device):
+    def train_step(model, minibatch, device, step):
         '''
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -1876,7 +1939,8 @@ class CTLSTMWrapper(BasicModel):
         (time, original_time_seq, events, original_events, note, note_embedding, score, mask), (mean, std) = minibatch
                                                                                # 6 * [batch_size, seq_len + 1] + two floats
         loss, time_loss_without_dummy, loss_kl, average_probability_sum, events_loss, the_number_of_events \
-            = model('train', time, original_time_seq, events, original_events, note, note_embedding, mask, mean = mean, std = std)
+            = model('train', time, original_time_seq, events, original_events, note, note_embedding, mask, \
+                    mean = mean, std = std, step = step)
 
         loss.backward()
     

@@ -150,11 +150,11 @@ class Trainer:
 
             if self.opt.fpcounter:
                 with FlopCounterMode(display = False) as counter:
-                    step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
+                    step_result = self.model_class.train_step(self.model, data, device = self.opt.device, step = current_step)
                 
                 self.training_flop += sum(counter.flop_counts['Global'].values())
             else:
-                step_result = self.model_class.train_step(self.model, data, device = self.opt.device)
+                step_result = self.model_class.train_step(self.model, data, device = self.opt.device, step = current_step)
                 
                 self.training_flop += 0
 
