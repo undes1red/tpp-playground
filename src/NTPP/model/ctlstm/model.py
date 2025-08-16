@@ -129,8 +129,8 @@ class CTLSTMWrapper(BasicModel):
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
             elif self.llm_request_mode == 'offline':
                 self.llm_model = kwargs['llm_model']
-                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
-                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
+                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
+                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
 
 
