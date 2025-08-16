@@ -530,7 +530,7 @@ class CTLSTMWrapper(BasicModel):
         '''
         event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
         event_ranking_of_real_events_by_llm = event_ranking_by_llm[0, ...]     # [batch_size, seq_len]
-        event_ranking_first_event_by_llm = event_ranking_by_llm <= repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
+        event_ranking_first_event_by_llm = event_ranking_by_llm < repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len]
         log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
