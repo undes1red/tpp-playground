@@ -330,6 +330,20 @@ def probability_of_sampling_better_than_expectation_postprocess(all_evaluation_r
     dump_to_pkl(data, ranking_results_file, compression = 'bz2')
 
 
+def will_llm_assign_higher_probability_to_better_events_postprocess(all_evaluation_results, desc, opt):
+    '''
+    This function is called when task_name = will_llm_assign_higher_probability_to_better_events.
+    
+    This function computes the average ranking of the real event within a lot of sampled events.
+    We expected that the real event should have a generally higher ranking (lower in the value) than randomly sampled events.
+    '''
+    raw_probability = all_evaluation_results
+    
+    ranking_results_file = os.path.join(opt.store_dir, f'{desc}_probed_probability.pkl')
+    data = {'probability': raw_probability}
+    dump_to_pkl(data, ranking_results_file, compression = 'bz2')
+
+
 desc_funcs = {
     'spearman_and_l1': {'desc_string': 'Spearman and L1 for {0}', 'postprocess_func': spearman_and_l1_postprocess},
     'mae_and_f1': {'desc_string': 'MAE and macro-f1 for {0}', 'postprocess_func': mae_and_f1_postprocess},
@@ -346,6 +360,9 @@ desc_funcs = {
     # experiment 2: How lucky should you be to consistently get samples better than expectation?
     # Perhaps we do not need to discuss mark if the probability of consistent good time samples is negligible.
     'probability_of_sampling_better_than_expectation': {'desc_string': 'How lucky to consisently obtain samples better than the expectation on {0}', 'postprocess_func': probability_of_sampling_better_than_expectation_postprocess},
+    
+    # experiment 3: Will LLM give events closer to the real event relatively higher probability?
+    'will_llm_assign_higher_probability_to_better_events': {'desc_string': 'Will LLMs assign higher probability to better events on {0}', 'postprocess_func': will_llm_assign_higher_probability_to_better_events_postprocess},
     
     # CPPOD task.
     'cppod_evaluation': {'desc_string': 'Obtaining CPPOD score for {0}', 'postprocess_func': cppod_evaluation_postprocess},

@@ -178,11 +178,10 @@ def create_messages(system = None, **kwargs):
 
 
 if __name__ == '__main__':
-    model_name = 'Qwen/Qwen3-4B-AWQ'
+    model_name = 'Qwen/Qwen3-0.6B'
     model = VLLMOfflineInference(model_name, device = 'cuda:0', 
                                  model_args = {"quantization": "awq_marlin", "max_model_len": 2707, \
-                                               "gpu_memory_utilization": 0.6, "enable_chunked_prefill": True, 
-                                               "tensor_parallel_size": 1})
+                                               "gpu_memory_utilization": 0.6, "enable_prefix_caching": True})
     
     # url_path = 'https://openrouter.ai/api/v1'
     # api_key = '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'

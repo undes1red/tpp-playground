@@ -204,6 +204,9 @@ class CTLSTMWrapper(BasicModel):
             # experiment 2: How lucky should you be to consistently get samples better than expectation?
             # Perhaps we do not need to discuss mark if the probability of consistent good time samples is negligible.
             'probability_of_sampling_better_than_expectation': self.probability_of_sampling_better_than_expectation,
+            
+            # experiment 3: Will LLM give events closer to the real event relatively higher probability?
+            'will_llm_assign_higher_probability_to_better_events': self.will_llm_assign_higher_probability_to_better_events,
 
             # figure drawing funtions
             'intensity': self.figure_intensity,
@@ -290,8 +293,8 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, 1]
             loss_survival = integral_survival.sum()
 
-        # loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
-        loss = loss_kl
+        loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
+        # loss = loss_kl
 
         return loss, log_likeli_loss_without_dummy, loss_kl, average_probability_sum, marker_loss_without_dummy, the_number_of_events
 
@@ -1235,7 +1238,6 @@ class CTLSTMWrapper(BasicModel):
             note_embedding_history, _ = self.divide_history_and_next(input_note_embeddings)
                                                                                # [batch_size, seq_len, dim_note_embedding] * 2
         
-
         mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
                                                          time_next, mask_next, mean, std, opt, note_embedding_history)
                                                                                # [batch_size, seq_len]
@@ -1587,6 +1589,124 @@ class CTLSTMWrapper(BasicModel):
 
         return accuracy_by_mtpp, f1_by_mtpp, top_k_acc_by_mtpp, \
                accuracy_by_llm, f1_by_llm, top_k_acc_by_llm, kl_div
+
+
+    @torch.inference_mode()
+    def will_llm_assign_higher_probability_to_better_events(self, input_data, opt):
+        '''
+        This function is used to confirm that if the LLM will assign higher probability values to events closer to
+        the real event
+        
+        The definition of an event closer to the real event is:
+        1. At a given timestamp t, events with the correct mark is considered closer.
+        2. At a given true mark m, events closer to the correct time is considered closer.
+        
+        For all marks, we will sample at the following timestamps (given the time of the real event is t, and MAE is \\Delta):
+        t - 2 * \\Delta, t - \\Delta, t - 0.5 * \\Delta, t - 0.25 * \\Delta, t, t + 0.25 * \\Delta, t + 0.5 * \\Delta, t + \\Delta, t + 2 * \\Delta.
+        
+        You should declare the following arguments in your config file:
+        1. ```int``` llm_sample_rate: This parameter controls how many samples are sampled from p(t).
+        2. ```int``` llm_sample_step: This parameter controls how many samples are sampled in one shot from p(t).
+        3. ```str``` llm_prompt: system prompt.
+        
+        # The following arguments are provided in llm.yml.
+        4. ```str``` url_path: the url linked to the LLM service.
+        5. ```str``` api_key: API key for user authentication.
+        6. ```str``` llm_model: Name of the used LLM.
+        
+        ### Args
+            * ```list``` input_data
+              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
+              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
+              The input minibatch.
+            * ```namespace``` opt
+              plot and model configs
+
+        ### Outputs:
+            * ```np.ndarray``` maes
+              shape: ```[batch_size, seq_len]```
+              The MAE-E values when we pick predicted times using real marks.
+            * ```float``` f1_2
+              The f1 value shows the accuracy of the predicted marks.
+            * ```np.ndarray``` probability_sum
+              shape: ```[batch_size, seq_len]```
+              The sum of calculated p(m) over all marks.
+            * ```np.adarray``` p_m
+              shape: ```[batch_size, seq_len, num_events]```
+              The value of calculated p(m).
+            * ```np.ndarray``` tau_pred_all_event
+              shape: ```[batch_size, seq_len, num_events]```
+              The predicted time for each mark using p(t|m).
+            * ```np.ndarray``` time_next
+              shape: ```[batch_size, seq_len]```
+              Real time of observed events.
+            * ```np.ndarray``` events_next
+              shape: ```[batch_size, seq_len]```
+              Real marks of observed events.
+        '''
+        argument_check(opt, **{'sample_rate': int, 'mae_step': int, 'resolution': int, 'llm_request_mode': str})
+        
+        if opt.llm_request_mode == 'online':
+            argument_check(opt, **{'llm_sample_rate': int, 'llm_sample_step': int, 'llm_visible_history_length': int, \
+                                   'url_path': str, 'api_key': str, 'llm_model': str, 'llm_prompt': str, \
+                                   'llm_event_template': str, 'llm_next_event_template': list})
+            if not hasattr(self, 'url_path'):
+                self.llm_request_mode = opt.llm_request_mode
+                self.url_path = opt.url_path
+                self.api_key = opt.api_key
+                self.llm_model = opt.llm_model
+                self.llm = CustomOpenAIforVLLM(self.url_path, self.llm_model, device = self.device, api_key = self.api_key)
+                self.llm_prompt = self.llm.tokenize(opt.llm_prompt)
+        else:
+            argument_check(opt, **{'llm_sample_rate': int, 'llm_sample_step': int, 'llm_visible_history_length': int, \
+                                   'llm_model': str, 'llm_prompt': str, 'llm_model_args': dict, 
+                                   'llm_event_template': str, 'llm_next_event_template': list})
+            if not hasattr(self, 'llm_model'):
+                self.llm_request_mode = opt.llm_request_mode
+                self.llm_model = opt.llm_model
+                self.llm = VLLMOfflineInference(self.llm_model, device = self.device, model_args = opt.llm_model_args)
+                # self.llm = VLLMOfflineInference(self.llm_model, device = self.device, model_args = {**opt.llm_model_args, "enforce_eager": True})
+                self.llm_prompt = self.llm.tokenize(opt.llm_prompt)
+        
+        input_time, input_original_time, input_events, input_original_events, input_notes, input_note_embeddings, input_intensity, mask, \
+        mean, std = self.extract_plot_data(input_data)
+        note_history, note_next = self.divide_history_and_next(input_notes)    # [batch_size, seq_len]
+        time_history, time_next = self.divide_history_and_next(input_time)     # [batch_size, seq_len]
+        original_time_history, _ = self.divide_history_and_next(input_original_time)
+                                                                               # [batch_size, seq_len]
+        events_history, events_next = self.divide_history_and_next(input_events)
+                                                                               # [batch_size, seq_len]
+        mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
+        note_embedding_history = None
+        if self.mtpp_includes_note_embedding:
+            note_embedding_history, _ = self.divide_history_and_next(input_note_embeddings)
+                                                                               # [batch_size, seq_len, dim_note_embedding] * 2
+        
+        mae, f1_1, p_m = self.mean_absolute_error_and_f1(events_history, time_history, events_next, \
+                                                         time_next, mask_next, mean, std, opt, note_embedding_history)
+                                                                               # [batch_size, seq_len]
+        time_offset = torch.stack([
+          -2 * mae, - mae, -0.5 * mae, -0.25 * mae, 0 * mae, 0.25 * mae, 0.5 * mae, mae, 2 * mae
+        ] * self.num_events, axis = 0)                                         # [sample_num * num_events, batch_size, seq_len]
+        mark_for_llm_probability_probe \
+            = torch.tensor([mark for mark in range(self.num_events) for _ in range(9)], device = self.device).unsqueeze(dim = -1).unsqueeze(dim = -1) * torch.ones_like(events_next).unsqueeze(dim = 0)
+                                                                               # [sample_num * num_events, batch_size, seq_len]
+        time_for_llm_probability_probe = torch.clamp(time_next.unsqueeze(dim = 0) + time_offset, \
+                                                     min = torch.tensor(0, device = self.device))
+                                                                               # [sample_num * num_events, batch_size, seq_len]
+
+        # During inference, the sparse_rate should be 0, so the sparse_mask can be ignored as all events are processed.
+        log_probs_by_llm, _ = self.get_score_from_llm(note_history, note_next, events_history, time_history, original_time_history, \
+                                                      time_for_llm_probability_probe, mark_for_llm_probability_probe, mask_next, \
+                                                      llm_contrast_sample_num = 9 * self.num_events - 1, llm_visible_history_length = opt.llm_visible_history_length, \
+                                                      llm_event_template = opt.llm_event_template, llm_next_event_template = opt.llm_next_event_template)
+                                                                               # [sample_num * num_events, batch_size, seq_len]
+        log_probs_by_llm = rearrange(log_probs_by_llm, '(ne sn) bs sl -> ne sn bs sl', ne = self.num_events)
+                                                                               # [num_events, sample_num, batch_size, seq_len]
+        log_probs_by_llm = move_from_tensor_to_ndarray(log_probs_by_llm)       # [num_events, sample_num, batch_size, seq_len]
+        
+        return log_probs_by_llm
 
 
     @torch.inference_mode()
