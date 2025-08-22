@@ -129,8 +129,8 @@ class CTLSTMWrapper(BasicModel):
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
             elif self.llm_request_mode == 'offline':
                 self.llm_model = kwargs['llm_model']
-                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
-                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
+                # self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = kwargs['llm_model_args'])
+                self.llm = VLLMOfflineInference(self.llm_model, device = device, model_args = {**kwargs['llm_model_args'], "enforce_eager": True})
                 self.llm_prompt = self.llm.tokenize(llm_prompt)
 
 
@@ -283,7 +283,8 @@ class CTLSTMWrapper(BasicModel):
         
         if self.llm_contrastive and step % 1 == 0:
             loss_kl, average_probability_sum = self.likelihood_loss(note_history, note_next, events_history, time_history, original_time_history, \
-                                                                    event_next_without_dummy, time_next, mask_next_without_dummy, mean, std, sparse_rate = self.sparse_rate)
+                                                                    event_next_without_dummy, time_next, mask_next_without_dummy, mean, std, \
+                                                                    sparse_rate = self.sparse_rate, note_embedding_history = note_embedding_history)
 
         loss_survival = 0
         if self.survival_loss_during_training:
@@ -425,7 +426,7 @@ class CTLSTMWrapper(BasicModel):
 
 
     def likelihood_loss(self, note_history, note_next, events_history, time_history, original_time_history, 
-                        events_next, time_next, mask_next, mean, std, sparse_rate):
+                        events_next, time_next, mask_next, mean, std, sparse_rate, note_embedding_history = None):
         # We use sparse rate to speed up training.
         # During training, we randomly remove events from the LLM augmentation process with probability sparse_rate.
         # This process should increase the LLM augmentation process, the main bottleneck of the training process, by 1 / (1 - sparse_rate) - 1 times.
@@ -436,11 +437,12 @@ class CTLSTMWrapper(BasicModel):
                                         events_history = events_history, time_history = time_history,
                                         number_of_total_samples = self.llm_contrast_sample_num, 
                                         step = self.llm_contrast_sample_step, 
-                                        mean = mean, std = std)                # [llm_contrast_sample_num, batch_size, seq_len]
+                                        mean = mean, std = std, note_embedding_history = note_embedding_history)
+                                                                               # [llm_contrast_sample_num, batch_size, seq_len]
         
         sampled_time = sampled_time.clone()                                    # [llm_contrast_sample_num, batch_size, seq_len]
         intensity_integral_all_events, intensity_all_events \
-            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1)
+            = self.model(time_history, sampled_time, events_history, num_dimension_prior_batch = 1, note_embedding_history = note_embedding_history)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
         mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
@@ -450,7 +452,7 @@ class CTLSTMWrapper(BasicModel):
         sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]
         sampled_events, _ = pack((events_next, sampled_events), '* b s')       # [llm_contrast_sample_num + 1, batch_size, seq_len]
         
-        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0)
+        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0, note_embedding_history = note_embedding_history)
                                                                                # [batch_size, seq_len, num_events]
         all_intensity, _ = pack((intensity, intensity_all_events), '* b s ne') # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
         all_intensity_integral, _ = pack((intensity_integral, intensity_integral_all_events), '* b s ne')
@@ -1520,7 +1522,7 @@ class CTLSTMWrapper(BasicModel):
         sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]
         sampled_events, _ = pack((events_next, sampled_events), '* b s')       # [llm_contrast_sample_num + 1, batch_size, seq_len]
         
-        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0)
+        intensity_integral, intensity = self.model(time_history, time_next, events_history, num_dimension_prior_batch = 0, note_embedding_history = note_embedding_history)
                                                                                # [batch_size, seq_len, num_events]
         all_intensity, _ = pack((intensity, intensity_all_events), '* b s ne') # [llm_contrast_sample_num + 1, batch_size, seq_len, num_events]
         all_intensity_integral, _ = pack((intensity_integral, intensity_integral_all_events), '* b s ne')
