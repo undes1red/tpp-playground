@@ -2,6 +2,7 @@
 # This file can pack numerous tasks and run them one by one automatically.
 
 import os, argparse, importlib, copy, sys
+from time import localtime, strftime
 from batch_task_worker_utils import task_generator_worker, translate_dict_to_arguments, monitor_and_automaticly_run_tasks, read_yaml, mkdir_if_not_exist
 from src.taskhost import get_logger
 
@@ -10,6 +11,9 @@ logger = get_logger(__name__)
 root_path = os.path.dirname(os.path.abspath(__file__))
 logger.info(f'project root is {root_path}.')
 logger.info(f'Please ensure the root_path is correct!')
+
+current_local_time = strftime("%Y-%m-%d %H:%M:%S", localtime())
+logger.info(f'Task started at {current_local_time}. ')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--script_type', type = str, choices = ['normal', 'previous_failed_tasks'], default = 'normal',\
@@ -121,6 +125,9 @@ if opt.script_type == 'previous_failed_tasks':
         generated_tasks.append(command.strip())
     the_number_of_task = len(generated_tasks)
     
+    # Append Time to stdout_dir
+    stdout_dir - os.path.join(stdout_dir, current_local_time)
+    
     mkdir_if_not_exist(stdout_dir)
     failed_tasks = monitor_and_automaticly_run_tasks(generated_tasks, use_gpu, gpu_pool, opt.num_task_parallel, stdout_dir, opt.slurm, slurm_arguments = slurm_arguments)
     
@@ -171,7 +178,7 @@ else:
         # Extract the list and run the tasks one by one.
         for idx, sub_job in enumerate(job_content):
             logger.warning(f'============ subjob No. {idx + 1} started ============')
-            stdout_dir_for_this_subjob = os.path.join(stdout_dir, job, "subjob_" + str(idx + 1))
+            stdout_dir_for_this_subjob = os.path.join(stdout_dir, current_local_time, job, "subjob_" + str(idx + 1))
             mkdir_if_not_exist(stdout_dir_for_this_subjob)
             generated_tasks, the_number_of_task = task_generator(sub_job)
             generated_tasks = [' '.join(sub_task) for sub_task in generated_tasks]

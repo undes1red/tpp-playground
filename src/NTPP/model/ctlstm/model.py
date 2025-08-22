@@ -530,11 +530,25 @@ class CTLSTMWrapper(BasicModel):
         '''
         event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
         event_ranking_of_real_events_by_llm = event_ranking_by_llm[0, ...]     # [batch_size, seq_len]
-        event_ranking_first_event_by_llm = event_ranking_by_llm <= repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
+        event_ranking_first_event_by_llm = event_ranking_by_llm == repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        event_ranking_event_higher_than_realevents_by_llm = event_ranking_by_llm < repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        event_ranking_event_lower_than_realevents_by_llm = event_ranking_by_llm > repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
+                                                                               # [llm_contrast_sample_num + 1, batch_size, seq_len]
+        # the probability of real events.
         log_selected_distribution_of_first_event_selected_by_llm = (-log_selected_distribution * event_ranking_first_event_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
-        kl_div = log_selected_distribution_of_first_event_selected_by_llm.sum() / sparse_mask.sum()
+        # the probability of events whose ranking higher than real events.
+        log_selected_distribution_of_event_higher_than_realevents_selected_by_llm = (-log_selected_distribution * event_ranking_event_higher_than_realevents_by_llm).sum(dim = 0) * sparse_mask
+                                                                               # [batch_size, seq_len]
+        # the probability of events whose ranking lower than real events.
+        log_selected_distribution_of_event_lower_than_realevents_selected_by_llm = (log_selected_distribution * event_ranking_event_lower_than_realevents_by_llm).sum(dim = 0) * sparse_mask
+                                                                               # [batch_size, seq_len]
+
+        kl_div = (log_selected_distribution_of_first_event_selected_by_llm.sum() + \
+                  0.5 * log_selected_distribution_of_event_higher_than_realevents_selected_by_llm.sum() + \
+                  0.00 * log_selected_distribution_of_event_lower_than_realevents_selected_by_llm.sum()) / sparse_mask.sum()
         
         # Our loss is expected to increase the sum of p^*(m, t) at sampled points. Is this true?
         masked_distribution_from_mtpp_model = log_selected_distribution.exp().sum(dim = 0) * mask_next
