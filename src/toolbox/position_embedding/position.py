@@ -23,8 +23,8 @@ class PositionalEmbedding(nn.Module):
         pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
-    def forward(self, x):
-        length = x.shape[-1]
+    def forward(self, x, length_idx = -1):
+        length = x.shape[length_idx]
         return self.pe[:, :length]
 
 

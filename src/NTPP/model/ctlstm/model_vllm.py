@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, move_from_tensor_to_list, pack_one_value_to_dict, argument_check, predict_event, reverse_dict_key_val
 from src.toolbox.integration import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
-from src.toolbox.llms import CustomOpenAIforVLLM, VLLMOfflineInference, extract_content, remove_thinking, create_messages
 
 from src.NTPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.NTPP.model.ctlstm.plot import *
@@ -92,13 +91,12 @@ class CTLSTMWrapper(BasicModel):
         # Please take care that in the default settings CTLSTM handles continuous-time event stream without notes.
         # You should set mtpp_includes_note_embedding = True to inject note embeddings into the CTLSTM.
         self.mtpp_includes_note_embedding = mtpp_includes_note_embedding
-        self.mtpp_note_global_known = True
         
         self.model = CTLSTM(device = device, num_events = self.num_events, history_module_name = history_module_name, \
                             d_mark_embedding = d_mark_embedding, d_input = d_input, d_hidden = d_hidden, \
                             history_encoder_layers = history_encoder_layers, dropout = dropout, \
                             integration_sample_rate = integration_sample_rate, mtpp_includes_note_embedding = self.mtpp_includes_note_embedding, \
-                            note_embedding_size = self.note_embedding_size, mtpp_note_global_known = self.mtpp_note_global_known)
+                            note_embedding_size = self.note_embedding_size)
 
 
     def divide_history_and_next(self, input):
@@ -228,13 +226,10 @@ class CTLSTMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len] * 2
         note_embedding_history = None
         if self.mtpp_includes_note_embedding:
-            note_embedding_history, note_embedding_next = self.divide_history_and_next(note_embedding)
+            note_embedding_history, _ = self.divide_history_and_next(note_embedding)
                                                                                # [batch_size, seq_len, dim_note_embedding] * 2
         
-        integral_all_events, intensity_all_events, predicted_note_embedding \
-            = self.model(time_history, time_next, events_history, mask_history, \
-                         note_embedding_history = note_embedding_history, output_pred_note_embedding = True, \
-                         note_embedding_next = note_embedding_next)
+        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, note_embedding_history = note_embedding_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
@@ -242,27 +237,19 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, seq_len]
         the_number_of_events = mask_next_without_dummy.sum().item()
 
-        # MSE loss between the predicted note embedding and the real note embedding.
-        mse_loss = torch.tensor(0.0, device = self.device)
-        if self.mtpp_includes_note_embedding:
-            mse_loss = F.mse_loss(input = predicted_note_embedding, target = note_embedding_next, reduction = 'none')
-                                                                               # [batch_size, seq_len, note_embedding_size]
-            mse_loss = mse_loss.sum(dim = -1) * mask_next_without_dummy        # [batch_size, seq_len]
-            mse_loss = mse_loss.sum()
-
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
              integral_all_events = integral_all_events, intensity_all_events = intensity_all_events, \
              events_next = event_next_without_dummy, mask_next = mask_next_without_dummy
         )
 
-        # loss_kl = torch.tensor(0.0, device = self.device)
-        # average_probability_sum = torch.tensor(0.0, device = self.device)
+        loss_kl = torch.tensor(0.0, device = self.device)
+        average_probability_sum = torch.tensor(0.0, device = self.device)
         
-        # if self.llm_contrastive and step % 1 == 0:
-        #     loss_kl, average_probability_sum = self.likelihood_loss(note_history, note_next, events_history, time_history, original_time_history, \
-        #                                                             event_next_without_dummy, time_next, mask_next_without_dummy, mean, std, \
-        #                                                             sparse_rate = self.sparse_rate, note_embedding_history = note_embedding_history)
+        if self.llm_contrastive and step % 1 == 0:
+            loss_kl, average_probability_sum = self.likelihood_loss(note_history, note_next, events_history, time_history, original_time_history, \
+                                                                    event_next_without_dummy, time_next, mask_next_without_dummy, mean, std, \
+                                                                    sparse_rate = self.sparse_rate, note_embedding_history = note_embedding_history)
 
         loss_survival = 0
         if self.survival_loss_during_training:
@@ -272,9 +259,10 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [batch_size, 1]
             loss_survival = integral_survival.sum()
 
-        loss = log_likeli_loss_without_dummy + loss_survival + mse_loss
+        # loss = log_likeli_loss_without_dummy + loss_survival + loss_kl
+        loss = loss_kl
 
-        return loss, log_likeli_loss_without_dummy, mse_loss, marker_loss_without_dummy, the_number_of_events
+        return loss, log_likeli_loss_without_dummy, loss_kl, average_probability_sum, marker_loss_without_dummy, the_number_of_events
 
 
     @torch.inference_mode()
@@ -318,7 +306,7 @@ class CTLSTMWrapper(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)           # [batch_size, seq_len]
         note_embedding_history = None
         if self.mtpp_includes_note_embedding:
-            note_embedding_history, note_embedding_next = self.divide_history_and_next(note_embedding)
+            note_embedding_history, _ = self.divide_history_and_next(note_embedding)
                                                                                # [batch_size, seq_len, dim_note_embedding] * 2
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next) # [batch_size, seq_len]
@@ -328,25 +316,14 @@ class CTLSTMWrapper(BasicModel):
 
         mae, f1, _ = self.mean_absolute_error_and_f1(time_history = time_history, time_next = time_next, \
                                                      events_history = events_history, events_next = events_next, \
-                                                     mask_history = mask_history, mask_next = mask_next_without_dummy, \
-                                                     mean = mean, std = std, \
-                                                     note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
+                                                     mask_next = mask_next_without_dummy, \
+                                                     mean = mean, std = std, note_embedding_history = note_embedding_history)
                                                                                # [batch_size, seq_len] * 2
         mae = mae.sum().item() / the_number_of_events
 
-        integral_all_events_time_next, intensity_all_events_time_next, predicted_note_embedding, \
-            = self.model(time_history, time_next, events_history, mask_history, \
-                         note_embedding_history = note_embedding_history, output_pred_note_embedding = True, 
-                         note_embedding_next = note_embedding_next)
+        integral_all_events_time_next, intensity_all_events_time_next \
+            = self.model(time_history, time_next, events_history, note_embedding_history = note_embedding_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
-                                                                               
-        # MSE loss between the predicted note embedding and the real note embedding.
-        mse_loss = torch.tensor(0.0, device = self.device)
-        if self.mtpp_includes_note_embedding:
-            mse_loss = F.mse_loss(input = predicted_note_embedding, target = note_embedding_next, reduction = 'none')
-                                                                               # [batch_size, seq_len, note_embedding_size]
-            mse_loss = mse_loss.sum(dim = -1) * mask_next_without_dummy        # [batch_size, seq_len]
-            mse_loss = mse_loss.sum()
 
         # NLL loss and event loss at time_next
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
@@ -361,7 +338,7 @@ class CTLSTMWrapper(BasicModel):
         loss_survival = integral_survival.mean()
 
         return log_likeli_loss_time_next_without_dummy, loss_survival, marker_loss_time_next_without_dummy, \
-               mse_loss, mae, f1, the_number_of_events
+               mae, f1, the_number_of_events
 
 
     def loss_function(self, integral_all_events, intensity_all_events, events_next, mask_next):
@@ -524,6 +501,7 @@ class CTLSTMWrapper(BasicModel):
         If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, 
         we apply negative log-likelihood on the real next event and all sampled events ranked higher than the real event.
         '''
+        '''
         event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
         event_ranking_of_real_events_by_llm = event_ranking_by_llm[0, ...]     # [batch_size, seq_len]
         event_ranking_first_event_by_llm = event_ranking_by_llm == repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
@@ -539,18 +517,19 @@ class CTLSTMWrapper(BasicModel):
         log_selected_distribution_of_event_higher_than_realevents_selected_by_llm = (-log_selected_distribution * event_ranking_event_higher_than_realevents_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
         # the probability of events whose ranking lower than real events.
-        log_selected_distribution_of_event_lower_than_realevents_selected_by_llm = (log_selected_distribution * event_ranking_event_lower_than_realevents_by_llm).sum(dim = 0) * sparse_mask
+        log_selected_distribution_of_event_lower_than_realevents_selected_by_llm = (-log_selected_distribution * event_ranking_event_lower_than_realevents_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
         
         kl_div = (log_selected_distribution_of_first_event_selected_by_llm.sum() + \
-                  2.0 * log_selected_distribution_of_event_higher_than_realevents_selected_by_llm.sum() + \
-                  2.0 * log_selected_distribution_of_event_lower_than_realevents_selected_by_llm.sum()) / sparse_mask.sum()
+                  0.5 * log_selected_distribution_of_event_higher_than_realevents_selected_by_llm.sum() + \
+                  0.5 * log_selected_distribution_of_event_lower_than_realevents_selected_by_llm.sum()) / sparse_mask.sum()
+        '''
         
         '''
         Version 6: ranking-weighted NLL loss.
         If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, 
         we apply negative log-likelihood on the real next event and all sampled events ranked higher than the real event.
-        
+        '''
         loss_weight_by_llm = F.softmax(log_probs_by_llm, dim = 0)              # [llm_contrast_sample_num + 1, batch_size, seq_len]
         kl_div = (-log_selected_distribution * loss_weight_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
@@ -559,7 +538,6 @@ class CTLSTMWrapper(BasicModel):
         event_ranking_event_higher_than_realevents_by_llm = event_ranking_by_llm < repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
                                                                                # [llm_contrast_sample_num + 1, batch_size, seq_len]
         kl_div = kl_div.sum() / sparse_mask.sum() 
-        '''
         
         # Our loss is expected to increase the sum of p^*(m, t) at sampled points. Is this true?
         masked_distribution_from_mtpp_model = log_selected_distribution.exp().sum(dim = 0) * mask_next
@@ -722,8 +700,8 @@ class CTLSTMWrapper(BasicModel):
 
 
     @torch.inference_mode()
-    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, 
-                                   mask_history, mask_next, mean, std, opt = None, note_embedding_history = None, note_embedding_next = None):
+    def mean_absolute_error_and_f1(self, events_history, time_history, events_next, time_next, mask_next, 
+                                   mean, std, opt = None, note_embedding_history = None):
         '''
         Called by evaluate_procedure(), debug() and get_mae_and_f1(), this function computed the MAE and macro-F1 of one minibatch.
 
@@ -755,15 +733,14 @@ class CTLSTMWrapper(BasicModel):
               The mark distribution at the real time.
         '''
         pred_time = self.sample_time(sampling_approach = 'its', task = 'tm',
-                                     events_history = events_history, time_history = time_history, mask_history = mask_history,
+                                     events_history = events_history, time_history = time_history,
                                      number_of_total_samples = self.sample_rate if opt is None else opt.sample_rate, 
                                      step = self.mae_step if opt is None else opt.mae_step, 
-                                     mean = mean, std = std, note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
+                                     mean = mean, std = std, note_embedding_history = note_embedding_history)
                                                                                # [sample_rate, batch_size, seq_len]
         pred_time = pred_time.mean(dim = 0)                                    # [batch_size, seq_len]
         mae = torch.abs(pred_time - time_next) * mask_next                     # [batch_size, seq_len]
-        _, intensity_all_events = self.model(time_history, time_next, events_history, mask_history, \
-                                              note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
+        _, intensity_all_events = self.model(time_history, time_next, events_history, note_embedding_history = note_embedding_history)
                                                                                # [batch_size, seq_len, num_events]
         mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [batch_size, seq_len, num_events]
@@ -2094,9 +2071,7 @@ class CTLSTMWrapper(BasicModel):
         # For now, we don't acquire any prediction loss to assist the model training.  
         (time, original_time_seq, events, original_events, note, note_embedding, score, mask), (mean, std) = minibatch
                                                                                # 6 * [batch_size, seq_len + 1] + two floats
-        
-        # loss, log_likeli_loss_without_dummy, mse_loss, marker_loss_without_dummy, the_number_of_events
-        loss, time_loss_without_dummy, mse_loss, events_loss, the_number_of_events \
+        loss, time_loss_without_dummy, loss_kl, average_probability_sum, events_loss, the_number_of_events \
             = model('train', time, original_time_seq, events, original_events, note, note_embedding, mask, \
                     mean = mean, std = std, step = step)
 
@@ -2105,9 +2080,11 @@ class CTLSTMWrapper(BasicModel):
         time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
-        mse_loss = mse_loss.item() / the_number_of_events
         
-        return time_loss_without_dummy, fact, mse_loss, events_loss
+        loss_kl = loss_kl.item()
+        average_probability_sum = average_probability_sum.item()
+        
+        return time_loss_without_dummy, fact, loss_kl, average_probability_sum, events_loss
     
 
     def evaluation_step(model, minibatch, device):
@@ -2143,16 +2120,15 @@ class CTLSTMWrapper(BasicModel):
         
         (time, original_time_seq, events, original_events, note, note_embedding, score, mask), (mean, std) = minibatch
                                                                                # 6 * [batch_size, seq_len + 1] + two floats
-        time_loss, loss_survival, events_loss, mse_loss, mae, f1, the_number_of_events \
+        time_loss, loss_survival, events_loss, mae, f1, the_number_of_events \
             = model('evaluate', time, original_time_seq, events, original_events, note, note_embedding, mask, mean = mean, std = std)
 
         time_loss = time_loss.item() / the_number_of_events
         loss_survival = loss_survival.item()
         events_loss = events_loss.item() / the_number_of_events
         fact = score.sum().item() / the_number_of_events
-        mse_loss = mse_loss.item() / the_number_of_events
         
-        return time_loss, loss_survival, fact, events_loss, mse_loss, mae, f1
+        return time_loss, loss_survival, fact, events_loss, mae, f1
 
 
     def postprocess(input, procedure):
@@ -2174,22 +2150,16 @@ class CTLSTMWrapper(BasicModel):
             Training process
             [absolute loss, relative loss, events loss]
             '''
-            return [input[0], input[0] - input[1], input[2], input[3]]
+            return [input[0], input[0] - input[1], input[2], input[3], input[4]]
         
         def test_postprocess(input):
             '''
             Evaluation process
             [absolute loss, relative loss, events loss, mae value]
-            time_loss, loss_survival, fact, events_loss, mse_loss, mae, f1
             '''
-            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5], input[6]]
+            return [input[0], input[1], input[0] - input[2], input[3], input[4], input[5]]
         
         return (train_postprocess(input) if procedure == 'Training' else test_postprocess(input))
-    
-    '''
-    The maximum length of the format_dict in different procedures.
-    '''
-    format_dict_length = 7
     
     
     def log_print_format(input, procedure):
@@ -2212,8 +2182,9 @@ class CTLSTMWrapper(BasicModel):
             format_dict = {}
             format_dict['absolute_loss'] = pack_one_value_to_dict(input[0])
             format_dict['relative_loss'] = pack_one_value_to_dict(input[1])
-            format_dict['mse_loss'] = pack_one_value_to_dict(input[2])
-            format_dict['events_loss'] = pack_one_value_to_dict(input[3])
+            format_dict['KL'] = pack_one_value_to_dict(input[2])
+            format_dict['sum_of_pmt_at_sampled_points'] = pack_one_value_to_dict(input[3])
+            format_dict['events_loss'] = pack_one_value_to_dict(input[4])
             return format_dict
 
         def test_log_print_format(input):
@@ -2222,14 +2193,18 @@ class CTLSTMWrapper(BasicModel):
             format_dict['avg_survival_loss'] = pack_one_value_to_dict(input[1])
             format_dict['relative_NLL_loss'] = pack_one_value_to_dict(input[2])
             format_dict['events_loss'] = pack_one_value_to_dict(input[3])
-            format_dict['note_pred_mse_loss'] = pack_one_value_to_dict(input[4])
-            format_dict['mae'] = pack_one_value_to_dict(input[5], '2.8f')
-            format_dict['f1'] = pack_one_value_to_dict(input[6])
+            format_dict['mae'] = pack_one_value_to_dict(input[4], '2.8f')
+            format_dict['f1_pred_at_pred_time'] = pack_one_value_to_dict(input[5])
             return format_dict
         
         return (train_log_print_format(input) if procedure == 'Training' else test_log_print_format(input))
 
+    '''
+    The maximum length of the format_dict in different procedures.
+    '''
+    format_dict_length = 6
 
+    
     def choose_metric(evaluation_report_format_dict, test_report_format_dict):
         '''
         This function helps the trainer to pick the best checkpoint based on several metrics.
