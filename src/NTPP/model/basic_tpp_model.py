@@ -9,7 +9,7 @@ memory_ceiling = 3e7
 # The lower and upper boundary of the inversed transform sampling.
 # The final trick to make IFIB generate sane samples by avoiding the long tail.
 its_lower_bound = 0.0
-its_upper_bound = 0.9
+its_upper_bound = 1.0
 
 
 class BasicModel(nn.Module, metaclass = ABCMeta):

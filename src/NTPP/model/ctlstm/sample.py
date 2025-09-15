@@ -197,14 +197,15 @@ def sampling_by_its(self, task, *args, **kwargs):
     return dict_apparoch_for_tasks[task](self, *args, **kwargs)
 
 
-def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
-                           number_of_total_samples, step, inf_val, mean, std):
+def sampling_by_its_for_mt(self, events_history, time_history, mask_history, p_m, resolution,
+                           number_of_total_samples, step, inf_val, mean, std, note_embedding_history = None, note_embedding_next = None):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def evaluate_all_event(taus):
         expanded_integral_across_events, expanded_intensity_across_events, timestamp = \
-            self.model.integral_intensity_time_next_3d(events_history, time_history, taus, resolution, num_dimension_prior_batch = 1)
+            self.model.integral_intensity_time_next_3d(events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch = 1, \
+                                                       note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
                                                                             # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
         expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim = -1)
                                                                             # [sample_rate, batch_size, seq_len, num_events, resolution]

@@ -1,4 +1,4 @@
-from src.TPP.model.fenn.model import FENNModel
+from src.NTPP.model.fenn.model import FENNModel
 
 
 def get_model():

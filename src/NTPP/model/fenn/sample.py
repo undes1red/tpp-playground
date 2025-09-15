@@ -2,8 +2,8 @@ import torch
 
 from einops import rearrange, reduce, repeat
 
-from src.TPP.model.utils import step_split, median_prediction, thinning_sampling
-from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
+from src.NTPP.model.utils import step_split, median_prediction, thinning_sampling
+from src.NTPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 
 from src.toolbox.integration import approximate_integration
 
@@ -160,14 +160,15 @@ def sampling_by_its_for_mt(self, events_history, time_history, p_m, resolution,
     return tau_pred
 
 
-def sampling_by_its_for_tm(self, events_history, time_history,
-                           number_of_total_samples, step, mean, std):
+def sampling_by_its_for_tm(self, events_history, time_history, mask_history, 
+                           number_of_total_samples, step, mean, std, note_embedding_history = None, note_embedding_next = None):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def bisect_target(taus, probability_threshold):
         taus = repeat(taus, '... -> ... ne', ne = self.num_events)             # [sample_rate, batch_size, seq_len, num_events]
-        integral = self.model(events_history, time_history, taus, mean, std)
+        integral = self.model(events_history, time_history, taus, mask_history, mean, std, 
+                              note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
                                                                                # [sample_rate, batch_size, seq_len, num_events]
         integral = integral.sum(dim = -1)                                      # [sample_rate, batch_size, seq_len]
         

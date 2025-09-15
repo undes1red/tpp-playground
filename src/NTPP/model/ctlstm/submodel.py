@@ -16,7 +16,7 @@ from src.NTPP.model.ctlstm.note_predictor import NotePredictor
 class CTLSTM(nn.Module):
     def __init__(self, device, num_events, history_module_name, d_mark_embedding, d_input, d_hidden, \
                  history_encoder_layers, dropout, integration_sample_rate, mtpp_includes_note_embedding, \
-                 note_embedding_size = 1, mtpp_note_global_known = False):
+                 note_embedding_size = 1, mtpp_note_global_known = False, sample_embedding_pred = True, sample_size = 3):
         '''
         This function creates a CTLSTM model.
         
@@ -45,6 +45,13 @@ class CTLSTM(nn.Module):
         self.num_events = num_events
         self.device = device
         self.integration_sample_rate = integration_sample_rate
+        self.d_mark_embedding = d_mark_embedding
+        self.note_embedding_size = note_embedding_size
+        self.mtpp_includes_note_embedding = mtpp_includes_note_embedding
+        self.d_input = d_input
+        
+        self.sample_embedding_pred = False
+        self.sample_size = sample_size
 
         self.gelu = nn.GELU()
 
@@ -84,13 +91,19 @@ class CTLSTM(nn.Module):
         
         # Include the embedding of historical notes.
         if mtpp_includes_note_embedding:
-            self.note_transformer = NotePredictor(n_layer = 3, n_head = 3, d_input = note_embedding_size, \
-                                                  d_qk = note_embedding_size, d_v = note_embedding_size, d_hidden = 3 * note_embedding_size, \
-                                                  device = self.device)
-            self.embed_note_into_history = nn.Linear(note_embedding_size, d_input, device = self.device)
-            
             # If true, note_embedding_next must be available.
             self.mtpp_note_global_known = mtpp_note_global_known
+            
+            if not self.mtpp_note_global_known:
+                self.note_transformer = NotePredictor(n_layer = 3, n_head = 3, d_input = d_mark_embedding, \
+                                                      d_qk = d_mark_embedding, d_v = d_mark_embedding, d_hidden = 3 * d_mark_embedding, \
+                                                      device = self.device)
+            
+            self.embed_note_into_history = nn.Sequential(
+                nn.Linear(d_mark_embedding, d_mark_embedding, device = self.device),
+                nn.LayerNorm(d_mark_embedding, device = self.device),
+                nn.Tanh()
+            )
     
     
     def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
@@ -122,9 +135,130 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
         duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = F.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))      # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
+        cell_t = mu + (eta - mu) * torch.exp(-gamma * duration_t)              # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
         
         return cell_t
+
+
+    def reparameterize(self, z, history):
+        logvar = self.logvar(history)                                          # [batch_size, seq_len, d_input]
+        mu = self.mu(history)                                                  # [batch_size, seq_len, d_input]
+        
+        logvar = logvar.unsqueeze(dim = -2)                                    # [batch_size, seq_len, 1, d_input]
+        mu = mu.unsqueeze(dim = -2)                                            # [batch_size, seq_len, 1, d_input]
+        
+        return z * logvar + mu
+
+
+    def forward_old(self, time_history, time_next, events_history, mask_history, num_dimension_prior_batch = 0, 
+                note_embedding_history = None, output_pred_note_embedding = False, note_embedding_next = None):
+        '''
+        CTLSTM's forwardpropagation function for training.
+        
+        ### Args
+            * ```torch.tensor``` events_history
+              shape: ```[batch_size, seq_len]```
+              Historical event sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[batch_size, seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[..., batch_size, seq_len]```
+              Guessed or real time when the next event will happen.
+            * ```int``` num_dimension_prior_batch
+              How many dimensions does the input mu, eta, and gamma have before the batch_size dim?
+        ### Outputs
+            * ```torch.tensor``` integral_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_events
+              shape: ```[..., batch_size, seq_len, num_events]```
+              The value of \\lambda^*(m, t) on at t_i.
+        '''
+        if self.mtpp_includes_note_embedding:
+            if self.mtpp_note_global_known and note_embedding_next is None:
+                raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
+        
+        batch_size, seq_len = events_history.shape
+        events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        
+        if note_embedding_history is not None:
+            if self.mtpp_note_global_known:
+                note_embeddings = note_embedding_next[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embedding_next)
+                                                                               # [batch_size, seq_len, d_input]
+            else:
+                picked_note_embedding_history = note_embedding_history[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embedding_history = picked_note_embedding_history + events_embeddings + time_embeddings
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings = self.note_transformer(note_embedding_history, mask_history)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
+                # Its loss is the MSE between the predicted and the true note embedding.
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
+                                                                               # [batch_size, seq_len, d_input]
+                            
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+        
+        if note_embedding_history is not None:
+            history = history + note_embeddings_detached_for_time              # [batch_size, seq_len, d_input]
+            # history = note_embeddings_detached_for_time                      # [batch_size, seq_len, d_input]
+            if not self.mtpp_note_global_known and self.sample_embedding_pred:
+                z = torch.randn(batch_size, seq_len, self.sample_size, self.d_input, device = self.device)
+                                                                               # [batch_size, seq_len, sample_size, d_input]
+                z = self.reparameterize(z, history)                            # [batch_size, seq_len, sample_size, d_input]
+                history = rearrange(z, 'b s ss di -> b (s ss) di')             # [batch_size, seq_len * sample_size, d_input]
+
+        eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
+        mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
+        gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
+
+        if not self.mtpp_note_global_known and self.sample_embedding_pred:
+            time_next = repeat(time_next, '... b s -> ... b (s ss)', ss = self.sample_size)
+                                                                               # [..., batch_size, seq_len * sample_size]
+            hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len * sample_size, d_input]
+            # calculate the intensity.
+            intensity_all_events = self.intensity_layer(hidden_state_at_t)     # [..., batch_size, seq_len * sample_size, num_events]
+            # calculate the integral
+            time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+            expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier    # [..., batch_size, seq_len * sample_size, integration_sample_rate]
+            expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len * sample_size, integration_sample_rate, d_input]
+            expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
+                                                                               # [..., batch_size, seq_len * sample_size, integration_sample_rate, num_events]
+            integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [..., batch_size, seq_len * sample_size, num_events]
+            # merge the obtained intensity and integral.
+            intensity_all_events = reduce(intensity_all_events, '... b (s ss) ne -> ... b s ne', 'mean', ss = self.sample_size)
+                                                                               # [..., batch_size, seq_len, num_events]
+            integral_all_events = reduce(integral_all_events, '... b (s ss) ne -> ... b s ne', 'mean', ss = self.sample_size)
+                                                                               # [..., batch_size, seq_len, num_events]
+        else:
+            hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, d_input]
+            # calculate the intensity.
+            intensity_all_events = self.intensity_layer(hidden_state_at_t)     # [..., batch_size, seq_len, num_events]
+            # calculate the integral
+            time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
+            expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier    # [..., batch_size, seq_len, integration_sample_rate]
+            expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, d_input]
+            expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
+                                                                               # [..., batch_size, seq_len, integration_sample_rate, num_events]
+            integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
+                                                                               # [..., batch_size, seq_len, num_events]
+
+        if output_pred_note_embedding:
+            return integral_all_events, intensity_all_events, note_embeddings
+        else:
+            return integral_all_events, intensity_all_events
 
 
     def forward(self, time_history, time_next, events_history, mask_history, num_dimension_prior_batch = 0, 
@@ -152,32 +286,40 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len, num_events]```
               The value of \\lambda^*(m, t) on at t_i.
         '''
-        if self.mtpp_note_global_known and note_embedding_next is None:
-            raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
+        if self.mtpp_includes_note_embedding:
+            if self.mtpp_note_global_known and note_embedding_next is None:
+                raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
         
-        seq_len = events_history.shape[-1]
+        batch_size, seq_len = events_history.shape
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        
         if note_embedding_history is not None:
             if self.mtpp_note_global_known:
-                note_embeddings = note_embedding_next                          # [batch_size, seq_len, note_embedding_size]
-                note_embeddings_detached_for_time = self.embed_note_into_history(note_embedding_next)
+                note_embeddings = note_embedding_next[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings)
                                                                                # [batch_size, seq_len, d_input]
             else:
+                picked_note_embedding_history = note_embedding_history[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embedding_history = picked_note_embedding_history + events_embeddings + time_embeddings
+                                                                               # [batch_size, seq_len, d_mark_embedding]
                 note_embeddings = self.note_transformer(note_embedding_history, mask_history)
                                                                                # [batch_size, seq_len, note_embedding_size]
                 # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
                 # Its loss is the MSE between the predicted and the true note embedding.
-                note_embeddings_detached_for_time = note_embeddings.detach()   # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
                 note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
                                                                                # [batch_size, seq_len, d_input]
-        
+
         history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+
         if note_embedding_history is not None:
             history = history + note_embeddings_detached_for_time              # [batch_size, seq_len, d_input]
-        
+
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -195,7 +337,7 @@ class CTLSTM(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
-        
+
         if output_pred_note_embedding:
             return integral_all_events, intensity_all_events, note_embeddings
         else:
@@ -329,7 +471,7 @@ class CTLSTM(nn.Module):
         '''
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [number_of_sampled_sequences, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(seq_len, time_history)             # [number_of_sampled_sequences, seq_len, d_mark_embedding]
+        time_embeddings = self.position_emb(seq_len, time_history)             # [number_of_sampled_sequences, seq_len, d_mark_embedding]                                                     
         history = events_embeddings + time_embeddings                          # [number_of_sampled_sequences, seq_len, d_mark_embedding]
             
         _, (sampled_history_embedding, _) = self.history_encoder(history)      # [1, number_of_sampled_sequences, d_hidden]
@@ -361,7 +503,8 @@ class CTLSTM(nn.Module):
         return integral_all_events, intensity_all_events
 
 
-    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, integration_sample_rate, num_dimension_prior_batch = 0, time_next_start = None):
+    def integral_intensity_time_next_2d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, num_dimension_prior_batch = 0, 
+                                        time_next_start = None, note_embedding_history = None, output_pred_note_embedding = False, note_embedding_next = None):
         '''
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
@@ -396,19 +539,45 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         '''
+        if self.mtpp_includes_note_embedding:
+            if self.mtpp_note_global_known and note_embedding_next is None:
+                raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
+          
         if time_next_start is None:
             time_next_start = torch.zeros_like(time_next)                      # [batch_size, seq_len]
         
-        integral_offset, _ = self.forward(time_history, time_next_start, events_history, num_dimension_prior_batch)
+        integral_offset, _ = self.forward(time_history, time_next_start, events_history, mask_history, num_dimension_prior_batch, \
+                                          note_embedding_history = note_embedding_history, note_embedding_next = note_embedding_next)
                                                                                # [..., batch_size, seq_len, num_events]
 
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        if note_embedding_history is not None:
+            if self.mtpp_note_global_known:
+                note_embeddings = note_embedding_next[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings)
+                                                                               # [batch_size, seq_len, d_input]
+            else:
+                picked_note_embedding_history = note_embedding_history[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embedding_history = picked_note_embedding_history + events_embeddings + time_embeddings
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings = self.note_transformer(note_embedding_history, mask_history)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
+                # Its loss is the MSE between the predicted and the true note embedding.
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
+                                                                               # [batch_size, seq_len, d_input]
+                                                                               
         history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
         
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+        if note_embedding_history is not None:
+            history = history + note_embeddings_detached_for_time              # [batch_size, seq_len, d_input]
 
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -425,10 +594,15 @@ class CTLSTM(nn.Module):
         expanded_integral_all_events = integral_offset.unsqueeze(dim = -2) + approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
 
-        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
+        if output_pred_note_embedding:
+            return expanded_integral_all_events, expanded_intensity_all_events, expanded_time, note_embeddings
+        else:
+            return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 
 
-    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, integration_sample_rate, num_dimension_prior_batch = 0):
+    def integral_intensity_time_next_3d(self, events_history, time_history, time_next, mask_history, integration_sample_rate, \
+                                        num_dimension_prior_batch = 0, note_embedding_history = None, output_pred_note_embedding = False, \
+                                        note_embedding_next = None):
         '''
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
@@ -460,13 +634,38 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         '''
+        if self.mtpp_includes_note_embedding:
+            if self.mtpp_note_global_known and note_embedding_next is None:
+                raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
+          
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
+        if note_embedding_history is not None:
+            if self.mtpp_note_global_known:
+                note_embeddings = note_embedding_next[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings)
+                                                                               # [batch_size, seq_len, d_input]
+            else:
+                picked_note_embedding_history = note_embedding_history[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embedding_history = picked_note_embedding_history + events_embeddings + time_embeddings
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings = self.note_transformer(note_embedding_history, mask_history)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
+                # Its loss is the MSE between the predicted and the true note embedding.
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
+                                                                               # [batch_size, seq_len, d_input]
+                                                                               
         history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
         
         history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+        if note_embedding_history is not None:
+            history = history + note_embeddings_detached_for_time              # [batch_size, seq_len, d_input]
 
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
@@ -482,10 +681,14 @@ class CTLSTM(nn.Module):
         expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [..., batch_size, seq_len, num_events, integration_sample_rate, num_events]
 
-        return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
+        if output_pred_note_embedding:
+            return expanded_integral_all_events, expanded_intensity_all_events, expanded_time, note_embeddings
+        else:
+            return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 
 
-    def model_probe_function(self, events_history, time_history, time_next, mask_next, integration_sample_rate):
+    def model_probe_function(self, events_history, time_history, time_next, mask_history, mask_next, integration_sample_rate, \
+                             note_embedding_history = None, note_embedding_next = None):
         '''
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
@@ -514,14 +717,39 @@ class CTLSTM(nn.Module):
               shape: ```[batch_size, seq_len, resolution]```
               The value of sampled times.
         '''
+        if self.mtpp_includes_note_embedding:
+            if self.mtpp_note_global_known and note_embedding_next is None:
+                raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
+          
         seq_len = events_history.shape[-1]
         events_embeddings = self.events_embedding(events_history)              # [batch_size, seq_len, d_mark_embedding]
         time_embeddings = self.position_emb(seq_len, time_history)             # [batch_size, seq_len, d_mark_embedding]
-        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]        
-
-        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
-        history = self.history_mapper(history)
+        if note_embedding_history is not None:
+            if self.mtpp_note_global_known:
+                note_embeddings = note_embedding_next[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings)
                                                                                # [batch_size, seq_len, d_input]
+            else:
+                picked_note_embedding_history = note_embedding_history[..., :self.d_mark_embedding]
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embedding_history = picked_note_embedding_history + events_embeddings + time_embeddings
+                                                                               # [batch_size, seq_len, d_mark_embedding]
+                note_embeddings = self.note_transformer(note_embedding_history, mask_history)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
+                # Its loss is the MSE between the predicted and the true note embedding.
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
+                                                                               # [batch_size, seq_len, d_input]
+                                                                               
+        history = events_embeddings + time_embeddings                          # [batch_size, seq_len, d_mark_embedding]
+        
+        history, (_, _) = self.history_encoder(history)                        # [batch_size, seq_len, d_hidden]
+        history = self.history_mapper(history)                                 # [batch_size, seq_len, d_input]
+        if note_embedding_history is not None:
+            history = history + note_embeddings_detached_for_time              # [batch_size, seq_len, d_input]
+            
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]

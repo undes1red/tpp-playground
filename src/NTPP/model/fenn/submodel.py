@@ -8,10 +8,12 @@ from src.toolbox.nonneg_mlp import NonNegLinear
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.metrics import L1_distance_across_events
 
+from src.NTPP.model.fenn.note_predictor import NotePredictor
+
 
 class FENN(nn.Module):
     def __init__(self, d_history, d_intensity, num_events, dropout, history_module, history_module_layers,
-                 mlp_layers, device):
+                 mlp_layers, device, mtpp_includes_note_embedding, note_embedding_size = 1, mtpp_note_global_known = False):
         '''
         This function creates a FENN model.
         
@@ -34,6 +36,8 @@ class FENN(nn.Module):
         super(FENN, self).__init__()
         self.device = device
         self.num_events = num_events
+        self.d_history = d_history
+        self.note_embedding_size = note_embedding_size
 
         self.events = nn.Embedding(num_events + 1, d_history, padding_idx = num_events, device = device)
         
@@ -59,8 +63,28 @@ class FENN(nn.Module):
         self.aggregate = NonNegLinear(d_intensity, 1, bias = True, device = device)
         self.nonneg_activation = nn.Softplus()
 
+        # Include the embedding of historical notes.
+        if mtpp_includes_note_embedding:
+            # If true, note_embedding_next must be available.
+            self.mtpp_note_global_known = mtpp_note_global_known
+            
+            if not self.mtpp_note_global_known:
+                self.note_transformer = NotePredictor(n_layer = 3, n_head = 3, d_input = note_embedding_size, \
+                                                      d_qk = note_embedding_size, d_v = note_embedding_size, d_hidden = 3 * note_embedding_size, \
+                                                      device = self.device)
+            
+            self.embed_note_into_history = nn.Sequential(
+                nn.Linear(note_embedding_size, d_history * 3, device = self.device),
+                nn.LayerNorm(d_history * 3, device = self.device),
+                nn.Tanh(),
+                nn.Linear(d_history * 3, d_history, device = self.device),
+                nn.LayerNorm(d_history, device = self.device),
+                nn.Tanh(),
+            )
 
-    def forward(self, events_history, time_history, time_next, mean, std, custom_events_history = False):
+
+    def forward(self, events_history, time_history, time_next, mask_history, mean, std, custom_events_history = False, \
+                note_embedding_history = None, output_pred_note_embedding = False, note_embedding_next = None):
         '''
         FENNModel's forwardpropagation function for training.
         
@@ -84,16 +108,40 @@ class FENN(nn.Module):
               shape: ```[..., batch_size, seq_len, num_events]```
               The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
         '''
-        time_history = (time_history - mean) / std                             # [batch_size, seq_len]
+        if self.mtpp_note_global_known and note_embedding_next is None:
+            raise Exception('You claim that you will provide the note of the predicted event, but it is not there.')
         
+        seq_len = events_history.shape[-1]
+        time_history = (time_history - mean) / std                             # [batch_size, seq_len]        
         if custom_events_history:
             events_embeddings = events_history                                 # [batch_size, seq_len, d_history]
         else:
             events_embeddings = self.events(events_history)                    # [batch_size, seq_len, d_history]
         history, _ = pack([events_embeddings, time_history], 'b s *')          # [batch_size, seq_len, d_history + 1]
         
+        if note_embedding_history is not None:
+            if self.mtpp_note_global_known:
+                note_embeddings = note_embedding_next                          # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embedding_next)
+                                                                               # [batch_size, seq_len, d_history]
+            else:
+                pad = (0, self.note_embedding_size - self.d_history - 1)
+                history_for_note_pred = torch.nn.functional.pad(history, pad, mode = 'constant', value = 0)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                note_embedding_history = note_embedding_history + history_for_note_pred
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                note_embeddings = self.note_transformer(note_embedding_history, mask_history)
+                                                                               # [batch_size, seq_len, note_embedding_size]
+                # We detach the note_embedding here since note_transformer is not trained by MTPP's NLL loss.
+                # Its loss is the MSE between the predicted and the true note embedding.
+                note_embeddings_detached_for_time = note_embeddings            # [batch_size, seq_len, note_embedding_size]
+                note_embeddings_detached_for_time = self.embed_note_into_history(note_embeddings_detached_for_time)
+                                                                               # [batch_size, seq_len, d_history]
+        
         # Reshape hidden output for full connection layers.
         hidden_history, (_, _) = self.his_encoder(history)                     # [batch_size, seq_len, d_history]
+        if note_embedding_history is not None:
+            hidden_history = hidden_history + note_embeddings_detached_for_time# [batch_size, seq_len, d_history]
 
         hidden_history = repeat(hidden_history, 'b s dh -> b s ne dh', ne = self.num_events)
                                                                                # [batch_size, seq_len, num_events, d_history]
@@ -115,7 +163,10 @@ class FENN(nn.Module):
         integral = self.nonneg_activation(self.aggregate(output))              # [..., batch_size, seq_len, num_events, 1]
         integral = integral.squeeze(dim = -1)                                  # [..., batch_size, seq_len, num_events]
 
-        return integral
+        if output_pred_note_embedding:
+            return integral, note_embeddings
+        else:
+            return integral
     
 
     def get_event_embedding(self, input_event):

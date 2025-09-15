@@ -10,6 +10,9 @@ def read_yaml(yaml_path):
                 a = yaml.safe_load(f)
             except yaml.YAMLError as exc:
                 print(exc)
+    
+    if a is None:
+        a = {}
 
     return a
 
