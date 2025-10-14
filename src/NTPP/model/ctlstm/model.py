@@ -479,7 +479,11 @@ class CTLSTMWrapper(BasicModel):
         kl_div = log_event_distribution_from_mtpp_model - log_probs_by_llm     # [batch_size, seq_len, llm_contrast_sample_num + 1]
         # kl_div = F.kl_div(input = log_probs_by_llm, target = log_event_distribution_from_mtpp_model, \
         #                   reduction = 'none', log_target = True)               # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        kl_div = log_event_distribution_from_mtpp_model - log_probs_by_llm     # [batch_size, seq_len, llm_contrast_sample_num + 1]
+        # kl_div = F.kl_div(input = log_probs_by_llm, target = log_event_distribution_from_mtpp_model, \
+        #                   reduction = 'none', log_target = True)               # [batch_size, seq_len, llm_contrast_sample_num + 1]
         
+        kl_div = (kl_div.mean(dim = -1) * sparse_mask).sum()
         kl_div = (kl_div.mean(dim = -1) * sparse_mask).sum()
         
         # Avoid divided-by-0 exception if sparse_mask.sum() == 0
@@ -535,6 +539,7 @@ class CTLSTMWrapper(BasicModel):
         If the real next event is promoted by the LLM, we use the negative log-likelihood, otherwise, 
         we apply negative log-likelihood on the real next event and all sampled events ranked higher than the real event.
         '''
+        '''
         event_ranking_by_llm = torch.argsort(log_probs_by_llm, dim = 0)        # [llm_contrast_sample_num + 1, batch_size, seq_len]
         event_ranking_of_real_events_by_llm = event_ranking_by_llm[0, ...]     # [batch_size, seq_len]
         event_ranking_first_event_by_llm = event_ranking_by_llm == repeat(event_ranking_of_real_events_by_llm, '... -> f ...', f = self.llm_contrast_sample_num + 1)
@@ -550,7 +555,7 @@ class CTLSTMWrapper(BasicModel):
         log_selected_distribution_of_event_higher_than_realevents_selected_by_llm = (-log_selected_distribution * event_ranking_event_higher_than_realevents_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
         # the probability of events whose ranking lower than real events.
-        log_selected_distribution_of_event_lower_than_realevents_selected_by_llm = (log_selected_distribution * event_ranking_event_lower_than_realevents_by_llm).sum(dim = 0) * sparse_mask
+        log_selected_distribution_of_event_lower_than_realevents_selected_by_llm = (-log_selected_distribution * event_ranking_event_lower_than_realevents_by_llm).sum(dim = 0) * sparse_mask
                                                                                # [batch_size, seq_len]
         
         kl_div = (log_selected_distribution_of_first_event_selected_by_llm.sum() + \
