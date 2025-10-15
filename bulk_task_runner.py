@@ -1,6 +1,3 @@
-# You can use this file if you are too lazy to create and modify script files.
-# This file can pack numerous tasks and run them one by one automatically.
-
 import os
 import argparse
 import importlib
@@ -83,6 +80,7 @@ parser.add_argument(
 parser.add_argument(
     "--interpreter",
     type=str,
+    nargs="+",
     default="python3",
     help="This argument links to a config file to set up new slurm quota when you have more resources to run your tasks. We will use the default quota if no config is given.",
 )
@@ -141,7 +139,10 @@ def task_generator(hyperparameter_list: Dict[str, Any]) -> tuple[List[List], int
     hyperparameter_list["argparser"] = (
         opt.procedure_name + "_" + hyperparameter_list["job_type"]
     )
-    hyperparameter_list["interpreter"] = opt.interpreter
+    if isinstance(opt.interpreter, list):
+        hyperparameter_list["interpreter"] = opt.interpreter
+    else:
+        hyperparameter_list["interpreter"] = [opt.interpreter,]
 
     generated_commands = parameter_parser(hyperparameter_list)
 
@@ -172,11 +173,11 @@ if opt.script_type == "previous_failed_tasks":
 
     generated_tasks = []
     for command in f_previous_failed_tasks:
-        generated_tasks.append(command.strip())
+        generated_tasks.append(command.strip().split(' '))
     the_number_of_task = len(generated_tasks)
 
     # Append Time to stdout_dir
-    stdout_dir - os.path.join(stdout_dir, current_local_time)
+    stdout_dir = os.path.join(stdout_dir, current_local_time)
 
     mkdir_if_not_exist(stdout_dir)
     failed_tasks = monitor_and_automaticly_run_tasks(
@@ -203,11 +204,11 @@ if opt.script_type == "previous_failed_tasks":
         for index, command in failed_tasks.items():
             logger.warning(f"----> Task No.{index} has failed. <----")
             logger.warning(f"Task Command: {command}.")
-            failed_commands.append(command + "\n")
+            failed_commands.append(' '.join(command) + "\n")
 
     """
     Only in previous_failed_tasks mode we can rewrite the previous_failed_tasks.txt.
-    By this we can avoid missing failed tasks in the previous task sets if the execution script calls batch_task_worker.py multiple times.
+    By this we can avoid missing failed tasks in the previous task sets if the execution script calls bulk_task_runner.py multiple times.
     """
     f_previous_failed_tasks = open(
         os.path.join(
@@ -285,10 +286,10 @@ else:
                 for index, command in failed_tasks.items():
                     logger.warning(f"----> Task No.{index} has failed. <----")
                     logger.warning(f"Task Command: {command}.")
-                    failed_commands.append(command + "\n")
+                    failed_commands.append(' '.join(command) + "\n")
 
             # Only in previous_failed_tasks mode we rewrite the previous_failed_tasks.txt.
-            # By this we can avoid missing failed tasks in the previous task sets if the execution script calls batch_task_worker.py multiple times.
+            # By this we can avoid missing failed tasks in the previous task sets if the execution script calls bulk_task_runner.py multiple times.
             f_previous_failed_tasks = open(
                 os.path.join(
                     root_path,

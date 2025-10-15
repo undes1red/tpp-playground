@@ -1,10 +1,3 @@
-"""
-Parameter Parser Module
-
-This module provides functionality to parse parameter dictionaries and generate
-command-line argument combinations for batch task execution.
-"""
-
 import math
 import numpy as np
 from typing import Dict, List, Any
@@ -19,16 +12,23 @@ def parse_sequential_parameters(
     sequential_dict: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
-    Parse sequential parameters using zip-like approach.
+    Parse input values using a zip-like approach.
+    Example:
+    {
+        'key1': [1, 2, 3],
+        'key2': ['a', 'b', 'c']
+    }
+    --->
+    [{'key1': 1, 'key2': 'a'}, {'key1': 2, 'key2': 'b'}, {'key1': 3, 'key2': 'c'}]
+    
+    Different from python's zip() which allows the length of each input iterable to be different, parse_sequential_parameters()
+    assumes all input lists have the same length, otherwise an exception will be raised.
 
     Args:
         sequential_dict (dict): Dictionary with 'loop_vars' key containing parameter lists
 
     Returns:
         list: List of dictionaries, each containing one combination of parameters
-
-    Raises:
-        ValueError: If parameter lists have different lengths
     """
     # Return [{}] if the input sequential_dict is empty.
     if len(sequential_dict) == 0:
@@ -102,7 +102,34 @@ def parse_combinatorial_parameters(
     combinatorial_dict: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
-    Parse combinatorial parameters generating all possible combinations.
+    Parse input values and return all possible argument value combinations.
+    Example:
+    {
+        'key1': [1, 2, 3],
+        'key2': ['a', 'b', 'c']
+    }
+    --->
+    [{'key1': 1, 'key2': 'a'}, {'key1': 1, 'key2': 'b'}, {'key1': 1, 'key2': 'c'},
+     {'key1': 2, 'key2': 'a'}, {'key1': 2, 'key2': 'b'}, {'key1': 2, 'key2': 'c'},
+     {'key1': 3, 'key2': 'a'}, {'key1': 3, 'key2': 'b'}, {'key1': 3, 'key2': 'c'},]
+    
+    parse_combinatorial_parameters() supports a specical key called "value_matrices".
+    value_matrices is useful when the value of some parameters relies on others.
+    For instance, the value of task_config relies on task_name and dataset_name.
+    We can place all possible task_config file names in the value_matrices.
+    The script retrieves the needed task_config according to task_name and dataset_name.
+    Example:
+    {
+        'key1': [1, 2],
+        'key2': ['a', 'b', 'c'],
+        'value_matrices': {
+            'mk1': [['a11', 'a12', 'a13'], ['a21', 'a22', 'a23']]
+            'mk2': [['b11', 'b12', 'b13'], ['b21', 'b22', 'b23']]
+        } # shape is [len(key1), len(key2)]
+    }
+    --->
+    [{'key1': 1, 'key2': 'a', 'mk1': 'a11', 'mk2': 'b11'}, {'key1': 1, 'key2': 'b', 'mk1': 'a12', 'mk2': 'b12'}, {'key1': 1, 'key2': 'c', 'mk1': 'a13', 'mk2': 'b13'}
+     {'key1': 2, 'key2': 'a', 'mk1': 'a21', 'mk2': 'b21'}, {'key1': 2, 'key2': 'b', 'mk1': 'a22', 'mk2': 'b22'}, {'key1': 2, 'key2': 'c', 'mk1': 'a23', 'mk2': 'b23'}]    
 
     Args:
         combinatorial_dict (dict): Dictionary with 'loop_vars' key containing parameter lists
@@ -140,23 +167,115 @@ def parse_combinatorial_parameters(
 
     # value_matrices is useful when the value of some parameters relies on others.
     # For instance, the value of task_config relies on task_name and dataset_name.
-    # We can place all possible task_config file names in a matrix then retrieve
-    # the needed name according to task_name and dataset_name.
+    # We can place all possible task_config file names in the value_matrices.
+    # The script retrieves the needed task_config according to task_name and dataset_name.
     param_value_matrices = combinatorial_dict.get("value_matrices", {})
-    value_matrices = True
-    if not param_value_matrices:
-        value_matrices = False
-    else:
+    if param_value_matrices:
         for key, value in param_value_matrices.items():
             param_value_matrices[key] = np.array(value)
     combinatorial_dict.pop("value_matrices", None)
 
+    if param_value_matrices != {} and sub_result_list != [{}]:
+        combinations = combinatorial_merge_with_value_matrices(
+            combinatorial_dict, param_value_matrices, sub_result_list
+        )
+    else:
+        combinations = combinatorial_merge_default(
+            combinatorial_dict, param_value_matrices, sub_result_list
+        )
+
+    return combinations
+
+
+def combinatorial_merge_with_value_matrices(
+    combinatorial_dict: Dict[str, Any],
+    param_value_matrices: Dict[str, np.array],
+    sub_result_list: List[Dict],
+) -> List[Dict]:
+    # Get parameter names and their possible values
+    param_names = tuple(combinatorial_dict.keys())
+    param_values = tuple(
+        list(combinatorial_dict.values())
+        + [
+            sub_result_list,
+        ]
+    )
+    param_values_length = tuple([len(values) for values in param_values])
+
+    for key, item in param_value_matrices.items():
+        try:
+            assert item.shape == param_values_length
+        except AssertionError:
+            logger.exception(
+                f'We expect the value matrix with key "{key}" has shape {param_values_length} but it has shape {item.shape}.'
+            )
+
+    # Calculate total number of combinations
+    total_combinations = math.prod(param_values_length)
+
+    # Handle case with no combinations
+    if total_combinations == 0:
+        return sub_result_list
+
+    # Generate all combinations using iterative approach
+    combinations = []
+
+    # Initialize indices for each parameter
+    indices = [0] * (len(param_values))
+
+    for _ in range(total_combinations):
+        # Create combination from current indices
+        combination = {
+            param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))
+        }
+
+        combination.update(sub_result_list[indices[-1]])
+
+        combination.update(
+            {key: value[*indices].item() for key, value in param_value_matrices.items()}
+        )
+        combinations.append(combination)
+
+        # Increment indices (like counting)
+        indices[0] += 1
+        for i in range(len(indices)):
+            if indices[i] >= param_values_length[i]:
+                indices[i] = 0
+                if i + 1 < len(indices):
+                    indices[i + 1] += 1
+            else:
+                break
+
+    # Merge combinations with the sub_result_list.
+    combinations = [
+        merge_list_of_dicts(item) for item in product(combinations, sub_result_list)
+    ]
+
+    return combinations
+
+
+def combinatorial_merge_default(
+    combinatorial_dict: Dict[str, Any],
+    param_value_matrices: Dict[str, np.array],
+    sub_result_list: List[Dict],
+) -> List[Dict]:
+    """
+    We use this function in every condition except when both param_value_matrices and sub_result_list exist and are not empty.
+
+    Args:
+        combinatorial_dict (Dict[str, Any]): _description_
+        param_value_matrices (Dict[str, np.array]): _description_
+        sub_result_list (List[Dict]): _description_
+
+    Returns:
+        List[Dict]: _description_
+    """
     # Get parameter names and their possible values
     param_names = tuple(combinatorial_dict.keys())
     param_values = tuple(combinatorial_dict.values())
-    param_values_length = tuple((len(values) for values in param_values))
+    param_values_length = tuple([len(values) for values in param_values])
 
-    if value_matrices:
+    if not param_value_matrices:
         for key, item in param_value_matrices.items():
             try:
                 assert item.shape == param_values_length
@@ -183,7 +302,7 @@ def parse_combinatorial_parameters(
         combination = {
             param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))
         }
-        if value_matrices:
+        if param_value_matrices:
             combination.update(
                 {
                     key: value[*indices].item()
@@ -195,7 +314,7 @@ def parse_combinatorial_parameters(
         # Increment indices (like counting)
         indices[0] += 1
         for i in range(len(indices)):
-            if indices[i] >= len(param_values[i]):
+            if indices[i] >= param_values_length[i]:
                 indices[i] = 0
                 if i + 1 < len(indices):
                     indices[i + 1] += 1
@@ -307,7 +426,7 @@ def parameter_parser(input_dict: Dict[str, Any]) -> List[List[str]]:
     # Add headers
     # <interpreter> <file_name> <argparser> ...
     combined_params = [
-        [input_dict["interpreter"], input_dict["file_name"], input_dict["argparser"]]
+        input_dict["interpreter"] + [input_dict["file_name"], input_dict["argparser"]]
         + item
         for item in combined_params
     ]
@@ -1093,7 +1212,229 @@ if __name__ == "__main__":
         "job_type": "train",
         "static": {
             "no_seed": True,
-        }
+        },
     }
     gen_arguments = parameter_parser(train_on_syn_datasets)
-    assert gen_arguments == [['python', 'a.py', 'a', '--no_seed']]
+    assert gen_arguments == [["python", "a.py", "a", "--no_seed"]]
+
+    # case 9
+    dataset_name = ["a", "b"]
+    dataset_asd = ["alpha", "beta"]
+    dataset_config = [1, 2, 3]
+    value_matrices = {
+        "first": [["a11", "a12"], ["a21", "a22"], ["a31", "a32"]],
+        "second": [["b11", "b12"], ["b21", "b22"], ["b31", "b32"]],
+    }
+    train_on_syn_datasets = {
+        "interpreter": "python",
+        "file_name": "a.py",
+        "argparser": "a",
+        "worker": "start.py",
+        "job_type": "train",
+        "static": {
+            "no_seed": True,
+        },
+        "combinatorial": {
+            "sequential": {
+                "dataset_name": dataset_name,
+                "dataset_asd": dataset_asd,
+            },
+            "dataset_config": dataset_config,
+            "value_matrices": value_matrices,
+        },
+    }
+    gen_arguments = parameter_parser(train_on_syn_datasets)
+    assert gen_arguments == [
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "1",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a11",
+            "--second",
+            "b11",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "1",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a11",
+            "--second",
+            "b11",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "2",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a21",
+            "--second",
+            "b21",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "2",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a21",
+            "--second",
+            "b21",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "3",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a31",
+            "--second",
+            "b31",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "3",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a31",
+            "--second",
+            "b31",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "1",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a12",
+            "--second",
+            "b12",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "1",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a12",
+            "--second",
+            "b12",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "2",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a22",
+            "--second",
+            "b22",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "2",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a22",
+            "--second",
+            "b22",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "3",
+            "--dataset_name",
+            "a",
+            "--dataset_asd",
+            "alpha",
+            "--first",
+            "a32",
+            "--second",
+            "b32",
+        ],
+        [
+            "python",
+            "a.py",
+            "a",
+            "--no_seed",
+            "--dataset_config",
+            "3",
+            "--dataset_name",
+            "b",
+            "--dataset_asd",
+            "beta",
+            "--first",
+            "a32",
+            "--second",
+            "b32",
+        ],
+    ]

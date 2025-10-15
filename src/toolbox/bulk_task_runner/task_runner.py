@@ -54,7 +54,7 @@ def monitor_and_automaticly_run_tasks(
 
 def monitor_and_automaticly_run_tasks_on_cpu(
     tasks: List[List], num_task_parallel: int, stdout_dir: str
-) -> Dict:
+) -> Dict[int, List]:
     number_of_tasks = len(tasks)
 
     def run_task(task: List, task_id: int) -> tuple[subprocess.Popen, TextIO]:
@@ -126,7 +126,7 @@ def monitor_and_automaticly_run_tasks_on_cpu(
 
 def monitor_and_automaticly_run_tasks_on_gpu(
     tasks: List[List], available_gpus: List, num_task_parallel: int, stdout_dir
-) -> Dict:
+) -> Dict[int, List]:
     gpu_pool = set(available_gpus)
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
@@ -202,7 +202,7 @@ def monitor_and_automaticly_run_tasks_on_gpu(
 
 def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
     tasks: List[List], num_task_parallel: int, stdout_dir: str, slurm_arguments: Dict
-):
+) -> Dict[int, List]:
     import submitit
 
     number_of_tasks = len(tasks)
@@ -290,7 +290,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
 
 def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
     tasks: List[List], available_gpus: List, num_task_parallel: int, stdout_dir: str, slurm_arguments: Dict
-):
+) -> Dict[int, List]:
     import submitit
 
     # I don't quite know how the GPU allocation works in slurm.
