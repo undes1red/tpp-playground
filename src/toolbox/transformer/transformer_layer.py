@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from einops import rearrange
 
@@ -42,13 +43,12 @@ class MultiheadAttention(nn.Module):
     def __init__(self, n_head, d_input, d_qk, d_v, device, dropout = 0.1):
         '''
         Template self-attention module with multihead-attention type 2: this module concatenates original outputs and
-        compress high-dimensional vectors into d_output
+        compress high-dimensional vectors into d_input
         '''
         super(MultiheadAttention, self).__init__()
         self.device = device
 
         self.d_input = d_input
-        self.d_output = d_input
         self.n_head = n_head
         self.d_q = d_qk
         self.d_k = d_qk
@@ -63,14 +63,15 @@ class MultiheadAttention(nn.Module):
         # Self-attention module
         self.self_attn = SelfAttn(temperature = d_qk ** 0.5, attn_dropout = self.dropout, device = self.device)
 
-        # Linear: n_head * d_q, d_k, or d_v -> d_output
-        self.fc_attn_output = nn.Linear(self.n_head * d_v, self.d_output, bias = True, device = self.device)
+        # Linear: n_head * d_q, d_k, or d_v -> d_input
+        self.fc_attn_output = nn.Linear(self.n_head * d_v, self.d_input, bias = True, device = self.device)
 
         # Dropout
         self.dropout = nn.Dropout(self.dropout)
 
         # layer normalization
-        self.layer_norm = nn.LayerNorm(self.d_input, eps = 1e-6, device = self.device)
+        self.layer_norm_for_q = nn.RMSNorm(self.d_input, eps = 1e-6, device = self.device, dtype = torch.get_default_dtype())
+        self.layer_norm_for_output = nn.RMSNorm(self.d_input, eps = 1e-6, device = self.device, dtype = torch.get_default_dtype())
 
 
     def forward(self, q, k, v, mask = None):
@@ -86,7 +87,7 @@ class MultiheadAttention(nn.Module):
         '''
 
         residual = q
-        q = self.layer_norm(q)                                                 # [batch_size, seq_len, n_head, d_qk]
+        q = self.layer_norm_for_q(q)                                           # [batch_size, seq_len, n_head, d_qk]
         
         # preparing for q, k, and v.
         q = rearrange(self.w_q(q), '... (nh dq) -> ... nh dq', nh = self.n_head)
@@ -102,6 +103,6 @@ class MultiheadAttention(nn.Module):
         output = self.dropout(self.fc_attn_output(output))                     # [batch_size, seq_len, d_output]
         output += residual
 
-        output = self.layer_norm(output)                                       # [batch_size, seq_len, d_output]
+        output = self.layer_norm_for_output(output)                            # [batch_size, seq_len, d_output]
 
         return output, attn

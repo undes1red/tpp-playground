@@ -14,7 +14,7 @@ class FFN(nn.Module):
         self.w_2 = nn.Linear(d_hidden, d_input, device = self.device)
         self.dropout = nn.Dropout(dropout)
 
-        self.norm = nn.LayerNorm(d_input, eps = 1e-6, device = self.device)
+        self.norm = nn.RMSNorm(d_input, eps = 1e-6, device = self.device)
 
     def forward(self, x):
         '''

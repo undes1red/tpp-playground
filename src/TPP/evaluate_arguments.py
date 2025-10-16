@@ -1,4 +1,6 @@
-import os, argparse
+import os
+import argparse
+
 from src.evaluator_arguments import BasicEvaluatorArguments
 from src.TPP.utils import suffix
 
@@ -7,20 +9,7 @@ class EvaluatorArguments(BasicEvaluatorArguments):
     def __init__(self, parser, root_path):
         super().__init__(parser)
 
-        self.root_path = root_path        
-
-        # plotter specific
-        # parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\
-        #                                           test set(if set), and evaluation set(if set), respectively. So there will be\
-        #                                           {enabled_dataset} * figure_count plots when the plotter finish running.')
-        # parser.add_argument('--resolution', type=int, default=100, help='How many interpolating points may each time interval have?')
-        # parser.add_argument('--sample_amount', type=int, default=500, help='The number of samples per dim of a high-dimensional space.')
-        # parser.add_argument('--mask_rate', type=float, default = 0.0, help='')
-        
-        # Specfically for the HYPRO dataset preparation.
-        # parser.add_argument('--number_of_events_hypro', type=int, default = 1, help = 'The number of events that hypro should predict based on the history.')
-        # parser.add_argument('--number_of_negative_samples', type=int, default = 1, help = 'The number of negative samples that each positive sequence has.')
-
+        self.root_path = root_path
 
         # identification mark
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
@@ -69,5 +58,6 @@ def Evaluator_postprocess(opt, root_path):
     opt.checkpoint_of_this_procedure = os.path.join(root_path, 'model', opt.procedure)
     opt.results_of_this_procedure = os.path.join(root_path, 'results', opt.procedure)
     opt.model_identifier = suffix(opt, 'model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_procedure_config', 'used_dataloader_config', 'model_config')
+    opt.task_identifier = suffix(opt, 'procedure_config', 'dataloader_config', 'task_config')
 
     return opt

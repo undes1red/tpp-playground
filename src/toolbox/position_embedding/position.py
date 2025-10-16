@@ -11,11 +11,11 @@ class PositionalEmbedding(nn.Module):
         self.device = device
 
         # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model, device = self.device).float()
+        pe = torch.zeros(max_len, d_model, device = self.device)
         pe.require_grad = False
 
-        position = torch.arange(0, max_len, device = self.device).float().unsqueeze(1)
-        div_term = (torch.arange(0, d_model, 2, device = self.device).float() * -(math.log(10000.0) / d_model)).exp()
+        position = torch.arange(0, max_len, device = self.device).unsqueeze(1)
+        div_term = (torch.arange(0, d_model, 2, device = self.device) * -(math.log(10000.0) / d_model)).exp()
 
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
@@ -34,8 +34,8 @@ class BiasedPositionalEmbedding(nn.Module):
         self.device = device
         self.d_model = d_model
 
-        position = torch.arange(0, max_len, device = self.device).float().unsqueeze(1)
-        div_term = (torch.arange(0, d_model, 2, device = self.device).float() * -(math.log(10000.0) / d_model)).exp()
+        position = torch.arange(0, max_len, device = self.device).unsqueeze(1)
+        div_term = (torch.arange(0, d_model, 2, device = self.device) * -(math.log(10000.0) / d_model)).exp()
         self.register_buffer('position', position)
         self.register_buffer('div_term', div_term)
 

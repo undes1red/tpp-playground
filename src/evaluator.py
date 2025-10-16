@@ -1,5 +1,6 @@
 import os
 from torch.nn import DataParallel as DP
+from types import FunctionType
 
 from src.toolbox.misc import get_logger, read_yaml, print_args, argument_check
 from src.toolbox.evaluation import basic_evaluation_loop, basic_evaluation
@@ -144,7 +145,7 @@ class Evaluator:
         
             if self.opt.test_data_name is not None:
                 basic_evaluation_loop(self.model, self.raw_data['Test'], 'test', opt = self.opt, early_offload = True, **evaluation_func)
-        elif isinstance(evaluation_func, function):
+        elif isinstance(evaluation_func, FunctionType):
             # We will get three records from the training set, test set, and evaluation set, respectively.
             if self.opt.training_data_name is not None:
                 evaluation_func(self.model, self.raw_data['Training'], 'train', opt = self.opt, early_offload = False)

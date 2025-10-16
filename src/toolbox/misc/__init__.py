@@ -22,5 +22,6 @@ from src.toolbox.misc.argument_check import argument_check
 from src.toolbox.misc.predict_event import predict_event
 from src.toolbox.misc.reverse_dict_key_val import reverse_dict_key_val
 from src.toolbox.misc.merge_dict import merge_list_of_dicts
+from src.toolbox.misc.cycle_dataloader import cycle
 
 # from src.toolbox.misc.figure_instruction_generator import figure_instruction_generator

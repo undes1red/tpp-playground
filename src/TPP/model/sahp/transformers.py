@@ -177,7 +177,7 @@ class Encoder(nn.Module):
         time_emb = self.position_emb(seq_len, time_history)                    # [batch_size, seq_len, d_input]
 
         # Event Embedding
-        if events_history != None:
+        if events_history is not None:
             if custom_events_history:
                 events_emb = events_history
             else:

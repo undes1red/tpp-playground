@@ -270,8 +270,8 @@ class SAHPWrapper(BasicModel):
         integral_all_events_time_next, intensity_all_events_time_next = self.model(time_history, time_next, events_history, mask_history)
                                                                                # 2 * [batch_size, seq_len, num_events]
         mae, f1, _ = self.mean_absolute_error_and_f1(events_history = events_history, time_history = time_history, 
-                                                  events_next = events_next, time_next = time_next, 
-                                                  mask_history = mask_history, mask_next = mask_next_without_dummy, mean = mean, std = std)
+                                                     events_next = events_next, time_next = time_next, 
+                                                     mask_history = mask_history, mask_next = mask_next_without_dummy, mean = mean, std = std)
         mae = mae.sum().item() / the_number_of_events
         # NLL loss and event loss at time_next
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
@@ -1193,7 +1193,7 @@ class SAHPWrapper(BasicModel):
         return all_roauc_area
 
 
-    def train_step(model, minibatch, device):
+    def train_step(model, minibatch):
         '''
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -1221,9 +1221,8 @@ class SAHPWrapper(BasicModel):
 
         time, events, score, mask = minibatch[0]                                 # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         mean, std = minibatch[1]
-
+        
         loss, time_loss_without_dummy, events_loss, the_number_of_events = model('train', time, events, mask, mean, std)
-
         loss.backward()
     
         time_loss_without_dummy = time_loss_without_dummy.item() / the_number_of_events
@@ -1233,7 +1232,7 @@ class SAHPWrapper(BasicModel):
         return time_loss_without_dummy, fact, events_loss
     
 
-    def evaluation_step(model, minibatch, device):
+    def evaluation_step(model, minibatch):
         '''
         This function unpacks the minibatch, calls the evaluation_procedure() to calculate the metrics.
 

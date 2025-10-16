@@ -9,6 +9,7 @@ suffix_shortcut_dict = {
     'model_config': '',
     'procedure_config': '',
     'used_procedure_config': '',
+    'task_config': ''
 }
 
 
