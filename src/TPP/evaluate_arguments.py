@@ -1,17 +1,27 @@
 import os
 import argparse
+from typing import Self
 
 from src.evaluator_arguments import BasicEvaluatorArguments
 from src.TPP.utils import suffix
 
 
 class EvaluatorArguments(BasicEvaluatorArguments):
-    def __init__(self, parser, root_path):
-        super().__init__(parser)
+    def __init__(self: Self, parser: argparse.ArgumentParser, root_path: str) -> Self:
+        """Inheriting the basic evaluator argument to create the evaluator argument class for the TPP procedure.
 
+        Args:
+            self (Self): the evaluator argument
+            parser (argparse.ArgumentParser): the item storing all arguments
+            root_path (str): the root dir of this project
+
+        Returns:
+            Self: the evaluator argument
+        """
+        super().__init__(parser)
         self.root_path = root_path
 
-        # identification mark
+        # self identification.
         self.parser.add_argument('--procedure', type = str, default = 'TPP',
                             help=argparse.SUPPRESS)
         self.parser.add_argument('--displayed_procedure_name', type = str, default = 'Temporal Point Process',
@@ -22,20 +32,19 @@ class EvaluatorArguments(BasicEvaluatorArguments):
                             help=argparse.SUPPRESS)
         
 
-'''
-The following functions are preprocessing functions.
-'''
-def Evaluator_postprocess(opt, root_path):
-    '''
-    Convert relative paths into absolute path.
-    '''
+def Evaluator_postprocess(opt: argparse.Namespace, root_path: str) -> argparse.Namespace:
+    """postprocess the evaluator arguments.
 
+    Args:
+        opt (argparse.Namespace): the original argument dict
+        root_path (str): the root dir of this project
+
+    Returns:
+        argparse.Namespace: the processed argument dict
+    """
     # Gradient aggergation check
     if opt.agg_update_step > 1:
         opt.n_training_steps *= opt.agg_update_step
-
-    opt.training_batch_size = 1
-    opt.evaluation_batch_size = 1
         
     opt.data_path = os.path.join(root_path, 'data', opt.procedure, opt.dataset_name)
     

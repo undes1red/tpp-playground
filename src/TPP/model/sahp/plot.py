@@ -2,10 +2,14 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import move_from_tensor_to_ndarray, stable_palette, save_fig, get_logger
 from src.toolbox.metrics import L1_distance_between_two_funcs
-
-from src.TPP.model.utils import draw_intensity_integral_and_probability, draw_intensity_integral_per_mark, draw_heatmap, draw_lineplot
+from src.toolbox.misc import get_logger, move_from_tensor_to_ndarray, save_fig, stable_palette
+from src.TPP.model.utils import (
+    draw_heatmap,
+    draw_intensity_integral_and_probability,
+    draw_intensity_integral_per_mark,
+    draw_lineplot,
+)
 from src.TPP.resources.syn_tpp_utils import expand_true_intensity, expand_true_probability
 
 logger = get_logger(__name__)
@@ -62,10 +66,10 @@ def generate_intensity_figure(data, opt):
             # Pearson correlation
             r = np.corrcoef(x = true_intensity_per_seq[:seq_len, :].flatten(), y = expand_intensity_per_seq[:seq_len, :].flatten())[0, 1]
             # L1 distance
-            L1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
+            l1 = L1_distance_between_two_funcs(x = true_intensity_per_seq[:seq_len, :], y = expand_intensity_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {L1}$'))
+            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {l1}$'))
         else:
             df_intensity_plot = pd.DataFrame.from_dict(
                     {'Time': timestamp_per_seq.flatten(),
@@ -176,10 +180,10 @@ def generate_probability_figure(data, opt):
             # Pearson correlation
             r = np.corrcoef(x = true_probability_per_seq[:seq_len, :].flatten(), y = expand_probability_per_seq[:seq_len, :].flatten())[0, 1]
             # L1 distance
-            L1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
+            l1 = L1_distance_between_two_funcs(x = true_probability_per_seq[:seq_len, :], y = expand_probability_per_seq[:seq_len, :], \
                                                timestamp = timestamp_per_seq)
 
-            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {L1}$'))
+            annotation = '\n'.join((fr'$r = {r}$', fr'$\rho = {rho}$', fr'$L^1 = {l1}$'))
         else:
             df_probability_plot = pd.DataFrame.from_dict(
                 {'Time': timestamp_per_seq.flatten(),
@@ -229,23 +233,23 @@ def generate_debug_figure(data, opt):
         # Figure 1 and 2: Mark-wise intensity and integral function.
         # Required plots: lineplot
         df_event = pd.DataFrame.from_dict(
-                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq), \
+                {'Time': start_time, 'Point': np.zeros_like(events_next_per_seq),
                  'Mark': [f'Mark {item}' for item in events_next_per_seq]}
         )
 
         event_list = [f'Mark {i}' for i in range(num_events)]
-    
+
         df_intensity = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
-                 'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(), 
+                {'Time': timestamp_per_seq.flatten().repeat(num_events),
+                 'Intensity': expand_intensity_per_seq[:seq_len, :, :].flatten(),
                  'Mark': event_list * (seq_len * resolution)}
             )
         df_integral = pd.DataFrame.from_dict(
-                {'Time': timestamp_per_seq.flatten().repeat(num_events), 
+                {'Time': timestamp_per_seq.flatten().repeat(num_events),
                  'Integral': expand_integral_per_seq[:seq_len, :, :].flatten(),
                  'Mark': event_list * (seq_len * resolution)}
             )
-        
+
         fig1 = draw_intensity_integral_per_mark(df_intensity, df_event, 'Intensity', color_palette, num_events)
         save_fig(fig1, opt.plot_store_dir_for_this_batch, f'mark_wise_intensity_{idx}.pdf')
         logger.info(f'mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
@@ -283,23 +287,21 @@ def generate_debug_figure(data, opt):
 
 
     # Part 7: Logarithm of MAE at each event
-    mae_per_event_with_predict_index, mae_per_event_with_event_next = data['maes_after_event']
-                                                                               # [batch_size, seq_len]
-    mae = data['mae_before_event']                                             # [batch_size, seq_len]
+    maes_ptm = data['maes_ptm']                                                # [batch_size, seq_len]
+    mae_pt = data['mae_pt']                                                       # [batch_size, seq_len]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
-    
-    packed_data = zip(*move_from_tensor_to_ndarray(mae, mae_per_event_with_predict_index, mae_per_event_with_event_next, mask_next))
-    for idx, (mae_per_seq, mae_per_event_with_predict_index_per_seq, mae_per_event_with_event_next_per_seq, mask_next_per_seq) in enumerate(packed_data):
+
+    packed_data = zip(*move_from_tensor_to_ndarray(mae_pt, maes_ptm, mask_next))
+    for idx, (mae_pt_per_seq, maes_ptm_per_seq, mask_next_per_seq) in enumerate(packed_data):
         seq_len = mask_next_per_seq.sum()
 
         data_maes_per_seq = {
             'Event Index': list(range(seq_len)) * 3,
             r'$\log(1 + \mathrm{MAE})$': np.concatenate(
-                (np.log(1 + mae_per_event_with_predict_index_per_seq[:seq_len]),
-                 np.log(1 + mae_per_event_with_event_next_per_seq[:seq_len]),
-                 np.log(1 + mae_per_seq[:seq_len]))
+                (np.log(1 + mae_pt_per_seq[:seq_len]),
+                 np.log(1 + maes_ptm_per_seq[:seq_len]))
             ),
-            'Mark': ['MAE against prediction'] * seq_len +  ['MAE against real events'] * seq_len + ['MAE'] * seq_len
+            'Mark': ['MAE'] * seq_len +  ['MAE-E'] * seq_len
         }
 
         fig7 = draw_lineplot(data = data_maes_per_seq, x = 'Event Index', y = r'$\log(1 + \mathrm{MAE})$', hue = 'Mark', \
@@ -328,8 +330,9 @@ def generate_debug_figure(data, opt):
         save_fig(fig8, opt.plot_store_dir_for_this_batch, f'sum_of_p_{idx}.pdf')
         logger.info(f'sum_of_p_m_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
 
-
-    # Part 9: The Logarithm of time prediction against all events
+    '''
+    Part 9: The Logarithm of time prediction against all events
+    '''
     tau_pred_all_event = data['tau_pred_all_event']                            # [batch_size, seq_len, num_events]
     mask_next = data['mask_next']                                              # [batch_size, seq_len]
     tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
@@ -347,6 +350,5 @@ def generate_debug_figure(data, opt):
                              hue = 'Mark', figure_kwargs = {'font.size': 18, 'figure.figsize': (5, 5)})
         save_fig(fig9, opt.plot_store_dir_for_this_batch, f'log_pred_time_{idx}.pdf')
         logger.info(f'log_pred_time_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
-
 
     return 0

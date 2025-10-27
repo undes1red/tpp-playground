@@ -1,5 +1,5 @@
 from functools import reduce
-from operator import add, sub, mul, truediv
+from operator import add, mul, sub, truediv
 
 from src.toolbox.list_operation.framework import apply_ops_on_list1
 

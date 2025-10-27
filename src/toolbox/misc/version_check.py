@@ -1,7 +1,7 @@
 import operator
 import re
-from packaging.version import Version
 
+from packaging.version import Version
 
 operator_dict = {
     '>': operator.gt,
@@ -25,5 +25,5 @@ def version_check(version, criteria):
 
         if not operator_dict[compare_label](version, target_pytorch_version):
             print_warning = False
-        
+
     return print_warning

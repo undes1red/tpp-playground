@@ -34,25 +34,22 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     and the ground truth on all available event sequences.
     We dump all mae values for calculating Q1, Q2, and Q3 later.
     '''
-    mae, f1, dist, events_next = all_evaluation_results
-    f1 = np.mean(f1)
-    mean_mae = np.mean(flatten(mae))
+    mae, acc, macro_f1, micro_f1, dist, events_next = all_evaluation_results
+    
+    acc = np.mean(acc)
+    macro_f1 = np.mean(macro_f1)
+    micro_f1 = np.mean(micro_f1)
+    mean_mae = np.mean(mae)
     
     mae_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_data.pkl')
     data = {'mae': mae, 'dist': dist, 'events_next': events_next}
     dump_to_pkl(data, mae_dist_file, compression = 'bz2')
 
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_and_macro-f1.txt')
-    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE is {mean_mae} and average macro-F1 is {f1}.'
+    strings = f'For the {desc} of {opt.dataset_name}, the average MAE is {mean_mae}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}.'
     write_to_txt(strings, result_file)
     result_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_and_f1_result.pkl')
-    dump_to_pkl({'mae': mean_mae, 'f1': f1}, result_dist_file, compression = 'bz2')
-
-    '''
-    Dump the detailed distribution of mae for further usage.
-    '''
-    mae_dist_file = os.path.join(opt.store_dir, f'{desc}_mae.pkl')
-    dump_to_pkl(mae, mae_dist_file, compression = 'bz2')
+    dump_to_pkl({'mae': mean_mae, 'acc': acc, 'macro-F1': macro_f1, 'micro-F1': micro_f1}, result_dist_file, compression = 'bz2')
 
 
 def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
@@ -64,28 +61,23 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     We dump all mae_e values for calculating Q1, Q2, and Q3 later.
     '''
 
-    '''
-    mae_e, macro-f1, sum of p^*(m), p^*(m), events_next
-    '''
-    mae_e, f1, sum_of_pm, pm, tau_pred_all_event, time_next, event_next = all_evaluation_results
+    mae_e, acc, macro_f1, micro_f1, mark_dist, pred_time_all_marks, time_next, events_next = all_evaluation_results
+
+    acc = np.mean(acc)
+    macro_f1 = np.mean(macro_f1)
+    micro_f1 = np.mean(micro_f1)
+    mean_mae_e = np.mean(flatten(mae_e))
 
     mae_e_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_data.pkl')
-    data = {'mae_e': mae_e, 't_m': tau_pred_all_event, 'events_next': event_next, 'pm': pm, 'time_next': time_next}
+    data = {'mae_e': mae_e, 't_m': pred_time_all_marks, 'events_next': events_next, 'pm': mark_dist, 'time_next': time_next}
     dump_to_pkl(data, mae_e_dist_file, compression = 'bz2')
 
-
-    mean_mae_e = np.mean(flatten(mae_e))
-    f1 = np.mean(f1)
-    mean_probability_sum = np.mean(flatten(sum_of_pm))
-
-    '''
-    Report the average of mae-e and f1.
-    '''
+    # Report the average of mae-e and f1.
     result_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_macro-f1.txt')
-    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}. The sum of p(m) is {mean_probability_sum}.'
+    strings = f'For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}.'
     write_to_txt(strings, result_file)
     result_dist_file = os.path.join(opt.store_dir, f'{desc}_mae_e_and_f1_result.pkl')
-    dump_to_pkl({'mae_e': mean_mae_e, 'f1': f1}, result_dist_file, compression = 'bz2')
+    dump_to_pkl({'mae': mean_mae_e, 'acc': acc, 'macro-F1': macro_f1, 'micro-F1': micro_f1}, result_dist_file, compression = 'bz2')
 
 
 def mae_e_and_f1_by_time_event_postprocess(all_evaluation_results, desc, opt):

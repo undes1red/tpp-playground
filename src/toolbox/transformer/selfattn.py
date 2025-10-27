@@ -8,7 +8,7 @@ class SelfAttn(nn.Module):
     SelfAttn module, the heart of transformers' layer
     '''
     def __init__(self, temperature, attn_dropout, device):
-        super(SelfAttn, self).__init__()
+        super().__init__()
         self.device = device
         self.temperature = temperature
 
@@ -34,7 +34,7 @@ class SelfAttn(nn.Module):
 
         if mask is not None:
             attn = attn.masked_fill(mask.unsqueeze(-3) == 0, -1e9)             # [batch_size, n_head, seq_len_q, seq_len_k]
-        
+
         # F.softmax() uses float32 by default.
         # This means it will upcast the input to float32 and the output is also float32.
         # We send it the dtype of attn to force it to respect the precision cast.

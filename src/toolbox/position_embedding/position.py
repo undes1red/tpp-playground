@@ -1,7 +1,7 @@
-import torch.nn as nn
-import torch
 import math
 
+import torch
+import torch.nn as nn
 from einops import rearrange
 
 
@@ -54,6 +54,4 @@ class BiasedPositionalEmbedding(nn.Module):
         pe_sin = torch.sin(arc + phi)                                          # [..., seq_len, d_model // 2 + 1 if d_model % 2 else 0]
         if self.d_model % 2 == 1:
             pe_sin = pe_sin[..., :-1]                                          # [..., seq_len, d_model // 2]
-        pe = torch.cat([pe_sin, pe_cos], dim=-1)                               # [..., seq_len, d_model // 2]
-
-        return pe
+        return torch.cat([pe_sin, pe_cos], dim=-1)                             # [..., seq_len, d_model // 2]

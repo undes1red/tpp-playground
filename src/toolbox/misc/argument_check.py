@@ -3,35 +3,37 @@ def argument_check(arguments, *arguments_that_must_have, **arguments_must_be_thi
         argument_check_dict(arguments, *arguments_that_must_have, **arguments_must_be_this_class)
     else:
         argument_check_namespace(arguments, *arguments_that_must_have, **arguments_must_be_this_class)
-        
+
 
 def argument_check_dict(arguments, *arguments_that_must_have, **arguments_must_be_this_class):
     all_arguments_that_must_have = list(set(list(arguments_that_must_have) + list(arguments_must_be_this_class.keys())))
-    
+
     for item in all_arguments_that_must_have:
         try:
-            tmp = arguments[item]
-        except Exception as e:
+            arguments[item]
+        except KeyError:
             raise Exception(f'Required Arguments {item} is missing!')
-    
+
     for key, item in arguments_must_be_this_class.items():
-        assert isinstance(arguments[key], item), f'wrong data type at {key}! Expect: {item}, Get: {type(arguments[key])}'
-    
+        if not isinstance(arguments[key], item):
+            raise TypeError(f'wrong data type at {key}! Expect: {item}, Get: {type(arguments[key])}')
+
     return 0
 
 
 def argument_check_namespace(arguments, *arguments_that_must_have, **arguments_must_be_this_class):
     all_arguments_that_must_have = list(set(list(arguments_that_must_have) + list(arguments_must_be_this_class.keys())))
-    
+
     for item in all_arguments_that_must_have:
         try:
-            tmp = hasattr(arguments, item)
-        except Exception as e:
+            hasattr(arguments, item)
+        except KeyError:
             raise Exception(f'Required Arguments {item} is missing!')
-    
+
     for key, item in arguments_must_be_this_class.items():
-        assert isinstance(getattr(arguments, key), item), f'wrong data type at {key}! Expect: {item}, Get: {type(getattr(arguments, key))}'
-    
+        if not isinstance(getattr(arguments, key), item):
+            raise TypeError(f'wrong data type at {key}! Expect: {item}, Get: {type(getattr(arguments, key))}')
+
     return 0
 
 if __name__ == '__main__':
@@ -44,7 +46,7 @@ if __name__ == '__main__':
         argument_check(argument_dict, *required_arguments, **required_class)
     except Exception as e:
         print(e)
-    
+
     # Test 2
     # Should work.
     required_arguments = 'a'
@@ -75,9 +77,9 @@ if __name__ == '__main__':
     argument_dict = {'a': 1, 'b': 2}
     argument_check(argument_dict, *required_arguments)
 
-        
+
     from types import SimpleNamespace
-    
+
     # Test 6
     # Should work.
     sn = SimpleNamespace()
@@ -89,7 +91,7 @@ if __name__ == '__main__':
         argument_check(sn, **required_class)
     except Exception as e:
         print(e)
-        
+
     # Test 7
     # Should work.
     sn = SimpleNamespace()

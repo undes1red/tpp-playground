@@ -1,3 +1,5 @@
+import argparse
+
 suffix_shortcut_dict = {
     'model_name': '',
     'lr': 'lr',
@@ -13,8 +15,15 @@ suffix_shortcut_dict = {
 }
 
 
-# Help construct the output dir name using model hyperparameters.
-def suffix(opt, *args):
+def suffix(opt: argparse.Namespace, *args) -> str:
+    """Help construct the output dir name using model hyperparameters. 
+
+    Args:
+        opt (argparse.Namespace): the argument namespace
+
+    Returns:
+        str: the output dir name
+    """
     output = []
     for item in args:
         hyperparameter = getattr(opt, item)
@@ -26,7 +35,7 @@ def suffix(opt, *args):
     return output
 
 
-def easy_model_load(root_path, replace_id, dataset_name, dataset_name_for_model, device, evaluation, **kwargs):
+def easy_model_load(root_path: str, replace_id: str, dataset_name: str, dataset_name_for_model: str, device: str, evaluation: bool, **kwargs):
     kwargs_should_have = ['model_name', 'lr', 'used_batch_size', 'n_training_steps', 'used_dataloader_config', 'model_config']
     
     import os

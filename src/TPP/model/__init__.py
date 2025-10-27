@@ -1,4 +1,5 @@
 import importlib
+
 from src.taskhost import get_logger
 
 logger = get_logger(__name__)
@@ -13,7 +14,7 @@ def get_model(opt):
     except ImportError as e:
         logger.warning(repr(e))
         logger.exception(f"Model named {opt.model_name} is not found! Please register your model in src/model/{opt.model_name}/__init__.py and try again.")
-    
+
     logger.info(f"Model named {opt.model_name} found and imported.")
 
     return module.get_model()

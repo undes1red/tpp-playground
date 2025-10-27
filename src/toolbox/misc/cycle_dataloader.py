@@ -1,9 +1,9 @@
-from typing import Iterable
+from collections.abc import Iterable
+
 
 def cycle(iterable: Iterable) -> Iterable:
     def gen_cycle():
         while True:
-            for x in iterable:
-                yield x
-    
+            yield from iterable
+
     return iter(gen_cycle())

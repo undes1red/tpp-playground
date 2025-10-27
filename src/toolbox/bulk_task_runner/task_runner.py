@@ -1,11 +1,11 @@
 import subprocess
 import time
-import os
+from pathlib import Path
+from typing import TextIO
+
 from termcolor import colored
-from typing import List, Dict, TextIO
 
 from src.taskhost import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -24,47 +24,36 @@ wait_after_task_finished = 10
 
 
 def monitor_and_automaticly_run_tasks(
-    tasks: List[List],
+    tasks: list[list],
     use_gpu: bool,
-    available_gpus: List,
+    available_gpus: list,
     num_task_parallel: int,
     stdout_dir: str,
     use_slurm: bool,
     **kwargs,
-) -> Dict:
+) -> dict:
     if use_slurm:
         if use_gpu:
             return monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
                 tasks, available_gpus, num_task_parallel, stdout_dir, **kwargs
             )
-        else:
-            return monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
-                tasks, num_task_parallel, stdout_dir, **kwargs
-            )
-    else:
-        if use_gpu:
-            return monitor_and_automaticly_run_tasks_on_gpu(
-                tasks, available_gpus, num_task_parallel, stdout_dir
-            )
-        else:
-            return monitor_and_automaticly_run_tasks_on_cpu(
-                tasks, num_task_parallel, stdout_dir
-            )
+        return monitor_and_automaticly_run_tasks_on_slurm_cpu_node(tasks, num_task_parallel, stdout_dir, **kwargs)
+    if use_gpu:
+        return monitor_and_automaticly_run_tasks_on_gpu(tasks, available_gpus, num_task_parallel, stdout_dir)
+    return monitor_and_automaticly_run_tasks_on_cpu(tasks, num_task_parallel, stdout_dir)
 
 
 def monitor_and_automaticly_run_tasks_on_cpu(
-    tasks: List[List], num_task_parallel: int, stdout_dir: str
-) -> Dict[int, List]:
+    tasks: list[list], num_task_parallel: int, stdout_dir: str
+) -> dict[int, list]:
     number_of_tasks = len(tasks)
 
-    def run_task(task: List, task_id: int) -> tuple[subprocess.Popen, TextIO]:
+    def run_task(task: list, task_id: int) -> tuple[subprocess.Popen, TextIO]:
         # Replace this command with your actual task command
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
         logger.info(f"Command of task {task_id}/{number_of_tasks}: {task}")
-        f_log = open(os.path.join(stdout_dir, f"stdout_log_{task_id}.txt"), "w")
-        process = subprocess.Popen(
-            task, stdout=f_log, stderr=f_log, universal_newlines=True
-        )
+        f_log = Path(stdout_dir / f"stdout_log_{task_id}.txt").open("w")
+        process = subprocess.Popen(task, stdout=f_log, stderr=f_log, universal_newlines=True)
 
         return process, f_log
 
@@ -96,19 +85,12 @@ def monitor_and_automaticly_run_tasks_on_cpu(
         # Check if one task has finished. If so, do some housekeeping
         # and add the allocated gpu_id back to the gpu_pool, marking this GPU is now free.
         for task in running_tasks:
-            if (
-                task["task_id"] not in completed_tasks
-                and task["process"].poll() is not None
-            ):
+            if task["task_id"] not in completed_tasks and task["process"].poll() is not None:
                 if task["process"].poll() != 0:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----")
                     failed_tasks[task["task_id"]] = task["command"]
                 else:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----")
 
                 completed_tasks.add(task["task_id"])
                 task["stdout"].close()
@@ -125,26 +107,20 @@ def monitor_and_automaticly_run_tasks_on_cpu(
 
 
 def monitor_and_automaticly_run_tasks_on_gpu(
-    tasks: List[List], available_gpus: List, num_task_parallel: int, stdout_dir
-) -> Dict[int, List]:
+    tasks: list[list], available_gpus: list, num_task_parallel: int, stdout_dir
+) -> dict[int, list]:
     gpu_pool = set(available_gpus)
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
     number_of_tasks = len(tasks)
 
-    def run_task(
-        task: List, task_id: int, gpu_id: int
-    ) -> tuple[subprocess.Popen, TextIO]:
+    def run_task(task: list, task_id: int, gpu_id: int) -> tuple[subprocess.Popen, TextIO]:
         task_list = task + ["--cuda", "--cuda_device", f"{gpu_id}"]
 
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
-        logger.info(
-            f"Command of task {task_id}/{number_of_tasks}: {' '.join(task_list)}"
-        )
-        f_log = open(os.path.join(stdout_dir, f"stdout_log_{task_id}.txt"), "w")
-        process = subprocess.Popen(
-            task_list, stdout=f_log, stderr=f_log, universal_newlines=True
-        )
+        logger.info(f"Command of task {task_id}/{number_of_tasks}: {' '.join(task_list)}")
+        f_log = Path(stdout_dir / f"stdout_log_{task_id}.txt").open("w")
+        process = subprocess.Popen(task_list, stdout=f_log, stderr=f_log, universal_newlines=True)
 
         return process, f_log
 
@@ -176,14 +152,10 @@ def monitor_and_automaticly_run_tasks_on_gpu(
         for ticket, task in running_tasks.items():
             if task != {} and task["process"].poll() is not None:
                 if task["process"].poll() != 0:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----")
                     failed_tasks[task["task_id"]] = task["command"]
                 else:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----")
 
                 task["stdout"].close()
                 gpu_pool.add(task["gpu_id"])
@@ -201,8 +173,8 @@ def monitor_and_automaticly_run_tasks_on_gpu(
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
-    tasks: List[List], num_task_parallel: int, stdout_dir: str, slurm_arguments: Dict
-) -> Dict[int, List]:
+    tasks: list[list], num_task_parallel: int, stdout_dir: str, slurm_arguments: dict
+) -> dict[int, list]:
     import submitit
 
     number_of_tasks = len(tasks)
@@ -211,24 +183,22 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
 
     if len(slurm_arguments) > 0:
         logger.info("The following slurm environment variables will be updated.")
-        for key in slurm_arguments.keys():
+        for key in slurm_arguments:
             logger.info(
                 f"{key}: {colored(default_slurm_kwargs.get(key), 'blue')} -> {colored(slurm_arguments[key], 'red')}"
             )
 
-    def run_task(task: List, task_id: int) -> submitit.Job:
+    def run_task(task: list, task_id: int) -> submitit.Job:
         # Replace this command with your actual task command
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
         logger.info(f"Command of task {task_id}/{number_of_tasks}: {task}")
 
-        executor = submitit.AutoExecutor(folder=os.path.join(stdout_dir, str(task_id)))
+        executor = submitit.AutoExecutor(folder=str(stdout_dir / str(task_id)))
 
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task)
-        job = executor.submit(function)
-
-        return job
+        return executor.submit(function)
 
     task_id = 1
     running_tasks = []
@@ -266,14 +236,10 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
         for task in running_tasks:
             if task["task_id"] not in completed_tasks and task["job"].done():
                 if "Submitted job triggered an exception" in task["job"].stderr():
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----")
                     failed_tasks[task["task_id"]] = task["command"]
                 else:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----")
 
                 completed_tasks.add(task["task_id"])
                 number_of_running_tasks -= 1
@@ -289,8 +255,8 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
 
 
 def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
-    tasks: List[List], available_gpus: List, num_task_parallel: int, stdout_dir: str, slurm_arguments: Dict
-) -> Dict[int, List]:
+    tasks: list[list], available_gpus: list, num_task_parallel: int, stdout_dir: str, slurm_arguments: dict
+) -> dict[int, list]:
     import submitit
 
     # I don't quite know how the GPU allocation works in slurm.
@@ -305,26 +271,22 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
 
     if len(slurm_arguments) > 0:
         logger.info("The following slurm environment variables will be updated.")
-        for key in slurm_arguments.keys():
+        for key in slurm_arguments:
             logger.info(
                 f"{key}: {colored(default_slurm_kwargs.get(key), 'blue')} -> {colored(slurm_arguments[key], 'red')}"
             )
 
-    def run_task(task: List, task_id: int, gpu_id: int) -> submitit.Job:
+    def run_task(task: list, task_id: int, gpu_id: int) -> submitit.Job:
         task_list = task + ["--cuda", "--cuda_device", f"{gpu_id}"]
 
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
-        logger.info(
-            f"Command of task {task_id}/{number_of_tasks}: {' '.join(task_list)}"
-        )
-        executor = submitit.AutoExecutor(folder=os.path.join(stdout_dir, str(task_id)))
+        logger.info(f"Command of task {task_id}/{number_of_tasks}: {' '.join(task_list)}")
+        executor = submitit.AutoExecutor(folder=str(stdout_dir / str(task_id)))
 
         default_slurm_kwargs.update(slurm_arguments)
         executor.update_parameters(**default_slurm_kwargs)
         function = submitit.helpers.CommandFunction(task_list)
-        job = executor.submit(function)
-
-        return job
+        return executor.submit(function)
 
     unique_task_id = 1
     running_tasks = {}
@@ -360,14 +322,10 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
         for ticket, task in running_tasks.items():
             if task != {} and task["job"].done():
                 if "Submitted job triggered an exception" in task["job"].stderr():
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} failed!. <----")
                     failed_tasks[task["task_id"]] = task["command"]
                 else:
-                    logger.warning(
-                        f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----"
-                    )
+                    logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----")
 
                 gpu_pool.add(task["gpu_id"])
                 ticket_pool.add(ticket)

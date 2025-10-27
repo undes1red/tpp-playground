@@ -6,7 +6,7 @@ def easy_model_load(procedure_name, *args, **kwargs):
 
 if __name__ == '__main__':
     root_path = '/home/undesired/coderepo/workflow'
-    
+
     '''
     easy_model_load for TPP.
     root_path = root_path

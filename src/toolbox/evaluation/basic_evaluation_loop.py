@@ -1,8 +1,8 @@
-from torch.utils.flop_counter import FlopCounterMode
-from tqdm import tqdm
-import os
+from pathlib import Path
 
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, write_to_txt, free_model_from_gpu
+from tqdm import tqdm
+
+from src.toolbox.misc import free_model_from_gpu, get_logger, mkdir_if_not_exist, write_to_txt
 
 logger = get_logger(name = __file__)
 
@@ -12,50 +12,29 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
     elapsed_time = 0
     list_output_results = None
 
-    if opt.fpcounter:
-        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
-            with FlopCounterMode(display = False) as counter:
-                for minibatch in progress_bar:
-                    results_per_minibatch = model(task_name, minibatch, opt)
-                    
-                    if results_per_minibatch is None:
-                        continue
-                    
-                    if list_output_results is None:
-                        result_length = len(results_per_minibatch)
-                        list_output_results = [[] for _ in range(result_length)]
-                    
-                    [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-    
-            flops = sum(counter.flop_counts['Global'].values())
-            elapsed_time = progress_bar.format_dict['elapsed']
-            data_size = progress_bar.format_dict['total']
-    else:
-        with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
-            for minibatch in progress_bar:
-                results_per_minibatch = model(task_name, minibatch, opt)
-                
-                if results_per_minibatch is None:
-                    continue
-                
-                if list_output_results is None:
-                    result_length = len(results_per_minibatch)
-                    list_output_results = [[] for _ in range(result_length)]
-                
-                [a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
-                
-            flops = 0
-            elapsed_time = progress_bar.format_dict['elapsed']
-            data_size = progress_bar.format_dict['total']
+    with tqdm(dataset, desc = desc_string.format(desc)) as progress_bar:
+        for minibatch in progress_bar:
+            results_per_minibatch = model(task_name, minibatch, opt)
+
+            if results_per_minibatch is None:
+                continue
+
+            if list_output_results is None:
+                result_length = len(results_per_minibatch)
+                list_output_results = [[] for _ in range(result_length)]
+
+            [a.extend(b) if isinstance(b, list) else a.append(b) for a, b in zip(list_output_results, results_per_minibatch)]
+
+        elapsed_time = progress_bar.format_dict['elapsed']
+        data_size = progress_bar.format_dict['total']
 
     if early_offload:
         # How to remove a model and free its memory immediately?
         free_model_from_gpu(model)
 
     mkdir_if_not_exist(opt.store_dir)
-    result_file = os.path.join(opt.store_dir, f'{desc}_{task_name}_misc.txt')
-    strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n', 
-               f'Computation: {flops / 1000**4} TFlops.']
+    result_file = Path(opt.store_dir, f'{desc}_{task_name}_misc.txt')
+    strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n']
     write_to_txt(strings, result_file)
 
     logger.info(f'Entering {postprocess_func.__name__} for result postprocess...')

@@ -6,7 +6,7 @@ from torch import nn
 
 class NonNegLinear(nn.Linear):
     def __init__(self, in_features, out_features, device, bias=True, eps=0.):
-        super(NonNegLinear, self).__init__(in_features, out_features, bias, device = device)
+        super().__init__(in_features, out_features, bias, device = device)
         self.eps = eps
         self.device = device
         self.positivify_weights()

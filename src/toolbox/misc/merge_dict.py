@@ -1,5 +1,6 @@
 from functools import reduce
-from typing import List, Dict, Any
+from typing import Any
 
-def merge_list_of_dicts(input_dict: List[Dict[Any, Any]]) -> List[Dict[Any, Any]]:
+
+def merge_list_of_dicts(input_dict: list[dict[Any, Any]]) -> list[dict[Any, Any]]:
     return reduce(dict.__or__, input_dict)

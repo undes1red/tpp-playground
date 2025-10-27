@@ -2,7 +2,8 @@ def dump_to_pkl(data, filepath, compression = None):
     import importlib
     import os
     import pickle as pkl
-    
+    from pathlib import Path
+
     dict_compression_algorithms = {
         None: open,
         # Is it a good choice?
@@ -15,7 +16,7 @@ def dump_to_pkl(data, filepath, compression = None):
     '''
     head, tail = os.path.split(filepath)
     tail = tail + f'{"." + compression if compression is not None else ""}'
-    filepath = os.path.join(head, tail)
+    filepath = Path(head, tail)
 
     selected_open_function = dict_compression_algorithms[compression]
     f = selected_open_function(filepath, 'wb')
@@ -37,8 +38,10 @@ def dump_to_npz(filepath, **kwargs):
 
 
 def write_to_txt(strings, filepath):
-    f = open(filepath, 'w')
-    
+    from pathlib import Path
+
+    f = Path(filepath).open("w")
+
     if isinstance(strings, list):
         f.writelines(strings)
     else:

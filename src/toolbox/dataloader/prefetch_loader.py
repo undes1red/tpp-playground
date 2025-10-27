@@ -4,7 +4,7 @@
 import warnings
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -22,7 +22,7 @@ class PrefetchLoader:
     def __init__(
         self,
         loader: DataLoader,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
     ):
         self.loader = loader
         self.device_helper = DeviceHelper(device)
@@ -34,12 +34,12 @@ class PrefetchLoader:
             return [self.non_blocking_transfer(v) for v in batch]
         if isinstance(batch, dict):
             return {k: self.non_blocking_transfer(v) for k, v in batch.items()}
-        
+
         if torch.is_tensor(batch):
             batch = batch.pin_memory()
             return batch.to(device = self.device_helper.device, non_blocking=True)
-        else:
-            return batch
+
+        return batch
 
     def __iter__(self) -> Any:
         first = True
@@ -67,17 +67,13 @@ class PrefetchLoader:
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.loader})'
-    
 
 class DeviceHelper:
-    def __init__(self, device: Optional[torch.device] = None):
+    def __init__(self, device: torch.device | None = None):
         with_cuda = torch.cuda.is_available()
 
         if device is None:
-            if with_cuda:
-                device = 'cuda'
-            else:
-                device = 'cpu'
+            device = 'cuda' if with_cuda else 'cpu'
 
         self.device = torch.device(device)
         self.is_gpu = self.device.type in ['cuda', 'xpu']

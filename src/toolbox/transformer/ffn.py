@@ -7,9 +7,9 @@ class FFN(nn.Module):
     Feedforward module next to the Transformers layer.
     '''
     def __init__(self, d_input, d_hidden, device, dropout = 0.1):
-        super(FFN, self).__init__()
+        super().__init__()
         self.device = device
-        
+
         self.w_1 = nn.Linear(d_input, d_hidden, device = self.device)
         self.w_2 = nn.Linear(d_hidden, d_input, device = self.device)
         self.dropout = nn.Dropout(dropout)
@@ -29,6 +29,4 @@ class FFN(nn.Module):
         x = self.dropout(F.gelu(self.w_1(x)))                                  # [..., d_hidden]
         x = self.dropout(self.w_2(x))                                          # [..., d_input]
         x += residual
-        x = self.norm(x)                                                       # [..., d_input]
-
-        return x
+        return self.norm(x)                                                    # [..., d_input]

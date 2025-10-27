@@ -1,4 +1,5 @@
-import os
+from pathlib import Path
+
 from src.toolbox.misc import get_logger, mkdir_if_not_exist
 
 logger = get_logger(name = __file__)
@@ -11,7 +12,7 @@ def basic_evaluation(model, minibatch, desc, batch_idx, opt):
     with the correct name and format.
     '''
     # Create the plot storing directory if not exist.
-    plot_store_dir_for_this_batch = os.path.join(opt.store_dir, desc, str(batch_idx))
+    plot_store_dir_for_this_batch = Path(opt.store_dir, desc, str(batch_idx))
     opt.plot_store_dir_for_this_batch = plot_store_dir_for_this_batch
     mkdir_if_not_exist(plot_store_dir_for_this_batch)
 

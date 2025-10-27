@@ -30,25 +30,6 @@ def step_split(total_rate, step_size):
 
 
 '''
-Bisection Method.
-'''
-def median_prediction(max_step, bisect_early_stop_threshold, bisect_func, probability_threshold, 
-                      *args, l_val = 0.0001, r_val = 1e6, **kwargs):
-    l = l_val*torch.ones_like(probability_threshold)
-    r = r_val*torch.ones_like(probability_threshold)
-
-    for _ in range(max_step):
-        c = (l + r)/2
-        v = bisect_func(c, probability_threshold, *args, **kwargs)
-        l = torch.where(v < 0, c, l)
-        r = torch.where(v >= 0, c, r)
-        if torch.allclose(r, l, atol = bisect_early_stop_threshold):
-            break
-    
-    return (l + r)/2
-
-
-'''
 Thinning algorithm.
 '''
 def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_output_shape, device, intensity_func, \
@@ -118,25 +99,23 @@ def predict_event(probability, sample = False):
 '''
 resolution_inf and resolution_between_events.
 '''
-def decide_resolution_inf_and_resolution_between_events(time_next, memory_ceiling, num_events, mean, std):
-    '''
-    Suggested batch_size: 1
-    '''
-
+def decide_resolution_inf_and_resolution_between_events(time, memory_ceiling, num_events, mean, std):
+    # Suggested batch_size: 1
+    
     if mean == 0 and std == 1:
-        max_ = time_next.mean() + 10 * time_next.std()
+        max_ = time.mean() + 10 * time.std()
     else:
         max_ = mean + 10 * std
 
     if mean == 0:
-        resolution_between_events = max(min(int(time_next.mean().item() // 0.005), 500), 10)
+        resolution_between_events = max(min(int(time.mean().item() // 0.005), 500), 10)
     else:
         resolution_between_events = max(min(int(mean // 0.005), 500), 10)
         
     max_ = min(1e6, max_)
     resolution_inf = max(int(max_ // 0.005), 100)
 
-    batch_size, seq_len = time_next.shape
+    batch_size, seq_len = time.shape
     if batch_size * seq_len * resolution_inf * num_events > memory_ceiling:
         resolution_inf = int(memory_ceiling // (seq_len * num_events * batch_size))
     

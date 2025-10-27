@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from src.toolbox.transformer.selfattn import SelfAttn
 from src.toolbox.transformer.ffn import FFN
+from src.toolbox.transformer.selfattn import SelfAttn
 
 
 class TransformerLayer(nn.Module):
     def __init__(self, n_head, d_input, d_qk, d_v, device, d_hidden, dropout = 0.1):
-        super(TransformerLayer, self).__init__()
+        super().__init__()
         self.device = device
 
         self.attn = MultiheadAttention(n_head = n_head, d_input = d_input, d_qk = d_qk,
@@ -28,7 +28,7 @@ class TransformerLayer(nn.Module):
             output, attn = self.attn(q, q, q, mask = self_attn_mask)           # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
         else:
             output, attn = self.attn(q, k, v, mask = self_attn_mask)           # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
-        
+
         if non_pad_mask is not None:
             output *= rearrange(non_pad_mask, '... -> ... 1')                  # [batch_size, seq_len, d_input]
 
@@ -45,7 +45,7 @@ class MultiheadAttention(nn.Module):
         Template self-attention module with multihead-attention type 2: this module concatenates original outputs and
         compress high-dimensional vectors into d_input
         '''
-        super(MultiheadAttention, self).__init__()
+        super().__init__()
         self.device = device
 
         self.d_input = d_input
@@ -88,7 +88,7 @@ class MultiheadAttention(nn.Module):
 
         residual = q
         q = self.layer_norm_for_q(q)                                           # [batch_size, seq_len, n_head, d_qk]
-        
+
         # preparing for q, k, and v.
         q = rearrange(self.w_q(q), '... (nh dq) -> ... nh dq', nh = self.n_head)
                                                                                # [batch_size, seq_len, n_head, d_qk]

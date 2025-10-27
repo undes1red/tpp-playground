@@ -1,14 +1,12 @@
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat, reduce, pack
-import numpy as np
+from einops import rearrange
 from scipy.stats import spearmanr
 
-from src.toolbox.misc import move_from_tensor_to_ndarray
+from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_across_events
-
-from src.toolbox.integration import approximate_integration
+from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.TPP.model.sahp.transformers import TransformerEncoder
 
 
@@ -16,14 +14,14 @@ class SAHP(nn.Module):
     def __init__(self, device, num_events, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk, d_v, dropout, integration_sample_rate):
         '''
         This function creates a SAHP model.
-        
+
         ### Args
             * ```int``` d_input
             The dimension of the Transformer input tensor.
             * ```int``` d_hidden
-              The dimension of the FFN module in the Transformer.  
+              The dimension of the FFN module in the Transformer.
             * ```int``` n_layers
-              The number of self attention + FFN layers in the Transformer.  
+              The number of self attention + FFN layers in the Transformer.
             * ```int``` n_head
               The number of head in self attention.
             * ```int``` d_qk
@@ -40,7 +38,7 @@ class SAHP(nn.Module):
               The number of interpolated points in a time interval between two adjoint events for integration estimation.
               The number of interpolated points counts the start and end point of the interval.
         '''
-        super(SAHP, self).__init__()
+        super().__init__()
         self.num_events = num_events
         self.device = device
         self.integration_sample_rate = integration_sample_rate
@@ -82,7 +80,7 @@ class SAHP(nn.Module):
     def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
         '''
         This function decays the hidden state using a Hawkes-like rule by time.
-        
+
         ### Args:
           * ```torch.tensor``` mu
             shape: ```[..., batch_size, seq_len, d_hidden]```
@@ -104,7 +102,8 @@ class SAHP(nn.Module):
         def get_cell_states(mu, eta, gamma, duration_t):
             return torch.tanh(mu + (eta - mu) * torch.exp(-gamma * duration_t))# [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
-        assert len(duration_t.shape) - 2 - num_dimension_prior_batch >= 0, "Too few dimensions in duration_t!"
+        if len(duration_t.shape) - 2 - num_dimension_prior_batch < 0:
+            raise ValueError("Too few dimensions in duration_t!")
 
         # add additional dimension to mu, eta, and gamma.
         mu = rearrange(mu, f'... d_i -> {"() " * num_dimension_prior_batch}... {"() " * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i')
@@ -115,16 +114,14 @@ class SAHP(nn.Module):
                                                                                # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
         duration_t = duration_t.unsqueeze(dim = -1)                            # [..., batch_size, seq_len, (integration_sample_rate, num_events), 1]
-        cell_t = get_cell_states(mu, eta, gamma, duration_t)                   # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
-
-        return cell_t
+        return get_cell_states(mu, eta, gamma, duration_t)                   # [..., batch_size, seq_len, (integration_sample_rate, num_events), d_input]
 
 
-    def forward(self, time_history, time_next, events_history, mask_history, 
+    def forward(self, time_history, time_next, events_history, mask_history,
                 custom_events_history = False, num_dimension_prior_batch = 0):
         '''
         SAHP's forwardpropagation function for training.
-        
+
         ### Args
             * ```torch.tensor``` events_history
               shape: ```[batch_size, seq_len]```
@@ -155,7 +152,7 @@ class SAHP(nn.Module):
         eta = self.start_layer(history)                                        # [batch_size, seq_len, d_input]
         mu = self.converge_layer(history)                                      # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)                                      # [batch_size, seq_len, d_input]
-                
+
         hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = time_next, num_dimension_prior_batch = num_dimension_prior_batch)
                                                                                # [..., batch_size, seq_len, d_input]
         # calculate the intensity.
@@ -167,11 +164,11 @@ class SAHP(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         expanded_intensity_all_events = self.intensity_layer(expanded_hidden_state_at_t)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        
+
         integral_all_events = approximate_integration(expanded_intensity_all_events, \
                                                       expanded_time, dim = -2, only_integral = True)
                                                                                # [..., batch_size, seq_len, num_events]
-        
+
         return integral_all_events, intensity_all_events
 
 
@@ -183,7 +180,7 @@ class SAHP(nn.Module):
         '''
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
-        
+
         ### Args
             * ```torch.tensor``` events_history
               shape: ```[batch_size, seq_len]```
@@ -236,7 +233,7 @@ class SAHP(nn.Module):
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
         expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, num_events]
-        
+
         return expanded_integral_all_events, expanded_intensity_all_events, expanded_time
 
 
@@ -246,7 +243,7 @@ class SAHP(nn.Module):
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
         This function is supposed to be much slower than integral_intensity_time_next_2d().
-        
+
         ### Args
             * ```torch.tensor``` events_history
               shape: ```[batch_size, seq_len]```
@@ -301,7 +298,7 @@ class SAHP(nn.Module):
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_events]```.
         This function is supposed to be much slower than integral_intensity_time_next_2d().
-        
+
         ### Args
             * ```torch.tensor``` events_history
               shape: ```[batch_size, seq_len]```
@@ -343,7 +340,7 @@ class SAHP(nn.Module):
                                                                                # [batch_size, seq_len, integration_sample_rate, num_events]
         expanded_integral_all_events = approximate_integration(expanded_intensity_all_events, expanded_time, dim = -2)
                                                                                # [batch_size, seq_len, num_events, integration_sample_rate, num_events]
-        
+
         # construct the plot dict
         data = {}
         data['expand_intensity_for_each_event'] = expanded_intensity_all_events# [batch_size, seq_len, integration_sample_rate, num_events]
@@ -353,10 +350,10 @@ class SAHP(nn.Module):
                                                                                # [batch_size, seq_len * integration_sample_rate, num_event]
         expand_integral = rearrange(expanded_integral_all_events, 'b s r ne -> b (s r) ne')
                                                                                # [batch_size, seq_len * integration_sample_rate, num_event]
-            
+
         spearman_matrix = []
         pearson_matrix = []
-        L1_matrix = []
+        l1_matrix = []
         for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) \
             in enumerate(zip(expand_intensity, expand_integral, mask_next, expanded_time)):
             seq_len = mask_per_seq.sum()
@@ -365,7 +362,7 @@ class SAHP(nn.Module):
 
             # rho: spearman coefficient
             if self.num_events == 1:
-                spearman_matrix_per_seq = np.array([[1.,],])
+                spearman_matrix_per_seq = np.array([[1.]])
             else:
                 spearman_matrix_per_seq = spearmanr(probability_distribution[:seq_len * integration_sample_rate])[0]
                 if self.num_events == 2:
@@ -375,16 +372,16 @@ class SAHP(nn.Module):
             pearson_matrix_per_seq = np.corrcoef(probability_distribution[:seq_len * integration_sample_rate], rowvar = False)
             if self.num_events == 1:
                 pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), ' -> () ()')
-            
+
             # L^1 metric
-            L1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], 
+            l1_matrix_per_seq = L1_distance_across_events(probability_distribution[:seq_len * integration_sample_rate], \
                                                           time_next = expanded_time_per_seq[:seq_len], has_flatten = True)
             spearman_matrix.append(spearman_matrix_per_seq)
             pearson_matrix.append(pearson_matrix_per_seq)
-            L1_matrix.append(L1_matrix_per_seq)
+            l1_matrix.append(l1_matrix_per_seq)
 
         data['spearman_matrix'] = spearman_matrix
         data['pearson_matrix'] = pearson_matrix
-        data['L1_matrix'] = L1_matrix
-        
+        data['L1_matrix'] = l1_matrix
+
         return data, expanded_time

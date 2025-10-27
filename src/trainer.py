@@ -1,33 +1,33 @@
-import os
-import torch
 import argparse
-from tqdm import tqdm
-import pandas as pd
-from typing import Self, Dict, Any
+from pathlib import Path
+from typing import Any, Self
 
+import pandas as pd
+import torch
+from tqdm import tqdm
+
+from src.toolbox.dataloader import prepare_dataloaders
+from src.toolbox.evaluation import get_evaluation_results
+from src.toolbox.list_operation import list_add, list_div
+from src.toolbox.metrics import Metric
 from src.toolbox.misc import (
     cycle,
     get_logger,
     mkdir_if_not_exist,
+    only_keep_data,
+    pack_one_value_to_dict,
+    print_args,
     read_yaml,
     write_yaml,
-    print_args,
-    pack_one_value_to_dict,
-    only_keep_data,
 )
 from src.toolbox.optimizer import (
     generate_optimizer_scheduler,
-    step_and_update_lr,
-    zero_grad,
     get_lr,
     state_dict,
+    step_and_update_lr,
+    zero_grad,
 )
-from src.toolbox.list_operation import list_add, list_div
-from src.toolbox.metrics import Metric
 from src.toolbox.training import print_performances, replace_check
-from src.toolbox.evaluation import get_evaluation_results
-from src.toolbox.dataloader import prepare_dataloaders
-
 
 logger = get_logger(__name__)
 
@@ -59,24 +59,22 @@ class Trainer:
             else replace_check(
                 self.opt,
                 self.opt.model_identifier,
-                log="Training_record.csv",
-                model="checkpoint.csv",
+                log="training_record.csv",
+                model="model_card.yml",
             )
         )
 
         if not self.continue_running:
-            logger.warning(
-                f"We already have {opt.maximum_retrain} checkpoints! No training is needed. Exiting now."
-            )
+            logger.warning(f"We already have {opt.maximum_retrain} checkpoints! No training is needed. Exiting now.")
 
-        self.opt.log = os.path.join(
+        self.opt.log = Path(
             self.opt.root_path,
             "log",
             self.opt.procedure,
             replace_index,
             self.opt.dataset_name,
         )
-        self.opt.save_model = os.path.join(
+        self.opt.save_model = Path(
             self.opt.root_path,
             "model",
             self.opt.procedure,
@@ -94,36 +92,28 @@ class Trainer:
         self.log_folder = "log_" + self.opt.model_identifier
         self.checkpoint_saved_steps = 0
 
-        mkdir_if_not_exist(
-            os.path.join(self.opt.save_model, self.output_checkpoint_folder)
-        )
-        mkdir_if_not_exist(os.path.join(self.opt.log, self.log_folder))
+        mkdir_if_not_exist(self.opt.save_model / self.output_checkpoint_folder)
+        mkdir_if_not_exist(self.opt.log / self.log_folder)
 
-    def get_procedure_monitor_dict(
-        self: Self, additional_info: Dict[str, Dict] = {}
-    ) -> Dict[str, Dict]:
+    def get_procedure_monitor_dict(self: Self, additional_info: dict[str, dict] = {}) -> dict[str, dict]:
         """Pack all metric values into a dict for reporting.
 
         Args:
             self (Self): The Trainer
-            additional_info (Dict[str, Dict], optional): Additional metrics provided by the model. Defaults to {}.
+            additional_info (dict[str, dict], optional): Additional metrics provided by the model. Defaults to {}.
 
         Returns:
-            Dict[str, Dict]: The packed values, ready to be parsed and reported.
+            dict[str, dict]: The packed values, ready to be parsed and reported.
         """
         monitored_info = {
             "lr": pack_one_value_to_dict(get_lr(self.optimizer), "8.5f"),
             "tensor_memory_consumption": pack_one_value_to_dict(
-                torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024
-                if self.opt.cuda
-                else 0,
+                torch.cuda.memory_allocated(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
                 "5f",
                 "MiB",
             ),
             "reserved_memory": pack_one_value_to_dict(
-                torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024
-                if self.opt.cuda
-                else 0,
+                torch.cuda.memory_reserved(self.opt.device) / 1024 / 1024 if self.opt.cuda else 0,
                 "5f",
                 "MiB",
             ),
@@ -145,9 +135,7 @@ class Trainer:
         # For unknown reason the self.opt.log and self.opt.save_model is empty or None.
         # This is undesired.
         if not self.opt.log and not self.opt.save_model:
-            logger.exception(
-                "No model or log save path. Usually this shouldn't happen. Please check you environment."
-            )
+            logger.exception("No model or log save path. Usually this shouldn't happen. Please check you environment.")
 
         logger.warning("Loading Dataset...")
         if self.opt.data_path:
@@ -157,57 +145,41 @@ class Trainer:
             raise logger.exception("Wrong input data path.")
 
         logger.warning("Loading Model...")
-        procedure_param = (
-            read_yaml(self.opt.abs_procedure_config)
-            if self.opt.abs_procedure_config
-            else {}
-        )
+        procedure_param = read_yaml(self.opt.abs_procedure_config) if self.opt.abs_procedure_config else {}
         self.opt.procedure_param = procedure_param
-        logger.info(
-            f"The hyperparameters for all tasks under procedure {self.opt.procedure} are {procedure_param}"
-        )
+        logger.info(f"The hyperparameters for all tasks under procedure {self.opt.procedure} are {procedure_param}")
 
-        model_param = (
-            read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
-        )
+        model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.opt.model_params = model_param
         logger.info(f"The input model hyperparameters are {model_param}")
 
         # We load the required model by get_model()
         self.model_class = self.get_model(self.opt)
-        self.model = self.model_class(
-            device=self.opt.device, opt=self.opt, **model_param, **procedure_param
-        )
+        self.model = self.model_class(device=self.opt.device, opt=self.opt, **model_param, **procedure_param)
         self.opt.__dict__.update(model_param)
         self.opt.__dict__.update(procedure_param)
 
         # Metric checker for choosing the best model during training.
         self.metric_checker = Metric(
-            self.model_class.metric_number,
-            getattr(self.model_class, "smaller_is_better", None),
+            self.model.metric_number,
+            getattr(self.model, "smaller_is_better", None),
         )
-        self.format_dict_length = self.model_class.format_dict_length
+        self.format_dict_length = self.model.format_dict_length
         self.report_sum = [0] * self.format_dict_length
 
-        trainable_parameters = sum(
-            p.numel() for p in self.model.parameters() if p.requires_grad
-        )
+        trainable_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         total_parameters = sum(p.numel() for p in self.model.parameters())
         self.opt.trainable_parameters = trainable_parameters
         self.opt.epoch = self.opt.n_training_steps / self.opt.training_size
         logger.info(print_args(self.opt, "Training Info"))
-        logger.info(
-            f"For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}"
-        )
+        logger.info(f"For someone who needs the number of training epoches, the number is {self.opt.epoch:5.5f}")
         logger.info(
             f"The number of trainable model parameters is {self.opt.trainable_parameters} out of {total_parameters}."
         )
 
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
-        self.optimizer, self.scheduler = generate_optimizer_scheduler(
-            self.opt, self.model
-        )
+        self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
 
         self.task()
 
@@ -237,13 +209,11 @@ class Trainer:
                         str(self.opt.dataloader_config),
                     ]
                 ),
-                dir=os.path.join(self.opt.log, self.log_folder),
+                dir=str(self.opt.log / self.log_folder),
                 resume="never",
                 notes=f"Training {self.opt.model_name} with config file {str(self.opt.model_config)} on dataset {self.opt.dataset_name}.",
             )
-            wandb.watch(
-                self.model, log="all", log_freq=self.opt.n_report_steps, log_graph=True
-            )
+            wandb.watch(self.model, log="all", log_freq=self.opt.n_report_steps, log_graph=True)
 
         desc = "  - (Training)   "
         step_range = range(1, self.opt.n_training_steps + 1)
@@ -255,12 +225,10 @@ class Trainer:
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training_iter)
 
-            step_result = self.model_class.train_step(self.model, data)
+            step_result = self.model.train_step(data)
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.opt.grad_clip
-                    )
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
                 step_and_update_lr(self.optimizer, self.scheduler)
                 zero_grad(self.optimizer)
 
@@ -289,14 +257,10 @@ class Trainer:
         """
         for key, value in self.df_records.items():
             if value is None:
-                logger.warning(
-                    f"You require us to track the {key} process, but nothing is recorded!"
-                )
+                logger.warning(f"You require us to track the {key} process, but nothing is recorded!")
                 continue
 
-            log_filepath = os.path.join(
-                self.opt.log, self.log_folder, f"{key}_record.csv"
-            )
+            log_filepath = str(self.opt.log / self.log_folder / f"{key}_record.csv")
 
             logger.info(f"Logs of {key} process are stored in {log_filepath}.")
             df_value = pd.DataFrame.from_dict(value)
@@ -304,9 +268,10 @@ class Trainer:
 
         # Write hyperparameters into the model dir.
         hyperparameters = vars(self.opt)
+        hyperparameters["device"] = hyperparameters["device"].type
         write_yaml(
             {**hyperparameters, "checkpoint saved at": self.checkpoint_saved_steps},
-            os.path.join(self.opt.save_model, self.output_checkpoint_folder),
+            self.opt.save_model / self.output_checkpoint_folder,
             "model_card.yml",
         )
 
@@ -325,18 +290,14 @@ class Trainer:
             current_step (int): The training step when we do the report.
         """
         logger.warning(f"Brief training status report at step {current_step}.")
-        report_sum = self.model_class.postprocess(self.report_sum, procedure="Training")
+        report_sum = self.model.postprocess(self.report_sum, procedure="Training")
 
-        log_print_format_dict = self.model_class.log_print_format(
-            report_sum, procedure="Training"
-        )
+        log_print_format_dict = self.model.log_print_format(report_sum, procedure="Training")
         procedure_monitor_dict = self.get_procedure_monitor_dict()
         plain_training_results = only_keep_data(log_print_format_dict)
 
         log_print_format_dict.update(procedure_monitor_dict)
-        print_performances(
-            logger=logger, procedure="training", data_dict=log_print_format_dict
-        )
+        print_performances(logger=logger, procedure="training", data_dict=log_print_format_dict)
 
         self.transform_report_sum_into_recording_df(
             procedure="training", current_step=current_step, data=plain_training_results
@@ -344,14 +305,12 @@ class Trainer:
         if self.opt.wandb:
             import wandb
 
-            wandb.log(
-                {"training": plain_training_results}, commit=False, step=current_step
-            )
+            wandb.log({"training": plain_training_results}, commit=False, step=current_step)
             wandb.log({"lr": get_lr(self.optimizer)}, step=current_step)
 
         self.report_sum = [0] * self.format_dict_length
 
-    def evaluation(self: Self, dataset_name: str, current_step: int) -> Dict[str, Any]:
+    def evaluation(self: Self, dataset_name: str, current_step: int) -> dict[str, Any]:
         """Evaluate the current model at current_step on one dataset.
 
         Args:
@@ -360,30 +319,23 @@ class Trainer:
             current_step (int): At which step we do the evaluation.
 
         Returns:
-            Dict[str, Any]: The evaluation results.
+            dict[str, Any]: The evaluation results.
         """
         evaluation_results = get_evaluation_results(
             self.raw_data[dataset_name],
             self.model,
-            self.model_class,
             output_length=self.format_dict_length,
             desc=f"  - ({dataset_name})   ",
         )
         # dict_flops = {'FLOPS': {'data': evaluation_results['flops'] / 1000**4, 'num_format': '8.5f', 'suffix': 'TFlops'}}
-        report = self.model_class.postprocess(
-            evaluation_results["results"], procedure=dataset_name
-        )
+        report = self.model.postprocess(evaluation_results["results"], procedure=dataset_name)
 
-        log_print_format_dict = self.model_class.log_print_format(
-            report, procedure=dataset_name
-        )
+        log_print_format_dict = self.model.log_print_format(report, procedure=dataset_name)
         procedure_monitor_dict = self.get_procedure_monitor_dict()
         plain_evaluation_results = only_keep_data(log_print_format_dict)
 
         log_print_format_dict.update(procedure_monitor_dict)
-        print_performances(
-            logger=logger, procedure=dataset_name, data_dict=log_print_format_dict
-        )
+        print_performances(logger=logger, procedure=dataset_name, data_dict=log_print_format_dict)
 
         self.transform_report_sum_into_recording_df(
             procedure=dataset_name,
@@ -404,9 +356,7 @@ class Trainer:
             self (Self): The trainer.
             current_step (int): At which step we do the evaluation.
         """
-        logger.warning(
-            f"Model evaluation and checkpoint saving at step {current_step}."
-        )
+        logger.warning(f"Model evaluation and checkpoint saving at step {current_step}.")
 
         # Evaluation and checkpoint saving.
         evaluation_results = self.evaluation("evaluation", current_step)
@@ -416,7 +366,7 @@ class Trainer:
     def should_we_save_model(
         self: Self,
         mode: str,
-        metric_data: Dict[str, Any],
+        metric_data: dict[str, Any],
         current_step: int,
         warmup: int,
     ) -> tuple[bool, str]:
@@ -425,17 +375,18 @@ class Trainer:
         Args:
             self (Self): The trainer.
             mode (str): The model saving strategy.
-            metric_data (Dict[str, Any]): Evaluation result picked by self.model_class.choose_metric() from the evaluation result computed on the evaluation and test dataset.
+            metric_data (dict[str, Any]): Evaluation result picked by self.model.choose_metric() from the evaluation result computed on the evaluation and test dataset.
             current_step (int): Current training step.
             warmup (int): The number of warmup steps. No checkpoint is saved during warmup.
 
         Returns:
             tuple[bool, str]: should we save the model, and the file name of the saved checkpoint.
         """
-        def checker_for_mode_all(metric_data: Dict[str, Any]) -> bool:
+
+        def checker_for_mode_all(metric_data: dict[str, Any]) -> bool:
             return True
 
-        def checker_for_mode_bests(metric_data: Dict[str, Any]) -> bool:
+        def checker_for_mode_bests(metric_data: dict[str, Any]) -> bool:
             return self.metric_checker.compare(metric_data.values())
 
         dict_save_model_checkers_and_checkpoint_names = {
@@ -454,23 +405,20 @@ class Trainer:
     def save(
         self: Self,
         current_step: int,
-        evaluation_results: Dict[str, Any],
-        test_results: Dict[str, Any],
+        evaluation_results: dict[str, Any],
+        test_results: dict[str, Any],
     ) -> None:
         """Save the model if needed.
 
         Args:
             self (Self): The trainer.
             current_step (int): Current training step.
-            evaluation_results (Dict[str, Any]): The evaluation result computed on the evaluation dataset.
-            test_results (Dict[str, Any]): The evaluation result computed on the test dataset.
+            evaluation_results (dict[str, Any]): The evaluation result computed on the evaluation dataset.
+            test_results (dict[str, Any]): The evaluation result computed on the test dataset.
         """
-        metric_values, metric_names = self.model_class.choose_metric(
-            evaluation_results, test_results
-        )
-        assert len(metric_values) == len(metric_names), (
-            "metric_values mismatches metric_names!"
-        )
+        metric_values, metric_names = self.model.choose_metric(evaluation_results, test_results)
+        if len(metric_values) != len(metric_names):
+            raise ValueError("metric_values mismatches metric_names!")
         metric_data = dict(zip(metric_names, metric_values))
 
         should_save_or_not, checkpoint_name = self.should_we_save_model(
@@ -482,41 +430,33 @@ class Trainer:
 
         if should_save_or_not:
             # Save the model.
-            model_name = os.path.join(
-                self.opt.save_model, self.output_checkpoint_folder, checkpoint_name
-            )
+            model_name = self.opt.save_model / self.output_checkpoint_folder / checkpoint_name
             torch.save(self.model.state_dict(), model_name)
             # Save the optimizer.
-            optimizer_name = os.path.join(
-                self.opt.save_model, self.output_checkpoint_folder, 'optimizer.chkpt'
-            )
+            optimizer_name = self.opt.save_model / self.output_checkpoint_folder / "optimizer.chkpt"
             torch.save(state_dict(self.optimizer, self.scheduler), optimizer_name)
             self.transform_report_sum_into_recording_df(
                 procedure="checkpoint", current_step=current_step, data=metric_data
             )
-            logger.warning(
-                f"----> We stored the model in {checkpoint_name} at step {current_step}. <----"
-            )
+            logger.warning(f"----> We stored the model in {checkpoint_name} at step {current_step}. <----")
 
-    def transform_report_sum_into_recording_df(
-        self: Self, procedure: str, current_step: int, data: Dict[str, Any]
-    ):
+    def transform_report_sum_into_recording_df(self: Self, procedure: str, current_step: int, data: dict[str, Any]):
         """Append the computed metrics into the metric database.
 
         Args:
             self (Self): The trainer.
             procedure (str): The name of the database.
             current_step (int): Current training step.
-            data (Dict[str, Any]): The computed metrics.
+            data (dict[str, Any]): The computed metrics.
         """
         new_df_perline_dict = {"current_step": current_step}
         new_df_perline_dict.update(data)
 
         if self.df_records[procedure] is None:
             empty_execution_log_dict = {}
-            for key in new_df_perline_dict.keys():
+            for key in new_df_perline_dict:
                 empty_execution_log_dict[key] = []
             self.df_records[procedure] = empty_execution_log_dict
 
-        for key in self.df_records[procedure].keys():
+        for key in self.df_records[procedure]:
             self.df_records[procedure][key].append(new_df_perline_dict[key])

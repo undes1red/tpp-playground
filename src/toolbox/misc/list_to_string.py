@@ -6,5 +6,5 @@ def list_to_string(*seqs):
     for seq in seqs:
         seq_string = ' '.join(map(str, seq))
         result.append(seq_string)
-    
+
     return result

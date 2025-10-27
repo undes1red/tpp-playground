@@ -29,3 +29,7 @@ Based on this [project](https://github.com/jadore801120/attention-is-all-you-nee
 4. Exclude data files from the git repository.
 5. Automantic procedure selection.(WIP)
 6. Turn num_event into a dataset information card.
+
+
+bfloat16 allowed:
+1. SAHP

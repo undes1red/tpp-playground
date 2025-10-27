@@ -1,3 +1,4 @@
+from src.toolbox.activations.scaled_tanh import ScaledTanh
 from src.toolbox.activations.softplus_ext import softplus_ext
 
-from src.toolbox.activations.scaled_tanh import scaled_tanh
+__all__ = ["softplus_ext", "ScaledTanh"]

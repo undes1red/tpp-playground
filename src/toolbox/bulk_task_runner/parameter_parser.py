@@ -1,16 +1,17 @@
 import math
-import numpy as np
-from typing import Dict, List, Any
 from itertools import product
+from typing import Any
 
-from src.toolbox.misc import merge_list_of_dicts, get_logger
+import numpy as np
+
+from src.toolbox.misc import get_logger, merge_list_of_dicts
 
 logger = get_logger(__name__)
 
 
 def parse_sequential_parameters(
-    sequential_dict: Dict[str, Any],
-) -> List[Dict[str, Any]]:
+    sequential_dict: dict[str, Any],
+) -> list[dict[str, Any]]:
     """
     Parse input values using a zip-like approach.
     Example:
@@ -20,15 +21,15 @@ def parse_sequential_parameters(
     }
     --->
     [{'key1': 1, 'key2': 'a'}, {'key1': 2, 'key2': 'b'}, {'key1': 3, 'key2': 'c'}]
-    
+
     Different from python's zip() which allows the length of each input iterable to be different, parse_sequential_parameters()
     assumes all input lists have the same length, otherwise an exception will be raised.
 
     Args:
-        sequential_dict (dict): Dictionary with 'loop_vars' key containing parameter lists
+        sequential_dict (dict): dictionary with 'loop_vars' key containing parameter lists
 
     Returns:
-        list: List of dictionaries, each containing one combination of parameters
+        list: list of dictionaries, each containing one combination of parameters
     """
     # Return [{}] if the input sequential_dict is empty.
     if len(sequential_dict) == 0:
@@ -40,9 +41,7 @@ def parse_sequential_parameters(
 
     # Get the corresponding results of nested sequential or combinatorial dicts if exist.
     sub_sequential_result_list = parse_sequential_parameters(sub_sequential_dict)
-    sub_combinatorial_result_list = parse_combinatorial_parameters(
-        sub_combinatorial_dict
-    )
+    sub_combinatorial_result_list = parse_combinatorial_parameters(sub_combinatorial_dict)
 
     # The merge will work as expected when sub_sequential_result_list or sub_combinatorial_result_list is [{}], or empty.
     if sub_sequential_result_list == [{}]:
@@ -51,10 +50,11 @@ def parse_sequential_parameters(
         sub_result_list = sub_sequential_result_list
     else:
         # zip merge these two list of dicts.
-        assert len(sub_combinatorial_result_list) == len(sub_sequential_result_list)
+        if len(sub_combinatorial_result_list) != len(sub_sequential_result_list):
+            raise ValueError('Inner argument combinations mismatch the length of other arguments.')
+
         sub_result_list = [
-            merge_list_of_dicts(items)
-            for items in zip(sub_sequential_result_list, sub_combinatorial_result_list)
+            merge_list_of_dicts(items) for items in zip(sub_sequential_result_list, sub_combinatorial_result_list)
         ]
     length_sub_result_list = len(sub_result_list) if sub_result_list != [{}] else None
 
@@ -91,16 +91,14 @@ def parse_sequential_parameters(
         combinations.append(combination)
 
     if sub_result_list != [{}]:
-        combinations = [
-            merge_list_of_dicts(items) for items in zip(combinations, sub_result_list)
-        ]
+        combinations = [merge_list_of_dicts(items) for items in zip(combinations, sub_result_list)]
 
     return combinations
 
 
 def parse_combinatorial_parameters(
-    combinatorial_dict: Dict[str, Any],
-) -> List[Dict[str, Any]]:
+    combinatorial_dict: dict[str, Any],
+) -> list[dict[str, Any]]:
     """
     Parse input values and return all possible argument value combinations.
     Example:
@@ -112,7 +110,7 @@ def parse_combinatorial_parameters(
     [{'key1': 1, 'key2': 'a'}, {'key1': 1, 'key2': 'b'}, {'key1': 1, 'key2': 'c'},
      {'key1': 2, 'key2': 'a'}, {'key1': 2, 'key2': 'b'}, {'key1': 2, 'key2': 'c'},
      {'key1': 3, 'key2': 'a'}, {'key1': 3, 'key2': 'b'}, {'key1': 3, 'key2': 'c'},]
-    
+
     parse_combinatorial_parameters() supports a specical key called "value_matrices".
     value_matrices is useful when the value of some parameters relies on others.
     For instance, the value of task_config relies on task_name and dataset_name.
@@ -129,13 +127,13 @@ def parse_combinatorial_parameters(
     }
     --->
     [{'key1': 1, 'key2': 'a', 'mk1': 'a11', 'mk2': 'b11'}, {'key1': 1, 'key2': 'b', 'mk1': 'a12', 'mk2': 'b12'}, {'key1': 1, 'key2': 'c', 'mk1': 'a13', 'mk2': 'b13'}
-     {'key1': 2, 'key2': 'a', 'mk1': 'a21', 'mk2': 'b21'}, {'key1': 2, 'key2': 'b', 'mk1': 'a22', 'mk2': 'b22'}, {'key1': 2, 'key2': 'c', 'mk1': 'a23', 'mk2': 'b23'}]    
+     {'key1': 2, 'key2': 'a', 'mk1': 'a21', 'mk2': 'b21'}, {'key1': 2, 'key2': 'b', 'mk1': 'a22', 'mk2': 'b22'}, {'key1': 2, 'key2': 'c', 'mk1': 'a23', 'mk2': 'b23'}]
 
     Args:
-        combinatorial_dict (dict): Dictionary with 'loop_vars' key containing parameter lists
+        combinatorial_dict (dict): dictionary with 'loop_vars' key containing parameter lists
 
     Returns:
-        list: List of dictionaries, each containing one combination of parameters
+        list: list of dictionaries, each containing one combination of parameters
     """
     # Return [{}] if the input sequential_dict is empty.
     if len(combinatorial_dict) == 0:
@@ -147,14 +145,11 @@ def parse_combinatorial_parameters(
 
     # Get the corresponding results of nested sequential or combinatorial dicts if exist.
     sub_sequential_result_list = parse_sequential_parameters(sub_sequential_dict)
-    sub_combinatorial_result_list = parse_combinatorial_parameters(
-        sub_combinatorial_dict
-    )
+    sub_combinatorial_result_list = parse_combinatorial_parameters(sub_combinatorial_dict)
 
     # combinatorially merge these two list of dicts.
     sub_result_list = [
-        merge_list_of_dicts(item)
-        for item in product(sub_sequential_result_list, sub_combinatorial_result_list)
+        merge_list_of_dicts(item) for item in product(sub_sequential_result_list, sub_combinatorial_result_list)
     ]
 
     # nested sequential or combinatorial dict processed. Remove them.
@@ -180,18 +175,16 @@ def parse_combinatorial_parameters(
             combinatorial_dict, param_value_matrices, sub_result_list
         )
     else:
-        combinations = combinatorial_merge_default(
-            combinatorial_dict, param_value_matrices, sub_result_list
-        )
+        combinations = combinatorial_merge_default(combinatorial_dict, param_value_matrices, sub_result_list)
 
     return combinations
 
 
 def combinatorial_merge_with_value_matrices(
-    combinatorial_dict: Dict[str, Any],
-    param_value_matrices: Dict[str, np.array],
-    sub_result_list: List[Dict],
-) -> List[Dict]:
+    combinatorial_dict: dict[str, Any],
+    param_value_matrices: dict[str, np.array],
+    sub_result_list: list[dict],
+) -> list[dict]:
     # Get parameter names and their possible values
     param_names = tuple(combinatorial_dict.keys())
     param_values = tuple(
@@ -203,9 +196,7 @@ def combinatorial_merge_with_value_matrices(
     param_values_length = tuple([len(values) for values in param_values])
 
     for key, item in param_value_matrices.items():
-        try:
-            assert item.shape == param_values_length
-        except AssertionError:
+        if  item.shape != param_values_length:
             logger.exception(
                 f'We expect the value matrix with key "{key}" has shape {param_values_length} but it has shape {item.shape}.'
             )
@@ -225,15 +216,11 @@ def combinatorial_merge_with_value_matrices(
 
     for _ in range(total_combinations):
         # Create combination from current indices
-        combination = {
-            param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))
-        }
+        combination = {param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))}
 
         combination.update(sub_result_list[indices[-1]])
 
-        combination.update(
-            {key: value[*indices].item() for key, value in param_value_matrices.items()}
-        )
+        combination.update({key: value[*indices].item() for key, value in param_value_matrices.items()})
         combinations.append(combination)
 
         # Increment indices (like counting)
@@ -247,28 +234,24 @@ def combinatorial_merge_with_value_matrices(
                 break
 
     # Merge combinations with the sub_result_list.
-    combinations = [
-        merge_list_of_dicts(item) for item in product(combinations, sub_result_list)
-    ]
-
-    return combinations
+    return [merge_list_of_dicts(item) for item in product(combinations, sub_result_list)]
 
 
 def combinatorial_merge_default(
-    combinatorial_dict: Dict[str, Any],
-    param_value_matrices: Dict[str, np.array],
-    sub_result_list: List[Dict],
-) -> List[Dict]:
+    combinatorial_dict: dict[str, Any],
+    param_value_matrices: dict[str, np.array],
+    sub_result_list: list[dict],
+) -> list[dict]:
     """
     We use this function in every condition except when both param_value_matrices and sub_result_list exist and are not empty.
 
     Args:
-        combinatorial_dict (Dict[str, Any]): _description_
-        param_value_matrices (Dict[str, np.array]): _description_
-        sub_result_list (List[Dict]): _description_
+        combinatorial_dict (dict[str, Any]): _description_
+        param_value_matrices (dict[str, np.array]): _description_
+        sub_result_list (list[dict]): _description_
 
     Returns:
-        List[Dict]: _description_
+        list[dict]: _description_
     """
     # Get parameter names and their possible values
     param_names = tuple(combinatorial_dict.keys())
@@ -277,9 +260,7 @@ def combinatorial_merge_default(
 
     if not param_value_matrices:
         for key, item in param_value_matrices.items():
-            try:
-                assert item.shape == param_values_length
-            except AssertionError:
+            if item.shape != param_values_length:
                 logger.exception(
                     f'We expect the value matrix with key "{key}" has shape {param_values_length} but it has shape {item.shape}.'
                 )
@@ -299,16 +280,9 @@ def combinatorial_merge_default(
 
     for _ in range(total_combinations):
         # Create combination from current indices
-        combination = {
-            param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))
-        }
+        combination = {param_names[i]: param_values[i][indices[i]] for i in range(len(param_names))}
         if param_value_matrices:
-            combination.update(
-                {
-                    key: value[*indices].item()
-                    for key, value in param_value_matrices.items()
-                }
-            )
+            combination.update({key: value[*indices].item() for key, value in param_value_matrices.items()})
         combinations.append(combination)
 
         # Increment indices (like counting)
@@ -322,38 +296,32 @@ def combinatorial_merge_default(
                 break
 
     # Merge combinations with the sub_result_list.
-    combinations = [
-        merge_list_of_dicts(item) for item in product(combinations, sub_result_list)
-    ]
-
-    return combinations
+    return [merge_list_of_dicts(item) for item in product(combinations, sub_result_list)]
 
 
 def combine_parameters(
-    static_params: Dict[str, Any],
-    sequential_combinations: List[Dict[str, Any]],
-    combinatorial_combinations: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    static_params: dict[str, Any],
+    sequential_combinations: list[dict[str, Any]],
+    combinatorial_combinations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Combine all parsed parameters using combinatorial approach.
 
     Args:
         static_params (dict): Static parameters to be added to each combination
-        sequential_combinations (list): List of sequential parameter dictionaries
-        combinatorial_combinations (list): List of combinatorial parameter dictionaries
+        sequential_combinations (list): list of sequential parameter dictionaries
+        combinatorial_combinations (list): list of combinatorial parameter dictionaries
 
     Returns:
-        list: List of complete parameter dictionaries
+        list: list of complete parameter dictionaries
     """
-    combined_results = []
-
     # Handle case where we have no sequential or combinatorial parameters
     if not sequential_combinations:
         sequential_combinations = [{}]
     if not combinatorial_combinations:
         combinatorial_combinations = [{}]
 
-    combined_results = [
+    return [
         merge_list_of_dicts(item)
         for item in product(
             [
@@ -364,18 +332,16 @@ def combine_parameters(
         )
     ]
 
-    return combined_results
 
-
-def convert_to_command_line_args(param_dict: Dict[str, Any]) -> List[str]:
+def convert_to_command_line_args(param_dict: dict[str, Any]) -> list[str]:
     """
     Convert a parameter dictionary to command-line arguments.
 
     Args:
-        param_dict (dict): Dictionary of parameters
+        param_dict (dict): dictionary of parameters
 
     Returns:
-        list: List of command-line arguments
+        list: list of command-line arguments
     """
     arguments = []
     for key, value in param_dict.items():
@@ -387,7 +353,7 @@ def convert_to_command_line_args(param_dict: Dict[str, Any]) -> List[str]:
     return arguments
 
 
-def parameter_parser(input_dict: Dict[str, Any]) -> List[List[str]]:
+def parameter_parser(input_dict: dict[str, Any]) -> list[list[str]]:
     """
     Main parameter parser function that orchestrates the parsing process.
     Please note that "sequential", "combinatorial", and "value_matrices"(combinatorial specific) are reserved keys.
@@ -402,7 +368,7 @@ def parameter_parser(input_dict: Dict[str, Any]) -> List[List[str]]:
                           }
 
     Returns:
-        list: List of dictionaries, each containing a complete set of parameters
+        list: list of dictionaries, each containing a complete set of parameters
     """
     # Extract different parameter types
     static_params = input_dict.get("static", {})
@@ -411,30 +377,20 @@ def parameter_parser(input_dict: Dict[str, Any]) -> List[List[str]]:
 
     # Parse each parameter type
     sequential_combinations = parse_sequential_parameters(sequential_params_dict)
-    combinatorial_combinations = parse_combinatorial_parameters(
-        combinatorial_params_dict
-    )
+    combinatorial_combinations = parse_combinatorial_parameters(combinatorial_params_dict)
 
     # Combine all parameters
-    combined_params = combine_parameters(
-        static_params, sequential_combinations, combinatorial_combinations
-    )
+    combined_params = combine_parameters(static_params, sequential_combinations, combinatorial_combinations)
 
     # Transfer dict parameters into command line arguments.
     combined_params = [convert_to_command_line_args(item) for item in combined_params]
 
     # Add headers
     # <interpreter> <file_name> <argparser> ...
-    combined_params = [
-        input_dict["interpreter"] + [input_dict["file_name"], input_dict["argparser"]]
-        + item
+    return [
+        input_dict["interpreter"] + [input_dict["file_name"], input_dict["argparser"]] + item
         for item in combined_params
     ]
-
-    return combined_params
-
-
-__all__ = [parameter_parser]
 
 
 if __name__ == "__main__":

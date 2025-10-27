@@ -1,8 +1,10 @@
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import Any, Self
+
+import numpy as np
 import torch
 import torch.utils as utils
-import os
-import numpy as np
-from typing import Self, Dict, Any, Union, Iterable, List, Tuple, Callable
 
 from src.toolbox.misc import load_from_pkl
 
@@ -33,9 +35,7 @@ def append(per_line: np.array, number: float) -> np.array:
     return np.concatenate([per_line, np.array([number])])
 
 
-def diff(
-    per_line: np.array, prepend: float = np._NoValue, append: float = np._NoValue
-) -> np.array:
+def diff(per_line: np.array, prepend: float = np._NoValue, append: float = np._NoValue) -> np.array:
     """Calculate the diff of the input array
 
     Args:
@@ -50,12 +50,12 @@ def diff(
     return np.diff(per_line, prepend=prepend, append=append)
 
 
-class generic_dataset(utils.data.Dataset):
+class GenericDataset(utils.data.Dataset):
     def __init__(
         self: Self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         device: torch.device,
-        property_dict: Dict[str, Any],
+        property_dict: dict[str, Any],
         relative_time: bool = True,
         evaluate: bool = False,
         shift: bool = False,
@@ -65,9 +65,9 @@ class generic_dataset(utils.data.Dataset):
 
         Args:
             self (Self): the dataset item,
-            data (Dict[str, Any]): the raw data
+            data (dict[str, Any]): the raw data
             device (torch.device): the batched data will be moved to this device.
-            property_dict (Dict[str, Any]): the property of the dataset.
+            property_dict (dict[str, Any]): the property of the dataset.
             evaluate (bool, optional): enable or disable the evaluate mode. Defaults to False.
             shift (bool, optional): if enabled, we shift the time interval by a small number to avoid 0. Defaults to False.
             input_norm_data (bool, optional): output the mean and std of the time interval if true. Defaults to False.
@@ -75,7 +75,7 @@ class generic_dataset(utils.data.Dataset):
         Returns:
             Self: the dataset item.
         """
-        super(generic_dataset, self).__init__()
+        super().__init__()
         self.device = device
         self.float_dtype = torch.get_default_dtype()
         self.evaluate = evaluate
@@ -91,28 +91,18 @@ class generic_dataset(utils.data.Dataset):
         self.intensity = data["intensity"]
         self.event = data["event"]
 
-        assert (
-            len(self.time_seq)
-            == len(self.score)
-            == len(self.intensity)
-            == len(self.event)
-        ), "Dataset size mismatches!"
         self.dataset_size = len(self.time_seq)
 
         # Data preprocessing
         # we remove the end dummy event from the sequence when evaluate = True
         if relative_time:
             if self.evaluate:
-                self.time_seq = [
-                    np.diff(seq, prepend=self.start_time) for seq in self.time_seq
-                ]
+                self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
             else:
                 # Use T
                 # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
                 # Do not use T
-                self.time_seq = [
-                    np.diff(seq, prepend=self.start_time) for seq in self.time_seq
-                ]
+                self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
                 self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
                 self.event = [append(seq, self.number_of_events) for seq in self.event]
 
@@ -138,7 +128,7 @@ class generic_dataset(utils.data.Dataset):
         self.intensity = [np.array(seq, dtype=np.float32) for seq in self.intensity]
         self.event = [np.array(seq, dtype=np.int64) for seq in self.event]
 
-    def __getitem__(self: Self, index: Union[int, Iterable]) -> List:
+    def __getitem__(self: Self, index: int | Iterable) -> list:
         """Get the batched data.
 
         Args:
@@ -146,29 +136,24 @@ class generic_dataset(utils.data.Dataset):
             index (Union[int, Iterable]): the index of the selected data.
 
         Returns:
-            List: the output.
+            list: the output.
         """
         """
         Synthetic dataloader is very simple. It doesn't have any event infomation at each timestamp,
         and only the time differences between two neighboring events are available.
         """
         if isinstance(index, slice):
-            return [
-                self[idx]
-                for idx in range(
-                    index.start or 0, index.stop or len(self), index.step or 1
-                )
-            ]
-        else:
-            if self.evaluate:
-                return (
-                    self.time_seq[index],
-                    self.event[index],
-                    self.score[index],
-                    self.intensity[index],
-                )
-            else:
-                return self.time_seq[index], self.event[index], self.score[index]
+            return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
+
+        if self.evaluate:
+            return (
+                self.time_seq[index],
+                self.event[index],
+                self.score[index],
+                self.intensity[index],
+            )
+
+        return self.time_seq[index], self.event[index], self.score[index]
 
     def __len__(self: Self):
         """return the length of the dataset.
@@ -181,7 +166,7 @@ class generic_dataset(utils.data.Dataset):
         """
         return self.dataset_size
 
-    def data_collator(self: Self, data: List) -> Tuple[List, Tuple[float, float]]:
+    def data_collator(self: Self, data: list) -> tuple[list, tuple[float, float]]:
         """
         The structure of data:
         [
@@ -194,23 +179,17 @@ class generic_dataset(utils.data.Dataset):
         for item in data:
             pad_length = max_length_of_this_batch - item[0].size
             mask = np.array([1] * item[0].size + [0] * pad_length, dtype=np.bool)
-            padded_time_seq = np.pad(
-                item[0], (0, pad_length), mode="constant", constant_values=0
-            )
+            padded_time_seq = np.pad(item[0], (0, pad_length), mode="constant", constant_values=0)
             padded_event = np.pad(
                 item[1],
                 (0, pad_length),
                 mode="constant",
                 constant_values=self.number_of_events,
             )
-            padded_score = np.pad(
-                item[2], (0, pad_length), mode="constant", constant_values=0
-            )
+            padded_score = np.pad(item[2], (0, pad_length), mode="constant", constant_values=0)
             padded_item = [padded_time_seq, padded_event, padded_score, mask]
             if self.evaluate:
-                padded_intensity = np.pad(
-                    item[3], (0, pad_length), mode="constant", constant_values=0
-                )
+                padded_intensity = np.pad(item[3], (0, pad_length), mode="constant", constant_values=0)
                 padded_item.append(padded_intensity)
 
             padded_data.append(tuple(padded_item))
@@ -218,15 +197,12 @@ class generic_dataset(utils.data.Dataset):
         from torch.utils.data._utils.collate import default_collate
 
         padded_data = default_collate(padded_data)
-        padded_data = [
-            item.to(self.float_dtype) if torch.is_floating_point(item) else item
-            for item in padded_data
-        ]
+        padded_data = [item.to(self.float_dtype) if torch.is_floating_point(item) else item for item in padded_data]
 
         return padded_data, (self.mean, self.std)
 
 
-def read_data(path: str, file_name: str) -> Dict:
+def read_data(path: str, file_name: str) -> dict:
     """Load the dataset.
 
     Args:
@@ -234,10 +210,10 @@ def read_data(path: str, file_name: str) -> Dict:
         file_name (str): the name of the dataset file.
 
     Returns:
-        Dict: the loaded data.
+        dict: the loaded data.
     """
-    return load_from_pkl(os.path.join(path, file_name))
+    return load_from_pkl(Path(path, file_name))
 
 
-def generic_dataloader() -> Tuple[utils.data.Dataset, Callable]:
-    return [generic_dataset, read_data]
+def generic_dataloader() -> tuple[utils.data.Dataset, Callable]:
+    return [GenericDataset, read_data]
