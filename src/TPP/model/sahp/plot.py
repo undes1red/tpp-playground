@@ -280,7 +280,7 @@ def generate_debug_figure(data, opt):
 
         fig6 = draw_lineplot(data = data_top_k_per_seq, x = 'K', y = 'Accuracy', figure_kwargs = {'font.size': 18, 'figure.figsize': (5, 5)})
         ax = fig6.gca()
-        ax.set_ylim(bottom = -0.05, top = 1.05)
+        ax.set_ylim(bottom = -0.05, top = 1.25)
 
         save_fig(fig6, opt.plot_store_dir_for_this_batch, f'topk_{idx}.pdf')
         logger.info(f'Top-K_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!')
@@ -296,7 +296,7 @@ def generate_debug_figure(data, opt):
         seq_len = mask_next_per_seq.sum()
 
         data_maes_per_seq = {
-            'Event Index': list(range(seq_len)) * 3,
+            'Event Index': list(range(seq_len)) * 2,
             r'$\log(1 + \mathrm{MAE})$': np.concatenate(
                 (np.log(1 + mae_pt_per_seq[:seq_len]),
                  np.log(1 + maes_ptm_per_seq[:seq_len]))

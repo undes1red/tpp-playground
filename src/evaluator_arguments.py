@@ -45,11 +45,6 @@ class BasicEvaluatorArguments:
             help="Pick the model by its index.",
         )
         self.parser.add_argument(
-            "--fpcounter",
-            action="store_true",
-            help="True: Enable the FlopCounterMode shipped by PyTorch to calculate how many FLOPS we spend on one task.\n False: disable FlopCounterMode.",
-        )
-        self.parser.add_argument(
             "--compile",
             action="store_true",
             help="True: Use torch.compile() to compile models or functions to speed up training and evaluation.\n False: disable torch.compile().",

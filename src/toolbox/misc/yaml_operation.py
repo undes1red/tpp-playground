@@ -1,3 +1,4 @@
+import pathlib
 from pathlib import Path
 
 import yaml
@@ -32,9 +33,14 @@ def write_yaml(data: dict, yaml_path: str, yaml_file: str) -> None:
     """Write a dict into a yaml file.
 
     Args:
-        data (Dict): The data
+        data (dict): The data
         yaml_path (str): Folder where we place the yaml file.
         yaml_file (str): The name of this yaml file.
     """
+    # Convert UnixPath to str.
+    for key, value in data.items():
+        if isinstance(value, pathlib.PosixPath):
+            data[key] = str(value.resolve())
+
     with Path(yaml_path, yaml_file).open("w") as outfile:
         yaml.safe_dump(data, outfile, default_flow_style=False, allow_unicode=True)

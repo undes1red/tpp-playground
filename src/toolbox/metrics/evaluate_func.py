@@ -28,7 +28,7 @@ def top_k(input_data, target, **kwargs):
     if num_events > 2:
         for k in range(1, num_events):
             top_k_acc_single_event_seq.append(
-                top_k_accuracy_score(y_true=input_data, y_score=target, k=k, labels=np.arange(num_events))
+                top_k_accuracy_score(y_true=target, y_score=input_data, k=k, labels=np.arange(num_events))
             )
     else:
         top_k_acc_single_event_seq.append(accuracy_score(y_true=input_data, y_pred=target))

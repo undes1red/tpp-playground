@@ -841,8 +841,7 @@ class SAHPWrapper(BasicModel):
             events_next,
             mask_next,
             "top_k",
-            dim_input=-2,
-            multiprocessing=True,
+            dim_input=-2
         )
         # [batch_size, num_events]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
