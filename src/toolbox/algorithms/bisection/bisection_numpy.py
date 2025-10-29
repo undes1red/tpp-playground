@@ -22,7 +22,7 @@ def bisection_numpy(
         val = bisect_func(center, threshold, *args, **kwargs)
         left = np.where(val < 0, center, left)
         right = np.where(val > 0, center, right)
-        if np.allclose(right, left, atol=bisect_early_stop_threshold, rtol=0):
+        if np.allclose(right, left, atol=bisect_early_stop_threshold, rtol=bisect_early_stop_threshold):
             break
 
     return (left + right) / 2

@@ -33,7 +33,7 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     and the ground truth on all available event sequences.
     We dump all mae values for calculating Q1, Q2, and Q3 later.
     """
-    mae, acc, macro_f1, micro_f1, dist, events_next = all_evaluation_results
+    mae, acc, macro_f1, micro_f1, pred_time, dist, events_next = all_evaluation_results
 
     acc = np.mean(acc)
     macro_f1 = np.mean(macro_f1)
@@ -41,7 +41,7 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     mean_mae = np.mean(mae)
 
     mae_dist_file = opt.store_dir / f"{desc}_mae_data.pkl"
-    data = {"mae": mae, "dist": dist, "events_next": events_next}
+    data = {"pred_time": pred_time, "dist": dist, "events_next": events_next}
     dump_to_pkl(data, mae_dist_file, compression="bz2")
 
     result_file = opt.store_dir / f"{desc}_mae_and_macro-f1.txt"
@@ -67,11 +67,10 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     acc = np.mean(acc)
     macro_f1 = np.mean(macro_f1)
     micro_f1 = np.mean(micro_f1)
-    mean_mae_e = np.mean(flatten(mae_e))
+    mean_mae_e = np.mean(mae_e)
 
     mae_e_dist_file = opt.store_dir / f"{desc}_mae_e_data.pkl"
     data = {
-        "mae_e": mae_e,
         "t_m": pred_time_all_marks,
         "events_next": events_next,
         "pm": mark_dist,

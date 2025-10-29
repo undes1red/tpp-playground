@@ -1,7 +1,7 @@
 import torch
 
 
-def load_checkpoint(logger, checkpoint_dir, model, device, evaluation = True):
+def load_checkpoint(logger, checkpoint_dir, model, device, evaluation=True, compile=False):
     '''
     Here, we need to 1. restore the model weights from the checkpoint, 2. convert it into a DP if possible.
     '''
@@ -12,10 +12,15 @@ def load_checkpoint(logger, checkpoint_dir, model, device, evaluation = True):
     new_dict = {}
     recorded_keys = []
     # Restore the key if torch.compile is used.
-    for item in model_state_dict:
-        if '_orig_mod' in item:
-            new_dict[item.replace('._orig_mod', '')] = model_state_dict[item]
-            recorded_keys.append(item)
+
+    # Remove _orig_mod from the key name.
+    # Now we can load compiled checkpoints into uncompiled models.
+    if not compile:
+        for item in model_state_dict:
+            if '_orig_mod' in item:
+                new_dict[item.replace('._orig_mod', '')] = model_state_dict[item]
+                recorded_keys.append(item)
+
     for recorded_key in recorded_keys:
         model_state_dict.pop(recorded_key, None)
     model_state_dict.update(new_dict)

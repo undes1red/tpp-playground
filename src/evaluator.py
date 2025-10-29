@@ -91,7 +91,7 @@ class Evaluator:
 
             # Here, we need to restore the model weights from the checkpoint
             self.model = load_checkpoint(
-                logger, self.opt.checkpoint_folder / "checkpoint.chkpt", model, device=self.opt.device
+                logger, self.opt.checkpoint_folder / "checkpoint.chkpt", model, device=self.opt.device, compile=self.opt.compile
             )
             logger.info(print_args(self.opt, "Evaluation Info"))
 

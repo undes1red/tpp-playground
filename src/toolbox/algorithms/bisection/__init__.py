@@ -7,8 +7,7 @@ from src.toolbox.algorithms.bisection.bisection_torch import bisection_torch
 def bisection(max_step, bisect_early_stop_threshold, bisect_func, threshold, *args, **kwargs):
     if torch.is_tensor(threshold):
         return bisection_torch(max_step, bisect_early_stop_threshold, bisect_func, threshold, *args, **kwargs)
-    else:
-        return bisection_numpy(max_step, bisect_early_stop_threshold, bisect_func, threshold, *args, **kwargs)
+    return bisection_numpy(max_step, bisect_early_stop_threshold, bisect_func, threshold, *args, **kwargs)
 
 
 if __name__ == '__main__':

@@ -962,6 +962,7 @@ class SAHPWrapper(BasicModel):
         )
         # [batch_size, seq_len] + [batch_size, seq_len, num_events]
         mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = mae.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
         results = evaluate_on_one_batch(pred_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"]
@@ -971,9 +972,8 @@ class SAHPWrapper(BasicModel):
         mae, events_next, mark_dist, acc, macro_f1, micro_f1, mask_next = move_from_tensor_to_ndarray(
             mae, events_next, mark_dist, acc, macro_f1, micro_f1, mask_next
         )
-        mae, events_next, mark_dist = break_batched_inputs_into_seqs(mask_next, mae, events_next, mark_dist)
-
-        return mae, acc.tolist(), macro_f1.tolist(), micro_f1.tolist(), mark_dist, events_next
+        pred_time, events_next, mark_dist = break_batched_inputs_into_seqs(mask_next, pred_time, events_next, mark_dist)
+        return mae.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist(), pred_time, mark_dist, events_next
 
     @torch.inference_mode()
     def get_mae_e_and_f1(self: Self, input_data: list, opt: argparse.Namespace) -> tuple[Any]:
@@ -1018,6 +1018,7 @@ class SAHPWrapper(BasicModel):
         # [batch_size, seq_len, num_events]
         pred_time = (pred_time_all_marks * events_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_events]
         mae_e = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae_e = mae_e.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
         results = evaluate_on_one_batch(pred_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"]
@@ -1045,12 +1046,12 @@ class SAHPWrapper(BasicModel):
             pred_time_all_marks,
             time_next,
         )
-        mae_e, mark_dist, pred_time_all_marks, time_next, events_next = break_batched_inputs_into_seqs(
-            mask_next, mae_e, mark_dist, pred_time_all_marks, time_next, events_next
+        mark_dist, pred_time_all_marks, time_next, events_next = break_batched_inputs_into_seqs(
+            mask_next, mark_dist, pred_time_all_marks, time_next, events_next
         )
 
         return (
-            mae_e,
+            mae_e.tolist(),
             acc.tolist(),
             macro_f1.tolist(),
             micro_f1.tolist(),

@@ -1,13 +1,11 @@
 import argparse
 import importlib
-import os
 import random
 import secrets
 import time
 from typing import Self
 
 import matplotlib as mpl
-import numpy as np
 import torch
 
 from src.toolbox.misc import get_logger, version_check
@@ -133,7 +131,7 @@ class TaskHost:
                     f"Device supports CUDA {props.major}.{props.minor} higher than 6.0. torch.compile() is possible."
                 )
                 if self.opt.compile:
-                    self.opt.compile_backend = 'cudagraphs'
+                    self.opt.compile_backend = "inductor"
             else:
                 logger.info(
                     f"Device supports CUDA {props.major}.{props.minor} not higher than 6.0. torch.compile() is impossible."
@@ -149,11 +147,10 @@ class TaskHost:
             torch.set_num_threads(torch.get_num_threads())
 
             if self.opt.compile:
-                self.opt.compile_backend = 'inductor'
+                self.opt.compile_backend = "inductor"
 
         if self.opt.compile:
-            self.opt.compile_backend = 'inductor'
-            logger.info(f'Compile enabled! Backend is {self.opt.compile_backend}.')
+            logger.info(f"Compile enabled! Backend is {self.opt.compile_backend}.")
 
     def start(self: Self) -> None:
         """start.py calls this function to start the task.
