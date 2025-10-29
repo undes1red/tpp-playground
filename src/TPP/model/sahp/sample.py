@@ -134,9 +134,11 @@ def sampling_by_its_for_mt(
     batch_size, seq_len = time_history.shape
     p_m = p_m.unsqueeze(dim=0)  # [1, batch_size, seq_len, num_events]
     for sub_sample_rate in sample_rate_list:
-        probability_threshold = torch.zeros((sub_sample_rate, batch_size, seq_len, self.num_events), device=self.device)
-        # [sample_rate, batch_size, seq_len, num_events]
+        probability_threshold = torch.zeros((batch_size, seq_len, self.num_events, sub_sample_rate), device=self.device)
+        # [batch_size, seq_len, num_events, sample_rate]
         torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
+        # [batch_size, seq_len, num_events, sample_rate]
+        probability_threshold = rearrange(probability_threshold, 'b sl ne sr -> sr b sl ne')
         # [sample_rate, batch_size, seq_len, num_events]
         tau_pred.append(
             bisection(
@@ -168,9 +170,11 @@ def sampling_by_its_for_tm(self, events_history, time_history, mask_history, num
 
     tau_pred = []
     for sub_sample_rate in sample_rate_list:
-        probability_threshold = torch.zeros((sub_sample_rate, *time_history.shape), device=self.device)
-        # [sample_rate, batch_size, seq_len]
+        probability_threshold = torch.zeros((*time_history.shape, sub_sample_rate), device=self.device)
+        # [batch_size, seq_len, sample_rate]
         torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
+        # [batch_size, seq_len, sample_rate]
+        probability_threshold = rearrange(probability_threshold, 'b sl sr -> sr b sl')
         # [sample_rate, batch_size, seq_len]
         tau_pred.append(
             bisection(self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold)
