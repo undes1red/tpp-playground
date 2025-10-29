@@ -128,6 +128,9 @@ class GenericDataset(utils.data.Dataset):
         self.intensity = [np.array(seq, dtype=np.float32) for seq in self.intensity]
         self.event = [np.array(seq, dtype=np.int64) for seq in self.event]
 
+        # Caveat: self.time_seq and self.event have dummy events while self.score and self.intensity do not.
+        self.max_seq_len = max([len(item) for item in self.time_seq])
+
     def __getitem__(self: Self, index: int | Iterable) -> list:
         """Get the batched data.
 
@@ -173,11 +176,10 @@ class GenericDataset(utils.data.Dataset):
             (time_seq, event, score, mask, intensity if self.evaluate else it doesn't exist at all.)
         ], (mean, var)
         """
-        max_length_of_this_batch = max([item[0].size for item in data])
         mask = []
         padded_data = []
         for item in data:
-            pad_length = max_length_of_this_batch - item[0].size
+            pad_length = self.max_seq_len - item[0].size
             mask = np.array([1] * item[0].size + [0] * pad_length, dtype=np.bool)
             padded_time_seq = np.pad(item[0], (0, pad_length), mode="constant", constant_values=0)
             padded_event = np.pad(

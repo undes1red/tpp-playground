@@ -30,6 +30,7 @@ class TaskHost:
         """
         self.opt = parser.parse_args()
         self.opt.root_path = root_path
+        self.opt.compile_backend = None
 
         # Parsing and postprocessing the input arguments.
         self.procedure = importlib.import_module("src." + self.opt.procedure)
@@ -64,15 +65,12 @@ class TaskHost:
             self (Self): The TaskHost
         """
         if self.opt.no_seed:
-            import time
-
             logger.warning(
                 "For reproducibility, you need to assign a value to the random seed. If you want reproducible results, please ABORT this run ASAP and manually provide a random seed using '--seed'"
             )
             logger.warning(
                 "The user doesn't provide a random seed. We will randomly select a number as the random seed."
             )
-            random.seed(int(time.time()) % int.from_bytes(os.urandom(3), byteorder="big"))
             self.opt.seed = secrets.randbelow(1000000)
             logger.info(f"The model prefers {self.opt.seed} this time.")
         else:
@@ -81,7 +79,6 @@ class TaskHost:
         # set up random seed for various packages
         random.seed(self.opt.seed)
         torch.manual_seed(self.opt.seed)
-        np.random.default_rng(self.opt.seed)
         torch.backends.cudnn.benchmark = False
 
         # Please read documentations and check if you have used any operations which don't have a deterministic implementation before
@@ -110,7 +107,7 @@ class TaskHost:
             )
             torch.set_default_dtype(self.dict_torch_dtype[self.opt.dtype])
 
-    dict_torch_dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
+    dict_torch_dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16}
 
     def cuda(self: Self) -> None:
         """Check cuda availability. We force using CPU if cuda is unavailable even the user wants to use cuda.
@@ -135,6 +132,8 @@ class TaskHost:
                 logger.info(
                     f"Device supports CUDA {props.major}.{props.minor} higher than 6.0. torch.compile() is possible."
                 )
+                if self.opt.compile:
+                    self.opt.compile_backend = 'cudagraphs'
             else:
                 logger.info(
                     f"Device supports CUDA {props.major}.{props.minor} not higher than 6.0. torch.compile() is impossible."
@@ -147,8 +146,14 @@ class TaskHost:
         if not self.opt.cuda:
             logger.info("Setting available CPU threads.")
             logger.info(f"Available CPU threads: {torch.get_num_threads()}.")
-
             torch.set_num_threads(torch.get_num_threads())
+
+            if self.opt.compile:
+                self.opt.compile_backend = 'inductor'
+
+        if self.opt.compile:
+            self.opt.compile_backend = 'inductor'
+            logger.info(f'Compile enabled! Backend is {self.opt.compile_backend}.')
 
     def start(self: Self) -> None:
         """start.py calls this function to start the task.

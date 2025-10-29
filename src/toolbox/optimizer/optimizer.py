@@ -2,10 +2,11 @@
 
 import math
 
+import torch
 import torch.optim as optim
 
 from src.toolbox.list_operation import list_mean
-from src.toolbox.misc import get_logger, read_yaml
+from src.toolbox.misc import get_logger, read_yaml, conditional_compile_func
 
 logger = get_logger(__name__)
 
@@ -41,9 +42,9 @@ def generate_optimizer_scheduler(opt, model):
         optimizer, scheduler = None, None
     else:
         if hasattr(optim, opt.op_name):
-            optimizer = getattr(optim, opt.op_name)(model.parameters(), opt.lr, **param)
+            optimizer = getattr(optim, opt.op_name)(model.parameters(), torch.tensor(opt.lr, device=opt.device), **param)
         else:
-            optimizer = top.get(opt.op_name)(model.parameters(), opt.lr, **param)
+            optimizer = top.get(opt.op_name)(model.parameters(), torch.tensor(opt.lr, device=opt.device), **param)
 
         if opt.lr_sched:
             scheduler = get_lr_sheduler(

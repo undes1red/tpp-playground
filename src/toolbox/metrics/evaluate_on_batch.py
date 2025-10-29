@@ -154,7 +154,7 @@ def evaluate_on_one_batch_numpy(
 
     result_list = []
     if multiprocessing:
-        pool = Pool()
+        pool = Pool(4)
         if additional_inputs is not None:
             additional_single_list = list(zip(*additional_inputs_rearranged))
             result_list = pool.starmap(

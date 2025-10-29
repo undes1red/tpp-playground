@@ -2,7 +2,7 @@ from src.toolbox.misc.argument_check import argument_check
 from src.toolbox.misc.break_batched_inputs_into_seqs import break_batched_inputs_into_seqs
 from src.toolbox.misc.check_tensor import check_number, check_tensor
 from src.toolbox.misc.clamp_preserve_gradients import clamp_preserve_gradients, round_preserve_gradients
-from src.toolbox.misc.compile_model import compile_model, conditional_compile_class_method, conditional_compile_func
+from src.toolbox.misc.compile_model import compile_model, conditional_compile_func
 from src.toolbox.misc.conditional_decorator import conditional_decorator
 from src.toolbox.misc.cycle_dataloader import cycle
 from src.toolbox.misc.easy_model_load import easy_model_load
@@ -33,7 +33,6 @@ __all__ = [
     "clamp_preserve_gradients",
     "round_preserve_gradients",
     "compile_model",
-    "conditional_compile_class_method",
     "conditional_compile_func",
     "conditional_decorator",
     "cycle",

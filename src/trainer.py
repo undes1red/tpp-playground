@@ -11,6 +11,7 @@ from src.toolbox.evaluation import get_evaluation_results
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
 from src.toolbox.misc import (
+    conditional_compile_func,
     cycle,
     get_logger,
     mkdir_if_not_exist,
@@ -180,6 +181,7 @@ class Trainer:
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
+        self.step_and_update_lr = conditional_compile_func(step_and_update_lr, self.opt.compile_backend, self.opt.compile, fullgraph=False)
 
         self.task()
 
@@ -229,7 +231,7 @@ class Trainer:
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
-                step_and_update_lr(self.optimizer, self.scheduler)
+                self.step_and_update_lr(self.optimizer, self.scheduler)
                 zero_grad(self.optimizer)
 
             self.report_sum = list_add(self.report_sum, step_result)

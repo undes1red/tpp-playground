@@ -13,6 +13,7 @@ from src.toolbox.misc import (
     argument_check,
     break_batched_inputs_into_seqs,
     check_tensor,
+    compile_model,
     move_from_tensor_to_ndarray,
     pack_one_value_to_dict,
 )
@@ -77,7 +78,6 @@ class SAHPWrapper(BasicModel):
         """
         super().__init__()
         self.device = device
-        self.compile_or_not = opt.compile
         self.num_events = opt.info_dict["num_events"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -103,6 +103,9 @@ class SAHPWrapper(BasicModel):
             device=device,
             integration_sample_rate=integration_sample_rate,
         )
+
+        self.model = compile_model(self.model, opt.compile, opt.compile_backend)
+
 
     def divide_history_and_next(self: Self, input_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract the history and prediction sequences from the input sequence.

@@ -2,13 +2,11 @@ import torch
 from einops import rearrange
 
 from src.toolbox.algorithms import approximate_integration, bisection
-from src.toolbox.misc import conditional_compile_class_method
 from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
 from src.TPP.model.utils import step_split, thinning_sampling
 
 
 @torch.inference_mode()
-@conditional_compile_class_method
 def sample_time(self, sampling_approach="its", task="mt", *args, **kwargs):
     """
     Sample time from the learned MTPP model using p(t) or p(t|m) using different methods.
