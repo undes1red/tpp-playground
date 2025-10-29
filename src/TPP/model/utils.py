@@ -1,14 +1,13 @@
-from einops import rearrange, reduce, repeat
-import torch
-import numpy as np
-import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
+import torch
+from einops import repeat
+from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 
 from src.toolbox.misc import move_from_tensor_to_ndarray
-
-from sklearn.metrics import f1_score, top_k_accuracy_score, accuracy_score
 
 default_figure_kwargs = {'font.size': 18,
                          'figure.figsize': (8, 4),}
@@ -92,7 +91,7 @@ def predict_event(probability, sample = False):
         sampled_marks = distribution_of_marks.sample()                         # [...]
     else:
         sampled_marks = torch.argmax(probability, dim = -1)                    # [...]
-    
+
     return sampled_marks
 
 
@@ -101,24 +100,21 @@ resolution_inf and resolution_between_events.
 '''
 def decide_resolution_inf_and_resolution_between_events(time, memory_ceiling, num_events, mean, std):
     # Suggested batch_size: 1
-    
-    if mean == 0 and std == 1:
-        max_ = time.mean() + 10 * time.std()
-    else:
-        max_ = mean + 10 * std
+
+    max_ = time.mean() + 10 * time.std() if mean == 0 and std == 1 else mean + 10 * std
 
     if mean == 0:
         resolution_between_events = max(min(int(time.mean().item() // 0.005), 500), 10)
     else:
         resolution_between_events = max(min(int(mean // 0.005), 500), 10)
-        
+
     max_ = min(1e6, max_)
     resolution_inf = max(int(max_ // 0.005), 100)
 
     batch_size, seq_len = time.shape
     if batch_size * seq_len * resolution_inf * num_events > memory_ceiling:
         resolution_inf = int(memory_ceiling // (seq_len * num_events * batch_size))
-    
+
     if batch_size * seq_len * resolution_between_events * num_events * num_events > memory_ceiling:
         resolution_between_events = int(memory_ceiling // (seq_len * num_events * num_events * batch_size))
 

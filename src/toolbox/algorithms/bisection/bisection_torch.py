@@ -22,7 +22,7 @@ def bisection_torch(
         val = bisect_func(center, threshold, *args, **kwargs)
         left = torch.where(val < 0, center, left)
         right = torch.where(val > 0, center, right)
-        if torch.allclose(right, left, atol=bisect_early_stop_threshold, rtol=bisect_early_stop_threshold):
+        if torch.allclose(right, left, atol=bisect_early_stop_threshold, rtol=0):
             break
 
     return (left + right) / 2

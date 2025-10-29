@@ -4,7 +4,7 @@ import torch.nn as nn
 
 # We use this parameter to control model's memory usage while running event-time prediction tasks.
 # Used in FENN, FullyNN, SAHP, RHP, and THP
-memory_ceiling = 3e7
+memory_ceiling = 3e8
 
 # The lower and upper boundary of the inversed transform sampling.
 # The final trick to make IFIB generate sane samples by avoiding the long tail.

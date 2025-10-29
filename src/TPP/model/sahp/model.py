@@ -87,7 +87,7 @@ class SAHPWrapper(BasicModel):
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-4
+        self.bisect_early_stop_threshold = 1e-8
         self.max_step = 50
 
         self.model = SAHP(
