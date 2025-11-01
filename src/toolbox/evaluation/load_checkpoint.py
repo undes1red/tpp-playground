@@ -14,11 +14,16 @@ def load_checkpoint(logger, checkpoint_dir, model, device, evaluation=True, comp
     # Restore the key if torch.compile is used.
 
     # Remove _orig_mod from the key name.
-    # Now we can load compiled checkpoints into uncompiled models.
+    # Now we can load checkpoints of compiled models into uncompiled models.
     if not compile:
         for item in model_state_dict:
             if '_orig_mod' in item:
                 new_dict[item.replace('._orig_mod', '')] = model_state_dict[item]
+                recorded_keys.append(item)
+    else:
+        for item in model_state_dict:
+            if item != '_metadata' and '_orig_mod' not in item:
+                new_dict[item.replace('.', '._orig_mod.', 1)] = model_state_dict[item]
                 recorded_keys.append(item)
 
     for recorded_key in recorded_keys:

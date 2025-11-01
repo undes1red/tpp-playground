@@ -16,7 +16,6 @@ class BasicModel(nn.Module, metaclass=ABCMeta):
     """
     The parent of all model classes.
     """
-
     @abstractmethod
     def forward(self, *args):
         """

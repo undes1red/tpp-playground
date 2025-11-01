@@ -115,33 +115,30 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     """
     This function is called when task_name = which_event_occurs_first.
     """
-    mae, f1 = all_evaluation_results
-    f1 = np.mean(f1)
-    mean_mae = np.mean(flatten(mae))
+    mae, acc, macro_f1, micro_f1 = all_evaluation_results
+    mae = np.mean(mae)
+    acc = np.mean(acc)
+    macro_f1 = np.mean(macro_f1)
+    micro_f1 = np.mean(micro_f1)
 
     """
     Report the average of mae-e and f1.
     """
     result_file = opt.store_dir / f"{desc}_which_event_first.txt"
-    strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae} and average macro-F1 is {f1}."
+    strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mae}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}."
     write_to_txt(strings, result_file)
     result_dist_file = opt.store_dir / f"{desc}_which_event_occurs_first_result.pkl"
-    dump_to_pkl({"mae": mean_mae, "f1": f1}, result_dist_file, compression="bz2")
+    dump_to_pkl(
+        {"mae": mae, "acc": acc, "macro-F1": macro_f1, "micro-F1": micro_f1}, result_dist_file, compression="bz2"
+    )
 
-    """
-    Dump the detailed distribution of mae-e for further usage.
-    """
-    mae_e_dist_file = opt.store_dir / f"{desc}_which_event_first.pkl"
-    dump_to_pkl(mae, mae_e_dist_file, compression="bz2")
-
-
-def samples_from_et_postprocess(all_evaluation_results, desc, opt):
+def balanced_sampling_from_distribution_postprocess(all_evaluation_results, desc, opt):
     """
     Dump the detailed distribution of mae-e for further usage.
     """
     samples, p_ms = all_evaluation_results
 
-    mae_e_dist_file = opt.store_dir / f"{desc}_samples_for_every_point.pkl"
+    mae_e_dist_file = opt.store_dir / f"{desc}_samples_at_every_point.pkl"
     data = {"samples": samples, "p_ms": p_ms}
     dump_to_pkl(data, mae_e_dist_file, compression="bz2")
 
@@ -296,7 +293,7 @@ desc_funcs = {
         "desc_string": "Predict the next event by finding which event occurs first for {0}",
         "postprocess_func": which_event_occurs_first_postprocess,
     },
-    "samples_from_et": {"desc_string": "Samples of {0} for each mark", "postprocess_func": samples_from_et_postprocess},
+    "balanced_sampling_from_distribution": {"desc_string": "Samples of {0} for each mark", "postprocess_func": balanced_sampling_from_distribution_postprocess},
     "generate_hypro_dataset": {
         "desc_string": "Generate HYPRO dataset for {0}",
         "postprocess_func": generate_hypro_dataset_postprocess,

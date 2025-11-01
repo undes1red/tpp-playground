@@ -181,7 +181,7 @@ class Trainer:
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
-        self.step_and_update_lr = conditional_compile_func(step_and_update_lr, self.opt.compile_backend, self.opt.compile, fullgraph=False)
+        self.step_and_update_lr = conditional_compile_func(step_and_update_lr, self.opt.compile, self.opt.compile_backend, fullgraph=False)
 
         self.task()
 
@@ -292,9 +292,9 @@ class Trainer:
             current_step (int): The training step when we do the report.
         """
         logger.warning(f"Brief training status report at step {current_step}.")
-        report_sum = self.model.postprocess(self.report_sum, procedure="Training")
+        report_sum = self.model.postprocess(self.report_sum, procedure="training")
 
-        log_print_format_dict = self.model.log_print_format(report_sum, procedure="Training")
+        log_print_format_dict = self.model.log_print_format(report_sum, procedure="training")
         procedure_monitor_dict = self.get_procedure_monitor_dict()
         plain_training_results = only_keep_data(log_print_format_dict)
 

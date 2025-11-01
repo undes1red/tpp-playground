@@ -62,8 +62,8 @@ def Evaluator_postprocess(opt: argparse.Namespace, root_path: str) -> argparse.N
     opt.task_config = opt.abs_task_config.name if opt.abs_task_config else None
 
     if opt.combine_used_and_current_dataloader_config:
-        opt.abs_used_dataloader_config = root_path / "config" / opt.procedure / opt.model_name / (opt.training_dataset_name if opt.training_dataset_name is not None else opt.dataset_name) / opt.used_dataloader_config if opt.used_dataloader_config else None
-        opt.used_dataloader_config = opt.used_dataloader_config.name if opt.used_dataloader_config else None
+        opt.abs_used_dataloader_config = root_path / "config" / opt.procedure / opt.model_name / opt.used_dataloader_config if opt.used_dataloader_config else None
+        opt.used_dataloader_config = opt.abs_used_dataloader_config.name if opt.used_dataloader_config else None
 
     opt.checkpoint_of_this_procedure = root_path / "model" / opt.procedure
     opt.results_of_this_procedure = root_path / "results" / opt.procedure

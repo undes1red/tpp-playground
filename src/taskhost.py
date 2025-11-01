@@ -6,6 +6,7 @@ import time
 from typing import Self
 
 import matplotlib as mpl
+import numpy as np
 import torch
 
 from src.toolbox.misc import get_logger, version_check
@@ -74,20 +75,18 @@ class TaskHost:
         else:
             logger.info(f"We will use number {self.opt.seed} as the random seed.")
 
-        # set up random seed for various packages
+        # Reproducibility
         random.seed(self.opt.seed)
         torch.manual_seed(self.opt.seed)
+        torch.cuda.manual_seed_all(self.opt.seed)
         torch.backends.cudnn.benchmark = False
-
-        # Please read documentations and check if you have used any operations which don't have a deterministic implementation before
-        # set it to True.
-        torch.use_deterministic_algorithms(mode=True)
+        torch.use_deterministic_algorithms(mode=True, warn_only=False)
 
         # For gradient debug usage.
         # torch.autograd.set_detect_anomaly(True)
 
-        # Allow tf32 in matmul to improve speed on recent hardware.
-        torch.backends.cuda.matmul.allow_tf32 = True
+        # suggested by pytorch.
+        torch.set_float32_matmul_precision('high')
 
         # Might benefit the Dataloader.
         torch.multiprocessing.set_sharing_strategy("file_system")
@@ -121,6 +120,9 @@ class TaskHost:
             self.opt.cuda = False
         elif self.opt.cuda and torch.cuda.is_available():
             logger.warning("We use cuda to speed up model training!")
+            logger.warning("Please note that CUDA and cuDNN has nondeterminism in its logic. Even fully following the reproducibility guide from PyTorch can not eliminate all of them. So it is expected that the results are slightly different across different runs with the same seed but drastically different batch_size. There is nothing we can do.")
+            logger.warning("For example, using -eb 128 and -eb 127 on CUDA during evaluation may produce the same result, but -eb 128 and -eb 256 are highly likely not.")
+            logger.warning("If you want fully deterministic results, please use a consistent batch_size during training and evaluation, or run your tasks on the CPU.")
             logger.info(f"We use PyTorch compiled against CUDA {torch.version.cuda}.")
             logger.info(f"Found {torch.cuda.device_count()} CUDA device(s).")
             logger.info(f"We use the CUDA device with id {self.opt.cuda_device}.")

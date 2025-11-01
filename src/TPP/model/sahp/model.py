@@ -8,7 +8,7 @@ from einops import rearrange
 from sklearn.metrics import roc_auc_score
 
 from src.toolbox.algorithms import approximate_integration
-from src.toolbox.metrics import evaluate_func, evaluate_on_one_batch
+from src.toolbox.metrics import evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     break_batched_inputs_into_seqs,
@@ -28,7 +28,6 @@ from src.TPP.model.sahp.sample import sample_time
 from src.TPP.model.sahp.submodel import SAHP
 from src.TPP.model.utils import (
     decide_resolution_inf_and_resolution_between_events,
-    get_f1_and_top_k_acc_in_mae_e,
     pick_log_probability,
 )
 from src.TPP.resources import expand_true_probability
@@ -89,6 +88,7 @@ class SAHPWrapper(BasicModel):
         self.mae_e_step = mae_e_step
         self.bisect_early_stop_threshold = 1e-8
         self.max_step = 50
+        self.used_models_name = 'model'
 
         self.model = SAHP(
             num_events=self.num_events,
@@ -105,7 +105,6 @@ class SAHPWrapper(BasicModel):
         )
 
         self.model = compile_model(self.model, opt.compile, opt.compile_backend)
-
 
     def divide_history_and_next(self: Self, input_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract the history and prediction sequences from the input sequence.
@@ -154,18 +153,19 @@ class SAHPWrapper(BasicModel):
             "mae_and_f1": self.get_mae_and_f1,
             "mae_e_and_f1": self.get_mae_e_and_f1,
             "which_event_occurs_first": self.get_which_event_first,
-            "samples_from_et": self.samples_from_et,
-            # Functions for the EHD task.
-            "ehd_perplexity": self.ehd_perplexity,
-            "ehd_event_emb": self.get_event_embedding,
+            "balanced_sampling_from_distribution": self.balanced_sampling_from_distribution,
             # Figure Drawing.
             "intensity": self.figure_intensity,
             "integral": self.figure_integral,
             "probability": self.figure_probability,
             "debug": self.figure_debug,
+            # deprecated.
             # For CPPOD, should be used with the od_generic dataloader.
             "cppod_evaluation": self.cppod_evaluation,
             "cppod_commission_evaluation": self.cppod_commission_evaluation,
+            # Functions for the EHD task.
+            "ehd_perplexity": self.ehd_perplexity,
+            "ehd_event_emb": self.get_event_embedding,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -500,132 +500,6 @@ class SAHPWrapper(BasicModel):
 
         return pred_time, mark_distribution
 
-    @torch.inference_mode()
-    def mean_absolute_error_e_and_f1(
-        self: Self,
-        time_history: torch.Tensor,
-        time_next: torch.Tensor,
-        events_history: torch.Tensor,
-        events_next: torch.Tensor,
-        mask_history: torch.Tensor,
-        mask_next: torch.Tensor,
-        mean: float,
-        std: float,
-        sample_rate: int,
-        mae_e_step: int,
-    ) -> tuple[
-        float,
-        list[float],
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        tuple[torch.Tensor, torch.Tensor],
-        tuple[torch.Tensor, torch.Tensor],
-    ]:
-        """Evaluate the next event prediction from the SAHP by MAE-E and F1.
-        This function first predict the mark of the next event then the time of the next event given the TRUE mark.
-        This can ensure the time accuracy is only influenced by the model, not by the predicted mark.
-
-        Args:
-            self (Self): the SAHP model.
-            time_history (torch.Tensor): the time of historical events
-            time_next (torch.Tensor): the time of the next true events
-            events_history (torch.Tensor): the mark of historical events
-            events_next (torch.Tensor): the mark of the next true events
-            mask_history (torch.Tensor): the mask of historical sequences, 1 meaning a true event, and 0 meaning a fake event.
-            mask_next (torch.Tensor): the mask of the next true events
-            mean (float): the mean of all time intervals
-            std (float): the standard variance of all time intervals
-            sample_rate (int): how many samples are needed for one time prediction
-            mae_e_step (int): how many samples for one event are generated in one shot
-
-        Returns:
-            tuple[float, list[float], torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]: f1, top_k_acc, probability_integral_sum, p_m, tau_pred_all_event, (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg), (mae_per_event_with_predict_index, mae_per_event_with_event_next)
-        """
-        inf_val, resolution_inf, resolution_between_events = decide_resolution_inf_and_resolution_between_events(
-            time_next, memory_ceiling, self.num_events, mean, std
-        )
-        time_next_inf = torch.ones_like(time_history, device=self.device) * inf_val
-
-        (
-            expanded_integral_all_events_to_inf,
-            expanded_intensity_all_events_to_inf,
-            timestamp,
-        ) = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next_inf, mask_history, resolution_inf
-        )
-        # 2 * [batch_size, seq_len, resolution_inf, num_events]
-
-        expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim=-1, keepdim=True)
-        # [batch_size, seq_len, resolution_inf, 1]
-        expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(
-            -expanded_integral_sum_over_events_to_inf
-        )
-        # [batch_size, seq_len, resolution_inf, num_events]
-        probability_integral_to_inf = approximate_integration(
-            expanded_probability_inf, timestamp, dim=-2, only_integral=True
-        )
-        # [batch_size, seq_len, num_events]
-        predicted_events = torch.argmax(probability_integral_to_inf, dim=-1)  # [batch_size, seq_len]
-
-        f1, top_k_acc = get_f1_and_top_k_acc_in_mae_e(
-            events_next, probability_integral_to_inf, mask_next, self.num_events
-        )
-
-        tau_pred_all_event = self.sample_time(
-            sampling_approach="its",
-            task="mt",
-            events_history=events_history,
-            time_history=time_history,
-            mask_history=mask_history,
-            p_m=probability_integral_to_inf,
-            resolution=resolution_between_events,
-            number_of_total_samples=sample_rate,
-            step=mae_e_step,
-            inf_val=inf_val,
-            mean=mean,
-            std=std,
-        )  # [sample_rate, batch_size, seq_len, num_events]
-
-        predicted_event_mask = F.one_hot(predicted_events.long(), num_classes=self.num_events)
-        # [batch_size, seq_len, num_events]
-        event_next_mask = F.one_hot(events_next.long(), num_classes=self.num_events)
-        # [batch_size, seq_len, num_events]
-
-        mae_per_event_with_predict_index = torch.abs(
-            (tau_pred_all_event * predicted_event_mask.unsqueeze(dim=0)).sum(dim=-1) - time_next
-        ) * mask_next.unsqueeze(dim=0)
-        # [sample_rate, batch_size, seq_len]
-        mae_per_event_with_event_next = torch.abs(
-            (tau_pred_all_event * event_next_mask.unsqueeze(dim=0)).sum(dim=-1) - time_next
-        ) * mask_next.unsqueeze(dim=0)
-        # [sample_rate, batch_size, seq_len]
-
-        mae_per_event_with_predict_index_avg = torch.sum(mae_per_event_with_predict_index, dim=-1) / mask_next.sum(
-            dim=-1
-        )
-        # [sample_rate, batch_size]
-        mae_per_event_with_event_next_avg = torch.sum(mae_per_event_with_event_next, dim=-1) / mask_next.sum(dim=-1)
-        # [sample_rate, batch_size]
-        # Calculate mean
-        mae_per_event_with_predict_index = mae_per_event_with_predict_index.mean(dim=0)
-        # [batch_size, seq_len]
-        mae_per_event_with_event_next = mae_per_event_with_event_next.mean(dim=0)
-        # [batch_size, seq_len]
-        mae_per_event_with_predict_index_avg = mae_per_event_with_predict_index_avg.mean(dim=0)
-        # [batch_size]
-        mae_per_event_with_event_next_avg = mae_per_event_with_event_next_avg.mean(dim=0)
-        # [batch_size]
-
-        return (
-            f1,
-            top_k_acc,
-            probability_integral_to_inf,
-            tau_pred_all_event,
-            (mae_per_event_with_predict_index_avg, mae_per_event_with_event_next_avg),
-            (mae_per_event_with_predict_index, mae_per_event_with_event_next),
-        )
-
     def extract_plot_data(self: Self, minibatch: list) -> tuple[Any]:
         """This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
 
@@ -839,13 +713,7 @@ class SAHPWrapper(BasicModel):
         # [batch_size, seq_len, num_events]
         pred_time = (pred_time_all_marks * events_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_events]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        top_k = evaluate_on_one_batch(
-            mark_dist,
-            events_next,
-            mask_next,
-            "top_k",
-            dim_input=-2
-        )
+        top_k = evaluate_on_one_batch(mark_dist, events_next, mask_next, "top_k", dim_input=-2)
         # [batch_size, num_events]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
 
@@ -1087,7 +955,7 @@ class SAHPWrapper(BasicModel):
             * ```float``` f1
               The f1 value shows the accuracy of the predicted marks.
         """
-        argument_check(opt, **{"sample_rate": int, "which_event_first_step": int})
+        argument_check(opt, **{"sample_rate": int, "sample_substep": int})
 
         input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
@@ -1127,7 +995,7 @@ class SAHPWrapper(BasicModel):
             p_m=probability_integral_to_inf,
             resolution=resolution_between_events,
             number_of_total_samples=opt.sample_rate,
-            step=opt.which_event_first_step,
+            step=opt.sample_substep,
             inf_val=inf_val,
             mean=mean,
             std=std,
@@ -1136,17 +1004,17 @@ class SAHPWrapper(BasicModel):
         sampled_times_mean = tau_pred_all_event.mean(dim=0)  # [batch_size, seq_len, num_events]
         predicted_time, predicted_mark = sampled_times_mean.min(dim=-1)  # [batch_size, seq_len] + [batch_size, seq_len]
         maes = torch.abs(time_next - predicted_time) * mask_next  # [batch_size, seq_len]
+        maes = maes.sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
 
-        events_pred_index = predicted_mark[mask_next == 1]
-        events_true = events_next[mask_next == 1]
-        events_true, events_pred_index = move_from_tensor_to_ndarray(events_true, events_pred_index)
-        f1_val = evaluate_func("f1")(y_true=events_true, y_pred=events_pred_index)
-
+        results = evaluate_on_one_batch(predicted_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        acc = results["acc"]
+        macro_f1 = results["macro-f1"]
+        micro_f1 = results["micro-f1"]
         maes = move_from_tensor_to_ndarray(maes)
 
-        return maes, f1_val
+        return maes.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist()
 
-    def samples_from_et(self: Self, input_data: list, opt: argparse.Namespace) -> tuple[Any]:
+    def balanced_sampling_from_distribution(self: Self, input_data: list, opt: argparse.Namespace) -> tuple[Any]:
         """This function samples from the distribution p(m, t) by sampling the mark first from p(m) then time from p(t|m).
           All samples can later be used to draw the distribution plot.
 
@@ -1215,6 +1083,16 @@ class SAHPWrapper(BasicModel):
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len, num_events]
+
+        probability_integral_to_inf, tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(
+            probability_integral_to_inf, tau_pred_all_event, mask_next
+        )
+
+        probability_integral_to_inf, tau_pred_all_event = break_batched_inputs_into_seqs(
+            mask_next, probability_integral_to_inf, rearrange(tau_pred_all_event, "sr b sl ne -> b sl ne sr")
+        )  # batch_size * [seq_len, num_events] + batch_size * [seq_len, num_events, sample_rate]
+
+        tau_pred_all_event = [rearrange(item, "sl ne sr -> sr sl ne") for item in tau_pred_all_event]
 
         return tau_pred_all_event, probability_integral_to_inf
 
@@ -1529,7 +1407,7 @@ class SAHPWrapper(BasicModel):
                 input_data[7],
             ]
 
-        return train_postprocess(input_data) if procedure == "Training" else test_postprocess(input_data)
+        return train_postprocess(input_data) if procedure == "training" else test_postprocess(input_data)
 
     def log_print_format(self, input_data, procedure):
         """
@@ -1567,7 +1445,7 @@ class SAHPWrapper(BasicModel):
             format_dict["micro-f1"] = pack_one_value_to_dict(input_data[7], "2.8f")
             return format_dict
 
-        return train_log_print_format(input_data) if procedure == "Training" else test_log_print_format(input_data)
+        return train_log_print_format(input_data) if procedure == "training" else test_log_print_format(input_data)
 
     # The maximum length of the format_dict in different procedures.
     format_dict_length = 8

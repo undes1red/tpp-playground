@@ -17,5 +17,5 @@ def compile_model(model, use_compile, backend=None, *args, **kwargs):
     return model
 
 
-def conditional_compile_func(func, backend, compile_or_not=False, fullgraph=True):
-    return torch.compile(func, backend=backend, dynamic=False, fullgraph=fullgraph, disable=not compile_or_not)
+def conditional_compile_func(func, compile_or_not, backend, *args, **kwargs):
+    return torch.compile(func, backend=backend, dynamic=False, disable=not compile_or_not, *args, **kwargs)
