@@ -12,7 +12,7 @@ from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml
 # Get logger.
 logger = get_logger(__name__)
 # Define the project root dir.
-root_path = Path(__file__).parent
+root_path = Path(__file__).parent.resolve()
 logger.info(f"project root is {root_path}.")
 logger.info("Please confirm the root_path is correct!")
 # Start time of the task.

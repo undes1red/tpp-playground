@@ -99,7 +99,8 @@ ignore = [
     "FBT002",   # allow the default of a function parameter being boolean.
     "S603",     # We need subprocess.Popen().
     "N812",     # So ruff is not angry for calling torch.nn.functional as F.
-    "E501"
+    "E501",
+    "E402"
 ]
 
 

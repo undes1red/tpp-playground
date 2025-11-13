@@ -1,8 +1,7 @@
 import os
 from pathlib import Path
 
-# Hope we can get rid of absolute path in training scripts.
-root_path = Path(__file__).parent
+root_path = Path(__file__).parent.resolve()
 
 main_procedure_translator = {
     # Temporal Point Process

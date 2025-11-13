@@ -2,9 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from src.toolbox.position_embedding import BiasedPositionalEmbedding
-from src.toolbox.subsequent_mask import get_subsequent_mask
-from src.toolbox.transformer import TransformerLayer
+from src.toolbox.modules import BiasedPositionalEmbedding, TransformerLayer, get_subsequent_mask
 
 
 class Encoder(nn.Module):
@@ -65,7 +63,7 @@ class Encoder(nn.Module):
         ### Args
           * ```torch.tensor``` event_time
             shape: ```[batch_size, seq_len]```
-            The length of all time intervals between two adjacent events.
+            The length of all time intervals between two adjacent mark.
           * ```torch.tensor``` event_type
             shape: ```[batch_size, seq_len]```
             Vectors containing the information about each event.
@@ -89,11 +87,11 @@ class Encoder(nn.Module):
         time_emb = self.position_emb(seq_len, event_time)  # [batch_size, seq_len, d_input]
 
         if event_type is not None:
-            events_emb = self.event_emb(event_type)  # [batch_size, seq_len, d_input]
+            mark_emb = self.event_emb(event_type)  # [batch_size, seq_len, d_input]
         else:
-            events_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
+            mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = time_emb + events_emb  # [batch_size, seq_len, d_input]
+        output = time_emb + mark_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
             output, _ = enc_layer(
                 output, non_pad_mask=non_pad_mask, self_attn_mask=self_attn_mask
@@ -151,7 +149,7 @@ class TransformerTPP(nn.Module):
         ### Args
           * ```torch.tensor``` event_time
             shape: ```[batch_size, seq_len]```
-            The length of all time intervals between two adjacent events.
+            The length of all time intervals between two adjacent mark.
           * ```torch.tensor``` event_type
             shape: ```[batch_size, seq_len]```
             Vectors containing the information about each event.

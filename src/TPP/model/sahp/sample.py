@@ -22,20 +22,20 @@ def sample_time(self, sampling_approach="its", task="mt", *args, **kwargs):
           tm -> p(t)
         * ```bool``` autoregressive
           If true, we autoregressively generate a sequence using the learned MTPP model.
-          If false, we sample one next event given a history sequence.
+          If false, we sample one next mark given a history sequence.
 
     ### Args required when sampling from p(t|m) using its.
-        * ```torch.tensor``` events_history
+        * ```torch.tensor``` marks_history
           shape: ```[batch_size, seq_len]```
-          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+          Historical mark sequences. Commonly, this sequence is a slice of the original mark sequence from 0 to seq_len - 1(included).
         * ```torch.tensor``` time_history
           shape: ```[batch_size, seq_len]```
-          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+          Historical time sequences. Similar to marks_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
         * ```torch.tensor``` p_m
-          shape: ```[batch_size, seq_len, num_events]```
+          shape: ```[batch_size, seq_len, num_marks]```
           The value of p(m) over the different mark m.
         * ```int``` resolution
-          The number of interpolated points in a time interval between two adjoint events for integration estimation.
+          The number of interpolated points in a time interval between two adjoint marks for integration estimation.
           The number of interpolated points counts the start and end point of the interval.
         * ```int``` number_of_total_samples
           This tells how many time samples are generated from the time distribution.
@@ -48,12 +48,12 @@ def sample_time(self, sampling_approach="its", task="mt", *args, **kwargs):
           Used for input time scaling.
 
     ### Args required when sampling from p(t) using its.
-        * ```torch.tensor``` events_history
+        * ```torch.tensor``` marks_history
           shape: ```[batch_size, seq_len]```
-          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+          Historical mark sequences. Commonly, this sequence is a slice of the original mark sequence from 0 to seq_len - 1(included).
         * ```torch.tensor``` time_history
           shape: ```[batch_size, seq_len]```
-          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+          Historical time sequences. Similar to marks_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
         * ```int``` number_of_total_samples
           This tells how many time samples are generated from the time distribution.
         * ```int``` step
@@ -68,12 +68,12 @@ def sample_time(self, sampling_approach="its", task="mt", *args, **kwargs):
         Do not exist since it is impossible for now to sample from p(t|m) using thinning.
 
     ### Args required when sampling from p(t) using thinning.
-        * ```torch.tensor``` events_history
+        * ```torch.tensor``` marks_history
           shape: ```[batch_size, seq_len]```
-          Historical event sequences. Commonly, this sequence is a slice of the original event sequence from 0 to seq_len - 1(included).
+          Historical mark sequences. Commonly, this sequence is a slice of the original mark sequence from 0 to seq_len - 1(included).
         * ```torch.tensor``` time_history
           shape: ```[batch_size, seq_len]```
-          Historical time sequences. Similar to events_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
+          Historical time sequences. Similar to marks_history, we always generate this sequence as a slice of the original time sequence from 0 to seq_len - 1(included).
         * ```int``` number_of_total_samples
           This tells how many time samples are generated from the time distribution.
         * ```int``` step
@@ -96,75 +96,75 @@ def sampling_by_its(self, task, *args, **kwargs):
 
 
 def sampling_by_its_for_mt(
-    self, events_history, time_history, mask_history, p_m, resolution, number_of_total_samples, step, inf_val, mean, std
+    self, marks_history, time_history, mask_history, p_m, resolution, number_of_total_samples, step, inf_val, mean, std
 ):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
 
-    def evaluate_all_event(taus):
-        expanded_integral_across_events, expanded_intensity_across_events, timestamp = (
+    def evaluate_all_mark(taus):
+        expanded_integral_across_marks, expanded_intensity_across_marks, timestamp = (
             self.model.integral_intensity_time_next_3d(
-                events_history, time_history, taus, mask_history, resolution, num_dimension_prior_batch=1
+                time_history, taus, marks_history, mask_history, resolution, num_dimension_prior_batch=1
             )
         )
-        # 2 * [sample_rate, batch_size, seq_len, num_events, resolution, num_events] + [sample_rate, batch_size, seq_len, num_events, resolution]
-        expanded_integral_sum_across_events = expanded_integral_across_events.sum(dim=-1)
-        # [sample_rate, batch_size, seq_len, num_events, resolution]
-        intensity_event_mask = torch.diag(torch.ones(self.num_events, device=self.device))
-        # [num_events, num_events]
-        intensity_event_mask = rearrange(
-            intensity_event_mask, f"ne ne1 -> {'() ' * (len(expanded_intensity_across_events.shape) - 3)}ne () ne1"
+        # 2 * [sample_rate, batch_size, seq_len, num_marks, resolution, num_marks] + [sample_rate, batch_size, seq_len, num_marks, resolution]
+        expanded_integral_sum_across_marks = expanded_integral_across_marks.sum(dim=-1)
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
+        intensity_mark_mask = torch.diag(torch.ones(self.num_marks, device=self.device))
+        # [num_marks, num_marks]
+        intensity_mark_mask = rearrange(
+            intensity_mark_mask, f"ne ne1 -> {'() ' * (len(expanded_intensity_across_marks.shape) - 3)}ne () ne1"
         )
-        # [sample_rate, batch_size, seq_len, num_events, resolution, num_events]
-        expanded_intensity_per_event = (expanded_intensity_across_events * intensity_event_mask).sum(dim=-1)
-        # [sample_rate, batch_size, seq_len, num_events, resolution]
-        expanded_probability_per_event = expanded_intensity_per_event * torch.exp(-expanded_integral_sum_across_events)
-        # [sample_rate, batch_size, seq_len, num_events, resolution]
+        # [sample_rate, batch_size, seq_len, num_marks, resolution, num_marks]
+        expanded_intensity_per_mark = (expanded_intensity_across_marks * intensity_mark_mask).sum(dim=-1)
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
+        expanded_probability_per_mark = expanded_intensity_per_mark * torch.exp(-expanded_integral_sum_across_marks)
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
         return approximate_integration(
-            expanded_probability_per_event, timestamp, dim=-1, only_integral=True, func_val_x_having_same_shape=True
+            expanded_probability_per_mark, timestamp, dim=-1, only_integral=True, func_val_x_having_same_shape=True
         )
-        # [sample_rate, batch_size, seq_len, num_events]
+        # [sample_rate, batch_size, seq_len, num_marks]
 
     def bisect_target(taus, probability_threshold):
-        p_mt = evaluate_all_event(taus)  # [sample_rate, batch_size, seq_len, num_events]
-        p_t_m = p_mt / p_m  # [sample_rate, batch_size, seq_len, num_events]
-        return p_t_m - probability_threshold  # [sample_rate, batch_size, seq_len, num_events]
+        p_mt = evaluate_all_mark(taus)  # [sample_rate, batch_size, seq_len, num_marks]
+        p_t_m = p_mt / p_m  # [sample_rate, batch_size, seq_len, num_marks]
+        return p_t_m - probability_threshold  # [sample_rate, batch_size, seq_len, num_marks]
 
     tau_pred = []
     batch_size, seq_len = time_history.shape
-    p_m = p_m.unsqueeze(dim=0)  # [1, batch_size, seq_len, num_events]
+    p_m = p_m.unsqueeze(dim=0)  # [1, batch_size, seq_len, num_marks]
     for sub_sample_rate in sample_rate_list:
-        probability_threshold = torch.zeros((batch_size, seq_len, self.num_events, sub_sample_rate), device=self.device)
-        # [batch_size, seq_len, num_events, sample_rate]
+        probability_threshold = torch.zeros((batch_size, seq_len, self.num_marks, sub_sample_rate), device=self.device)
+        # [batch_size, seq_len, num_marks, sample_rate]
         torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
-        # [batch_size, seq_len, num_events, sample_rate]
-        probability_threshold = rearrange(probability_threshold, 'b sl ne sr -> sr b sl ne')
-        # [sample_rate, batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_marks, sample_rate]
+        probability_threshold = rearrange(probability_threshold, "b sl ne sr -> sr b sl ne")
+        # [sample_rate, batch_size, seq_len, num_marks]
         tau_pred.append(
             bisection(
                 self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold, r_val=inf_val
             )
         )
-        # [sample_rate, batch_size, seq_len, num_events]
-    return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len, num_events]
+        # [sample_rate, batch_size, seq_len, num_marks]
+    return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len, num_marks]
 
 
-def sampling_by_its_for_tm(self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std):
+def sampling_by_its_for_tm(self, marks_history, time_history, mask_history, number_of_total_samples, step, mean, std):
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def bisect_target(taus, probability_threshold):
         """
         Args:
-        1. time: the sequence containing events' timestamps. shape: [batch_size, seq_len + 1]
-        2. events: the sequence containing information about events. shape: [batch_size, seq_len + 1]
+        1. time: the sequence containing marks' timestamps. shape: [batch_size, seq_len + 1]
+        2. marks: the sequence containing information about marks. shape: [batch_size, seq_len + 1]
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         """
         (
-            expanded_integral_all_events,
+            expanded_integral_all_marks,
             _,
-        ) = self.model(time_history, taus, events_history, mask_history, num_dimension_prior_batch=1)
-        # [sample_rate, batch_size, seq_len, num_events]
-        expanded_integral = expanded_integral_all_events.sum(dim=-1)  # [sample_rate, batch_size, seq_len]
+        ) = self.model(time_history, taus, marks_history, mask_history, num_dimension_prior_batch=1)
+        # [sample_rate, batch_size, seq_len, num_marks]
+        expanded_integral = expanded_integral_all_marks.sum(dim=-1)  # [sample_rate, batch_size, seq_len]
 
         return expanded_integral + torch.log(1 - probability_threshold)
 
@@ -174,7 +174,7 @@ def sampling_by_its_for_tm(self, events_history, time_history, mask_history, num
         # [batch_size, seq_len, sample_rate]
         torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
         # [batch_size, seq_len, sample_rate]
-        probability_threshold = rearrange(probability_threshold, 'b sl sr -> sr b sl')
+        probability_threshold = rearrange(probability_threshold, "b sl sr -> sr b sl")
         # [sample_rate, batch_size, seq_len]
         tau_pred.append(
             bisection(self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold)
@@ -193,29 +193,29 @@ def sampling_by_thinning_for_mt(self, *args, **kwargs):
 
 
 def sampling_by_thinning_for_tm(
-    self, events_history, time_history, mask_history, number_of_total_samples, step, mean, std
+    self, marks_history, time_history, mask_history, number_of_total_samples, step, mean, std
 ):
     sample_rate_list = step_split(number_of_total_samples, step)
     batch_size, seq_len = time_history.shape
     maximum_thinning_loops = 50
     max_sample_time_limit = mean + 10 * std
 
-    def get_intensity(tau, time_history, events_history, mask_history):
-        return self.model(time_history, tau, events_history, mask_history, num_dimension_prior_batch=1)[-1].sum(dim=-1)
+    def get_intensity(tau, time_history, marks_history, mask_history):
+        return self.model(time_history, tau, marks_history, mask_history, num_dimension_prior_batch=1)[-1].sum(dim=-1)
 
     def find_maximum_intensity_values_in_one_interval(
-        interval_left, interval_right, time_history, events_history, mask_history
+        interval_left, interval_right, time_history, marks_history, mask_history
     ):
         _, intensity_between_interval_left_and_right, _ = self.model.integral_intensity_time_next_2d(
-            events_history,
             time_history,
             interval_right,
+            marks_history,
             mask_history,
             self.integration_sample_rate,
             num_dimension_prior_batch=1,
             time_next_start=interval_left,
         )
-        # [sample_rate, batch_size, seq_len, integration_sample_rate, num_events]
+        # [sample_rate, batch_size, seq_len, integration_sample_rate, num_marks]
         intensity_between_interval_left_and_right = intensity_between_interval_left_and_right.sum(dim=-1)
         # [sample_rate, batch_size, seq_len, integration_sample_rate]
 
@@ -232,7 +232,7 @@ def sampling_by_thinning_for_tm(
                 get_intensity,
                 find_maximum_intensity_values_in_one_interval,
                 time_history,
-                events_history,
+                marks_history,
                 mask_history,
             )
         )

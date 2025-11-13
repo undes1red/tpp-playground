@@ -82,10 +82,10 @@ def thinning_sampling(maximum_thinning_loops, max_sample_time_limit, sample_outp
 
 
 '''
-Sample event from a (unnormalized) probability distribution.
+Sample a mark from a (unnormalized) probability distribution.
 '''
-def predict_event(probability, sample = False):
-    # The shape of the input probability is [..., num_events].
+def predict_mark(probability, sample = False):
+    # The shape of the input probability is [..., num_marks].
     if sample:
         distribution_of_marks = torch.distributions.categorical.Categorical(probability)
         sampled_marks = distribution_of_marks.sample()                         # [...]
@@ -96,63 +96,63 @@ def predict_event(probability, sample = False):
 
 
 '''
-resolution_inf and resolution_between_events.
+resolution_inf and resolution_between_marks.
 '''
-def decide_resolution_inf_and_resolution_between_events(time, memory_ceiling, num_events, mean, std):
+def decide_resolution_inf_and_resolution_between_marks(time, memory_ceiling, num_marks, mean, std):
     # Suggested batch_size: 1
 
     max_ = time.mean() + 10 * time.std() if mean == 0 and std == 1 else mean + 10 * std
 
     if mean == 0:
-        resolution_between_events = max(min(int(time.mean().item() // 0.005), 500), 10)
+        resolution_between_marks = max(min(int(time.mean().item() // 0.005), 500), 10)
     else:
-        resolution_between_events = max(min(int(mean // 0.005), 500), 10)
+        resolution_between_marks = max(min(int(mean // 0.005), 500), 10)
 
     max_ = min(1e6, max_)
     resolution_inf = max(int(max_ // 0.005), 100)
 
     batch_size, seq_len = time.shape
-    if batch_size * seq_len * resolution_inf * num_events > memory_ceiling:
-        resolution_inf = int(memory_ceiling // (seq_len * num_events * batch_size))
+    if batch_size * seq_len * resolution_inf * num_marks > memory_ceiling:
+        resolution_inf = int(memory_ceiling // (seq_len * num_marks * batch_size))
 
-    if batch_size * seq_len * resolution_between_events * num_events * num_events > memory_ceiling:
-        resolution_between_events = int(memory_ceiling // (seq_len * num_events * num_events * batch_size))
+    if batch_size * seq_len * resolution_between_marks * num_marks * num_marks > memory_ceiling:
+        resolution_between_marks = int(memory_ceiling // (seq_len * num_marks * num_marks * batch_size))
 
-    return max_, resolution_inf, resolution_between_events
+    return max_, resolution_inf, resolution_between_marks
 
 
 '''
 custom metrics
 '''
-def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
+def get_f1_and_top_k_acc_in_mae_e(marks_true, p_m, input_mask, num_marks):
     f1 = []
     top_k_acc = []
-    for (events_true_per_seq, probability_integral_per_seq, input_mask_per_seq) in zip(events_true, p_m, input_mask):
-        events_true_per_seq, probability_integral_per_seq, input_mask_per_seq \
-            = move_from_tensor_to_ndarray(events_true_per_seq, probability_integral_per_seq, input_mask_per_seq)
+    for (marks_true_per_seq, probability_integral_per_seq, input_mask_per_seq) in zip(marks_true, p_m, input_mask):
+        marks_true_per_seq, probability_integral_per_seq, input_mask_per_seq \
+            = move_from_tensor_to_ndarray(marks_true_per_seq, probability_integral_per_seq, input_mask_per_seq)
         y_pred = np.argmax(probability_integral_per_seq, axis = -1)
 
-        selected_events_true_per_seq = events_true_per_seq[input_mask_per_seq == 1]
+        selected_marks_true_per_seq = marks_true_per_seq[input_mask_per_seq == 1]
         selected_y_pred = y_pred[input_mask_per_seq == 1]
         selected_probability_integral_per_seq = probability_integral_per_seq[input_mask_per_seq == 1]
 
-        f1.append(f1_score(y_true = selected_events_true_per_seq, y_pred = selected_y_pred, average = 'macro'))
-        top_k_acc_single_event_seq = []
-        if num_events > 2:
-            for k in range(1, num_events):
-                top_k_acc_single_event_seq.append(
-                    top_k_accuracy_score(y_true = selected_events_true_per_seq,
+        f1.append(f1_score(y_true = selected_marks_true_per_seq, y_pred = selected_y_pred, average = 'macro'))
+        top_k_acc_single_mark_seq = []
+        if num_marks > 2:
+            for k in range(1, num_marks):
+                top_k_acc_single_mark_seq.append(
+                    top_k_accuracy_score(y_true = selected_marks_true_per_seq,
                                          y_score = selected_probability_integral_per_seq,
                                          k = k,
-                                         labels = np.arange(num_events))
+                                         labels = np.arange(num_marks))
                 )
         else:
-            top_k_acc_single_event_seq.append(
+            top_k_acc_single_mark_seq.append(
                 accuracy_score(
-                    y_true = selected_events_true_per_seq, y_pred = selected_y_pred
+                    y_true = selected_marks_true_per_seq, y_pred = selected_y_pred
                 )
             )
-        top_k_acc.append(top_k_acc_single_event_seq)
+        top_k_acc.append(top_k_acc_single_mark_seq)
 
     return f1, top_k_acc
 
@@ -160,7 +160,7 @@ def get_f1_and_top_k_acc_in_mae_e(events_true, p_m, input_mask, num_events):
 '''
 Plotting.
 '''
-def draw_intensity_integral_and_probability(df, df_event, annotation, figure_type, color_palette, num_events, figure_kwargs = {}):
+def draw_intensity_integral_and_probability(df, df_mark, annotation, figure_type, color_palette, num_marks, figure_kwargs = {}):
     figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
     no_ground_truth = len(df.columns) == 2
 
@@ -175,8 +175,8 @@ def draw_intensity_integral_and_probability(df, df_event, annotation, figure_typ
         lineplot_legend = ax.legend(handles = handles, labels = labels, loc = 'lower left')
         ax.add_artist(lineplot_legend)
 
-        sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = color_palette, \
-                        hue = 'Mark', hue_order = [f'Mark {item}' for item in range(num_events)], ax = ax)
+        sns.scatterplot(x = 'Time', y = 'Point', data = df_mark, palette = color_palette, \
+                        hue = 'Mark', hue_order = [f'Mark {item}' for item in range(num_marks)], ax = ax)
 
         handles, labels = ax.get_legend_handles_labels()
         lineplot_legend = ax.legend(handles = handles[1 if no_ground_truth else 2:], labels = labels[1 if no_ground_truth else 2:])
@@ -190,35 +190,35 @@ def draw_intensity_integral_and_probability(df, df_event, annotation, figure_typ
     return fig
 
 
-def legend_format(num_events):
+def legend_format(num_marks):
     import math
 
     format_parameter = {'ncol': 1, 'fontsize': 18}
 
-    if num_events > 10:
+    if num_marks > 10:
         format_parameter['ncol'] = 2
 
-    num_events_per_column = math.ceil(num_events / format_parameter['ncol'])
-    format_parameter['fontsize'] = format_parameter['fontsize'] * (-0.1 * max(num_events_per_column - 5, 0) + 1)
+    num_marks_per_column = math.ceil(num_marks / format_parameter['ncol'])
+    format_parameter['fontsize'] = format_parameter['fontsize'] * (-0.1 * max(num_marks_per_column - 5, 0) + 1)
 
     return format_parameter
 
 
-def draw_intensity_integral_per_mark(df, df_event, figure_type, color_palette, num_events, figure_kwargs = {}):
+def draw_intensity_integral_per_mark(df, df_mark, figure_type, color_palette, num_marks, figure_kwargs = {}):
     figure_kwargs = dict(default_figure_kwargs, **figure_kwargs)
 
     with mpl.rc_context(figure_kwargs):
         fig, ax = plt.subplots()
 
         sns.lineplot(x = 'Time', y = figure_type, hue = 'Mark', data = df, palette = color_palette, \
-                     hue_order = [f'Mark {item}' for item in range(num_events)], ax = ax)
+                     hue_order = [f'Mark {item}' for item in range(num_marks)], ax = ax)
 
-        sns.scatterplot(x = 'Time', y = 'Point', data = df_event, palette = color_palette, \
-                        hue = 'Mark', hue_order =  [f'Mark {item}' for item in range(num_events)], ax = ax)
+        sns.scatterplot(x = 'Time', y = 'Point', data = df_mark, palette = color_palette, \
+                        hue = 'Mark', hue_order =  [f'Mark {item}' for item in range(num_marks)], ax = ax)
 
         handles, labels = ax.get_legend_handles_labels()
-        lineplot_legend = ax.legend(handles = [(handles[idx], handles[idx + num_events]) for idx in range(num_events)], 
-                                    labels = labels[:num_events], **legend_format(num_events),
+        lineplot_legend = ax.legend(handles = [(handles[idx], handles[idx + num_marks]) for idx in range(num_marks)], 
+                                    labels = labels[:num_marks], **legend_format(num_marks),
                                     handler_map = {tuple: mpl.legend_handler.HandlerTuple(ndivide = None)})
         lineplot_legend.set_title('Mark')
 

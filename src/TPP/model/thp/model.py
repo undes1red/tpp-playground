@@ -25,7 +25,7 @@ from src.TPP.model.thp.plot import (
 from src.TPP.model.thp.sample import sample_time
 from src.TPP.model.thp.submodel import THP
 from src.TPP.model.utils import (
-    decide_resolution_inf_and_resolution_between_events,
+    decide_resolution_inf_and_resolution_between_mark,
 )
 from src.TPP.resources import expand_true_probability
 
@@ -93,7 +93,7 @@ class THPWrapper(BasicModel):
               This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
               mae_step and mae_e_step are useful when you cannot get sample_rate time samples from time distributions because of insufficient GPU memory.
             * ```int``` integration_sample_rate
-              The number of interpolated points in a time interval between two adjoint events for integration estimation.
+              The number of interpolated points in a time interval between two adjoint mark for integration estimation.
               The number of interpolated points counts the start and end point of the interval.
             * ```bool``` survival_loss_during_training
               When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
@@ -101,7 +101,7 @@ class THPWrapper(BasicModel):
         super().__init__()
         self.device = device
         self.compile_or_not = opt.compile
-        self.num_events = opt.info_dict["num_events"]
+        self.num_mark = opt.info_dict["num_mark"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
         self.epsilon = epsilon
@@ -115,7 +115,7 @@ class THPWrapper(BasicModel):
         self.max_step = 50
 
         self.model = THP(
-            num_events=self.num_events,
+            num_mark=self.num_mark,
             d_input=d_input,
             d_rnn=d_rnn,
             d_hidden=d_hidden,
@@ -202,7 +202,7 @@ class THPWrapper(BasicModel):
 
         return task_mapper[task_name](*args, **kwargs)
 
-    def train_procedure(self, time, events, mask, mean, std):
+    def train_procedure(self, time, mark, mask, mean, std):
         """
         THP's forwardpropagation function for training.
 
@@ -210,7 +210,7 @@ class THPWrapper(BasicModel):
             * ```torch.tensor``` time
               shape: ```[batch_size, seq_len + 1]```
               Time sequence for training.
-            * ```torch.tensor``` events
+            * ```torch.tensor``` mark
               shape: ```[batch_size, seq_len + 1]```
               Event sequence for training.
             * ```torch.tensor``` mask
@@ -230,24 +230,24 @@ class THPWrapper(BasicModel):
             * ```torch.tensor``` marker_loss_without_dummy
               shape: ```[1]```
               The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
-            * ```int``` the_number_of_events
-              The number of legit events.
+            * ```int``` the_number_of_mark
+              The number of legit mark.
         """
         time_history, time_next = self.divide_history_and_next(time)  # [batch_size, seq_len] * 2
-        events_history, events_next = self.divide_history_and_next(events)  # [batch_size, seq_len] * 2
+        mark_history, mark_next = self.divide_history_and_next(mark)  # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len] * 2
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next)  # [batch_size, seq_len]
-        events_next_without_dummy = events_next * mask_next_without_dummy  # [batch_size, seq_len]
-        the_number_of_events = mask_next_without_dummy.sum().item()
+        mark_next_without_dummy = mark_next * mask_next_without_dummy  # [batch_size, seq_len]
+        the_number_of_mark = mask_next_without_dummy.sum().item()
 
-        integral_all_events, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
-        # [batch_size, seq_len, num_events]
+        integral_all_mark, intensity_all_mark = self.model(time_history, time_next, mark_history, mask_history)
+        # [batch_size, seq_len, num_mark]
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         neg_log_likeli_loss_without_dummy, marker_loss_without_dummy = self.loss_function(
-            intensity_all_events=intensity_all_events,
-            integral_all_events=integral_all_events,
-            events_next=events_next_without_dummy,
+            intensity_all_mark=intensity_all_mark,
+            integral_all_mark=integral_all_mark,
+            mark_next=mark_next_without_dummy,
             mask_next=mask_next_without_dummy,
         )
 
@@ -255,7 +255,7 @@ class THPWrapper(BasicModel):
         if self.survival_loss_during_training:
             # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
             dummy_event_index = mask_next.sum(dim=-1) - 1  # [batch_size]
-            integral_survival = integral_all_events.sum(dim=-1).gather(
+            integral_survival = integral_all_mark.sum(dim=-1).gather(
                 index=dummy_event_index.unsqueeze(dim=-1), dim=-1
             )
             # [batch_size, 1]
@@ -264,14 +264,14 @@ class THPWrapper(BasicModel):
         loss = neg_log_likeli_loss_without_dummy + loss_survival
 
         return (
-            loss / the_number_of_events,
-            neg_log_likeli_loss_without_dummy / the_number_of_events,
-            marker_loss_without_dummy / the_number_of_events,
-            the_number_of_events,
+            loss / the_number_of_mark,
+            neg_log_likeli_loss_without_dummy / the_number_of_mark,
+            marker_loss_without_dummy / the_number_of_mark,
+            the_number_of_mark,
         )
 
     @torch.inference_mode()
-    def evaluate_procedure(self, time, events, mask, mean, std):
+    def evaluate_procedure(self, time, mark, mask, mean, std):
         """
         THP's forwardpropagation function for evaluation.
 
@@ -279,7 +279,7 @@ class THPWrapper(BasicModel):
             * ```torch.tensor``` time
               shape: ```[batch_size, seq_len + 1]```
               Time sequencalculatesce for training.
-            * ```torch.tensor``` events
+            * ```torch.tensor``` mark
               shape: ```[batch_size, seq_len + 1]```
               Event sequence for training.
             * ```torch.tensor``` mask
@@ -303,21 +303,21 @@ class THPWrapper(BasicModel):
               The average error between predicted time and real time.
             * ```float``` f1
               The prediction accuracy of predicted marks.
-            * ```int``` the_number_of_events
-              The number of legit events.
+            * ```int``` the_number_of_mark
+              The number of legit mark.
         """
         time_history, time_next = self.divide_history_and_next(time)  # [batch_size, seq_len] * 2
-        events_history, events_next = self.divide_history_and_next(events)  # [batch_size, seq_len] * 2
+        mark_history, mark_next = self.divide_history_and_next(mark)  # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         mask_next_without_dummy = self.remove_dummy_event_from_mask(mask_next)  # [batch_size, seq_len]
-        events_next_without_dummy = events_next * mask_next_without_dummy  # [batch_size, seq_len]
-        the_number_of_events = mask_next_without_dummy.sum().item()
+        mark_next_without_dummy = mark_next * mask_next_without_dummy  # [batch_size, seq_len]
+        the_number_of_mark = mask_next_without_dummy.sum().item()
 
         pred_time, mark_dist = self.next_event_prediction_time_mark(
             time_history,
             time_next,
-            events_history,
+            mark_history,
             mask_history,
             mean=mean,
             std=std,
@@ -326,60 +326,60 @@ class THPWrapper(BasicModel):
         )
 
         mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        mae = mae.sum().item() / the_number_of_events
+        mae = mae.sum().item() / the_number_of_mark
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(pred_mark, mark_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
 
-        integral_all_events_time_next, intensity_all_events_time_next = self.model(
-            time_history, time_next, events_history, mask_history
+        integral_all_mark_time_next, intensity_all_mark_time_next = self.model(
+            time_history, time_next, mark_history, mask_history
         )
-        # 2 * [batch_size, seq_len, num_events]
+        # 2 * [batch_size, seq_len, num_mark]
 
         # L = \\sum_{i}{\\lambda^_k*(t_i)} + \\int_{t_0}^{t_n}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         log_likeli_loss_time_next_without_dummy, marker_loss_time_next_without_dummy = self.loss_function(
-            intensity_all_events=intensity_all_events_time_next,
-            integral_all_events=integral_all_events_time_next,
-            events_next=events_next_without_dummy,
+            intensity_all_mark=intensity_all_mark_time_next,
+            integral_all_mark=integral_all_mark_time_next,
+            mark_next=mark_next_without_dummy,
             mask_next=mask_next_without_dummy,
         )
 
         # survival_loss = \\int_{t_n}^{T}{\\sum_{k}{\\lambda^*_k(\\tau)}d\\tau}
         dummy_event_index = mask_next.sum(dim=-1) - 1  # [batch_size]
-        integral_survival = integral_all_events_time_next.sum(dim=-1).gather(
+        integral_survival = integral_all_mark_time_next.sum(dim=-1).gather(
             index=dummy_event_index.unsqueeze(dim=-1), dim=-1
         )
         # [batch_size, 1]
         loss_survival = integral_survival.sum()
 
         return (
-            log_likeli_loss_time_next_without_dummy / the_number_of_events,
+            log_likeli_loss_time_next_without_dummy / the_number_of_mark,
             loss_survival,
-            marker_loss_time_next_without_dummy / the_number_of_events,
+            marker_loss_time_next_without_dummy / the_number_of_mark,
             mae,
             acc,
             macro_f1,
             micro_f1,
-            the_number_of_events,
+            the_number_of_mark,
         )
 
-    def loss_function(self, intensity_all_events, integral_all_events, events_next, mask_next):
+    def loss_function(self, intensity_all_mark, integral_all_mark, mark_next, mask_next):
         """
-        This function computes the NLL loss at each legit event in events_next.
+        This function computes the NLL loss at each legit event in mark_next.
 
         ### Args
-            * ```torch.tensor``` intensity_all_events
-              shape: ```[batch_size, seq_len, num_events]```
+            * ```torch.tensor``` intensity_all_mark
+              shape: ```[batch_size, seq_len, num_mark]```
               intensity values at t_i.
-            * ```torch.tensor``` integral_all_events
-              shape: ```[batch_size, seq_len, num_events]```
+            * ```torch.tensor``` integral_all_mark
+              shape: ```[batch_size, seq_len, num_mark]```
               intensity integral from t_{i - 1} to t_{i} (t_0 = 0).
-            * ```torch.tensor``` events_next
+            * ```torch.tensor``` mark_next
               shape: ```[batch_size, seq_len]```
-              The mark of the events that we need to predict.
+              The mark of the mark that we need to predict.
             * ```torch.tensor``` mask_next
               shape: ```[batch_size, seq_len]```
               Needed mask to mask out unneeded loss values.
@@ -388,31 +388,31 @@ class THPWrapper(BasicModel):
             * ```torch.tensor``` mtpp_nll_loss,
               shape: ```[1]```
               The sum of NLL loss on all event.
-            * ```torch.tensor``` events_loss
+            * ```torch.tensor``` mark_loss
               shape: ```[1]```
               The sum of the event loss: L = -log \\frac{\\lambda^*(m, t)}{\\sum_{n \\in M}{\\lambda^*(n, t)}} where m is the mark of the real event.
         """
-        type_mask = F.one_hot(events_next.long(), num_classes=self.num_events)
+        type_mask = F.one_hot(mark_next.long(), num_classes=self.num_mark)
 
         # MTPP loss function
-        intensity = torch.sum(intensity_all_events * type_mask, dim=-1)  # [batch_size, seq_len]
+        intensity = torch.sum(intensity_all_mark * type_mask, dim=-1)  # [batch_size, seq_len]
         log_intensity = torch.log(intensity + self.epsilon) * mask_next  # [batch_size, seq_len]
-        intensity_integral = integral_all_events.sum(dim=-1)  # [batch_size, seq_len]
+        intensity_integral = integral_all_mark.sum(dim=-1)  # [batch_size, seq_len]
         ll = -log_intensity + intensity_integral  # [batch_size, seq_len]
         mtpp_nll_loss = torch.sum(ll)
 
         # Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
-        events_prediction_probability = torch.log(intensity_all_events + self.epsilon)
-        # [batch_size, seq_len, num_events]
-        events_prediction_probability = F.softmax(events_prediction_probability, dim=-1)
-        # [batch_size, seq_len, num_events]
-        events_prediction_probability = rearrange(events_prediction_probability, "b s ne -> b ne s")
-        # [batch_size, num_events, seq_len]
-        events_loss = F.cross_entropy(input=events_prediction_probability, target=events_next.long(), reduction="none")
+        mark_prediction_probability = torch.log(intensity_all_mark + self.epsilon)
+        # [batch_size, seq_len, num_mark]
+        mark_prediction_probability = F.softmax(mark_prediction_probability, dim=-1)
+        # [batch_size, seq_len, num_mark]
+        mark_prediction_probability = rearrange(mark_prediction_probability, "b s ne -> b ne s")
+        # [batch_size, num_mark, seq_len]
+        mark_loss = F.cross_entropy(input=mark_prediction_probability, target=mark_next.long(), reduction="none")
         # [batch_size, seq_len]
-        events_loss = (events_loss * mask_next).sum()
+        mark_loss = (mark_loss * mask_next).sum()
 
-        return mtpp_nll_loss, events_loss
+        return mtpp_nll_loss, mark_loss
 
     sample_time = sample_time
 
@@ -421,7 +421,7 @@ class THPWrapper(BasicModel):
         self: Self,
         time_history: torch.Tensor,
         time_next: torch.Tensor,
-        events_history: torch.Tensor,
+        mark_history: torch.Tensor,
         mask_history: torch.Tensor,
         mean: float,
         std: float,
@@ -435,12 +435,12 @@ class THPWrapper(BasicModel):
 
         Args:
             self (Self): the THP model.
-            time_history (torch.Tensor): the time of historical events
-            time_next (torch.Tensor): the time of the next true events
-            events_history (torch.Tensor): the mark of historical events
-            events_next (torch.Tensor): the mark of the next true events
+            time_history (torch.Tensor): the time of historical mark
+            time_next (torch.Tensor): the time of the next true mark
+            mark_history (torch.Tensor): the mark of historical mark
+            mark_next (torch.Tensor): the mark of the next true mark
             mask_history (torch.Tensor): the mask of historical sequences, 1 meaning a true event, and 0 meaning a fake event.
-            mask_next (torch.Tensor): the mask of the next true events
+            mask_next (torch.Tensor): the mask of the next true mark
             mean (float): the mean of all time intervals
             std (float): the standard variance of all time intervals
             sample_rate (int): how many samples are needed for one time prediction
@@ -455,7 +455,7 @@ class THPWrapper(BasicModel):
             sampling_approach="its",
             task="tm",
             time_history=time_history,
-            events_history=events_history,
+            mark_history=mark_history,
             mask_history=mask_history,
             number_of_total_samples=sample_rate,
             step=mae_step,
@@ -465,22 +465,22 @@ class THPWrapper(BasicModel):
         pred_time = pred_time.mean(dim=0)  # [batch_size, seq_len]
 
         if evaluation:
-            _, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
-        # [batch_size, seq_len, num_events]
+            _, intensity_all_mark = self.model(time_history, time_next, mark_history, mask_history)
+        # [batch_size, seq_len, num_mark]
         else:
-            _, intensity_all_events = self.model(time_history, pred_time, events_history, mask_history)
-            # [batch_size, seq_len, num_events]
+            _, intensity_all_mark = self.model(time_history, pred_time, mark_history, mask_history)
+            # [batch_size, seq_len, num_mark]
 
-        mark_distribution = intensity_all_events / intensity_all_events.sum(dim=-1, keepdim=True)
-        # [batch_size, seq_len, num_events]
+        mark_distribution = intensity_all_mark / intensity_all_mark.sum(dim=-1, keepdim=True)
+        # [batch_size, seq_len, num_mark]
         return pred_time, mark_distribution
 
     @torch.inference_mode()
     def next_event_prediction_mark_time(
         self: Self,
         time_history: torch.Tensor,
-        events_history: torch.Tensor,
-        events_next: torch.Tensor,
+        mark_history: torch.Tensor,
+        mark_next: torch.Tensor,
         mask_history: torch.Tensor,
         mean: float,
         std: float,
@@ -494,12 +494,12 @@ class THPWrapper(BasicModel):
 
         Args:
             self (Self): the THP model.
-            time_history (torch.Tensor): the time of historical events
-            time_next (torch.Tensor): the time of the next true events
-            events_history (torch.Tensor): the mark of historical events
-            events_next (torch.Tensor): the mark of the next true events
+            time_history (torch.Tensor): the time of historical mark
+            time_next (torch.Tensor): the time of the next true mark
+            mark_history (torch.Tensor): the mark of historical mark
+            mark_next (torch.Tensor): the mark of the next true mark
             mask_history (torch.Tensor): the mask of historical sequences, 1 meaning a true event, and 0 meaning a fake event.
-            mask_next (torch.Tensor): the mask of the next true events
+            mask_next (torch.Tensor): the mask of the next true mark
             mean (float): the mean of all time intervals
             std (float): the standard variance of all time intervals
             sample_rate (int): how many samples are needed for one time prediction
@@ -510,60 +510,60 @@ class THPWrapper(BasicModel):
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        inf_val, resolution_inf, resolution_between_events = decide_resolution_inf_and_resolution_between_events(
-            time_history, memory_ceiling, self.num_events, mean, std
+        inf_val, resolution_inf, resolution_between_mark = decide_resolution_inf_and_resolution_between_mark(
+            time_history, memory_ceiling, self.num_mark, mean, std
         )
         time_next_inf = torch.ones_like(time_history, device=self.device) * inf_val
 
         (
-            expanded_integral_all_events_to_inf,
-            expanded_intensity_all_events_to_inf,
+            expanded_integral_all_mark_to_inf,
+            expanded_intensity_all_mark_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next_inf, mask_history, resolution_inf
+            mark_history, time_history, time_next_inf, mask_history, resolution_inf
         )
-        # 2 * [batch_size, seq_len, resolution_inf, num_events]
-        expanded_integral_sum_over_events_to_inf = expanded_integral_all_events_to_inf.sum(dim=-1, keepdim=True)
+        # 2 * [batch_size, seq_len, resolution_inf, num_mark]
+        expanded_integral_sum_over_mark_to_inf = expanded_integral_all_mark_to_inf.sum(dim=-1, keepdim=True)
         # [batch_size, seq_len, resolution_inf, 1]
-        expanded_probability_inf = expanded_intensity_all_events_to_inf * torch.exp(
-            -expanded_integral_sum_over_events_to_inf
+        expanded_probability_inf = expanded_intensity_all_mark_to_inf * torch.exp(
+            -expanded_integral_sum_over_mark_to_inf
         )
-        # [batch_size, seq_len, resolution_inf, num_events]
+        # [batch_size, seq_len, resolution_inf, num_mark]
         mark_distribution = approximate_integration(expanded_probability_inf, timestamp, dim=-2, only_integral=True)
-        # [batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_mark]
         tau_sampled_all_event = self.sample_time(
             sampling_approach="its",
             task="mt",
-            events_history=events_history,
+            mark_history=mark_history,
             time_history=time_history,
             mask_history=mask_history,
             p_m=mark_distribution,
-            resolution=resolution_between_events,
+            resolution=resolution_between_mark,
             number_of_total_samples=sample_rate,
             step=mae_e_step,
             inf_val=inf_val,
             mean=mean,
             std=std,
-        )  # [sample_rate, batch_size, seq_len, num_events]
-        tau_pred_all_event = tau_sampled_all_event.mean(dim=0)  # [batch_size, seq_len, num_events]
+        )  # [sample_rate, batch_size, seq_len, num_mark]
+        tau_pred_all_event = tau_sampled_all_event.mean(dim=0)  # [batch_size, seq_len, num_mark]
 
         if evaluation:
-            events_next_mask = torch.nn.functional.one_hot(events_next, num_classes=self.num_events)
-            # [batch_size, seq_len, num_events]
-            pred_time = (tau_pred_all_event * events_next_mask).sum(dim=-1)  # [batch_size, seq_len]
+            mark_next_mask = torch.nn.functional.one_hot(mark_next, num_classes=self.num_mark)
+            # [batch_size, seq_len, num_mark]
+            pred_time = (tau_pred_all_event * mark_next_mask).sum(dim=-1)  # [batch_size, seq_len]
         else:
-            pred_time = tau_pred_all_event  # [batch_size, seq_len, num_events]
+            pred_time = tau_pred_all_event  # [batch_size, seq_len, num_mark]
 
         return pred_time, mark_distribution
 
     def extract_plot_data(self, minibatch):
         """
-        This function extracts input_time, input_events, input_intensity, mask, mean, and std from the minibatch.
+        This function extracts input_time, input_mark, input_intensity, mask, mean, and std from the minibatch.
 
         ### Args
             * ```list``` minibatch
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
 
@@ -571,7 +571,7 @@ class THPWrapper(BasicModel):
             * ```torch.tensor``` input_time
               shape: ```[batch_size, seq_len + 1]```
               Raw event timestamp sequence.
-            * ```torch.tensor``` input_events
+            * ```torch.tensor``` input_mark
               shape: ```[batch_size, seq_len + 1]```
               Raw event marks sequence.
             * ```torch.tensor``` mask
@@ -582,10 +582,10 @@ class THPWrapper(BasicModel):
             * ```int``` std
               The mean of all $ t_i - t_{i - 1} $ in the entire dataset. Dataloader is responsible to provide this value if needed.
         """
-        input_time, input_events, _, mask, input_intensity = minibatch[0]
+        input_time, input_mark, _, mask, input_intensity = minibatch[0]
         mean, std = minibatch[1]
 
-        return input_time, input_events, input_intensity, mask, mean, std
+        return input_time, input_mark, input_intensity, mask, mean, std
 
     @torch.inference_mode()
     def figure_intensity(self, input_data, opt):
@@ -593,13 +593,13 @@ class THPWrapper(BasicModel):
         Function prober, used by evaluator to draw plots of the intensity function.
 
         You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                  The number of interpolated points counts the start and end point of the interval.
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -607,17 +607,17 @@ class THPWrapper(BasicModel):
         """
         argument_check(opt, **{"resolution": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next, mask_history, opt.resolution
+            mark_history, time_history, time_next, mask_history, opt.resolution
         )
-        # 3 * [batch_size, seq_len, resolution, num_events]
+        # 3 * [batch_size, seq_len, resolution, num_mark]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         if expand_intensity.shape != expand_integral.shape:
@@ -625,7 +625,7 @@ class THPWrapper(BasicModel):
 
         data = {
             "time_next": time_next,
-            "events_next": events_next,
+            "mark_next": mark_next,
             "mask_next": mask_next,
             "expand_intensity": expand_intensity,
             "input_intensity": input_intensity,
@@ -639,13 +639,13 @@ class THPWrapper(BasicModel):
         Function prober, used by evaluator to draw plots of the integral of the intensity function.
 
         You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                  The number of interpolated points counts the start and end point of the interval.
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -653,17 +653,17 @@ class THPWrapper(BasicModel):
         """
         argument_check(opt, **{"resolution": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next, mask_history, opt.resolution
+            mark_history, time_history, time_next, mask_history, opt.resolution
         )
-        # 3 * [batch_size, seq_len, resolution, num_events]
+        # 3 * [batch_size, seq_len, resolution, num_mark]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         if expand_intensity.shape != expand_integral.shape:
@@ -671,7 +671,7 @@ class THPWrapper(BasicModel):
 
         data = {
             "time_next": time_next,
-            "events_next": events_next,
+            "mark_next": mark_next,
             "mask_next": mask_next,
             "expand_integral": expand_integral,
             "input_intensity": input_intensity,
@@ -686,13 +686,13 @@ class THPWrapper(BasicModel):
         Function prober, used by evaluator to draw plots of the probability distribution.
 
         You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                  The number of interpolated points counts the start and end point of the interval.
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -700,26 +700,26 @@ class THPWrapper(BasicModel):
         """
         argument_check(opt, **{"resolution": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next, mask_history, opt.resolution
+            mark_history, time_history, time_next, mask_history, opt.resolution
         )
-        # 3 * [batch_size, seq_len, resolution, num_events]
+        # 3 * [batch_size, seq_len, resolution, num_mark]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         if expand_intensity.shape != expand_integral.shape:
             raise ValueError("Why expand_intensity and expand_integral have different shapes?")
         expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True))
-        # [batch_size, seq_len, resolution, num_events]
+        # [batch_size, seq_len, resolution, num_mark]
         data = {
             "time_next": time_next,
-            "events_next": events_next,
+            "mark_next": mark_next,
             "mask_next": mask_next,
             "expand_probability": expand_probability,
             "input_intensity": input_intensity,
@@ -734,9 +734,9 @@ class THPWrapper(BasicModel):
         Function prober, used by evaluator to draw plots for deeper insight of intensity functions and other metrics.
 
         You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                  The number of interpolated points counts the start and end point of the interval.
-        2. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        2. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                   The number of interpolated points counts the start and end point of the interval.
         3. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
         4. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from all p(t|m)s at the same time.
@@ -744,7 +744,7 @@ class THPWrapper(BasicModel):
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -760,15 +760,15 @@ class THPWrapper(BasicModel):
             },
         )
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         data, timestamp = self.model.model_probe_function(
-            events_history,
+            mark_history,
             time_history,
             time_next,
             mask_history,
@@ -779,7 +779,7 @@ class THPWrapper(BasicModel):
         pred_time, _ = self.next_event_prediction_time_mark(
             time_history,
             time_next,
-            events_history,
+            mark_history,
             mask_history,
             mean=mean,
             std=std,
@@ -791,8 +791,8 @@ class THPWrapper(BasicModel):
 
         pred_time_all_marks, mark_dist = self.next_event_prediction_mark_time(
             time_history,
-            events_history,
-            events_next,
+            mark_history,
+            mark_next,
             mask_history,
             mean=mean,
             std=std,
@@ -800,19 +800,19 @@ class THPWrapper(BasicModel):
             mae_e_step=opt.mae_e_step,
             evaluation=False,
         )
-        # [batch_size, seq_len, num_events] + [batch_size, seq_len, num_events]
-        events_next_mask = torch.nn.functional.one_hot(events_next, num_classes=self.num_events)
-        # [batch_size, seq_len, num_events]
-        pred_time = (pred_time_all_marks * events_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_mark] + [batch_size, seq_len, num_mark]
+        mark_next_mask = torch.nn.functional.one_hot(mark_next, num_classes=self.num_mark)
+        # [batch_size, seq_len, num_mark]
+        pred_time = (pred_time_all_marks * mark_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_mark]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        top_k = evaluate_on_one_batch(mark_dist, events_next, mask_next, "top_k", dim_input=-2)
-        # [batch_size, num_events]
+        top_k = evaluate_on_one_batch(mark_dist, mark_next, mask_next, "top_k", dim_input=-2)
+        # [batch_size, num_mark]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
 
         # Append additional info into the data dict.
         data.update(
             {
-                "events_next": events_next,
+                "mark_next": mark_next,
                 "time_next": time_next,
                 "mask_next": mask_next,
                 "mae_pt": mae_tm,
@@ -833,13 +833,13 @@ class THPWrapper(BasicModel):
         Used by evaluator to calculate the average gap between the predicted and real distribution using L1 distance and spearman coefficient.
 
         You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                  The number of interpolated points counts the start and end point of the interval.
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -851,24 +851,24 @@ class THPWrapper(BasicModel):
             * ```float``` l1
               The l1 distance between the predicted and real distribution.
         """
-        argument_check(opt, **{"resolution", int})
+        argument_check(opt, **{"resolution": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next, mask_history, opt.resolution
+            mark_history, time_history, time_next, mask_history, opt.resolution
         )
-        # 3 * [batch_size, seq_len, resolution, num_events]
+        # 3 * [batch_size, seq_len, resolution, num_mark]
         check_tensor(expand_integral)
         check_tensor(expand_intensity)
         if expand_intensity.shape != expand_integral.shape:
             raise ValueError("Why expand_intensity and expand_integral have different shapes?")
         expand_probability = expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True))
-        # [batch_size, seq_len, resolution, num_events]
+        # [batch_size, seq_len, resolution, num_mark]
         expand_probability = expand_probability.sum(dim=-1)  # [batch_size, seq_len, resolution]
         true_probability = expand_true_probability(time_next, input_intensity, opt)
         # [batch_size, seq_len, resolution] or batch_size * None
@@ -898,14 +898,14 @@ class THPWrapper(BasicModel):
         Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
 
         You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                   The number of interpolated points counts the start and end point of the interval.
         2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -920,41 +920,41 @@ class THPWrapper(BasicModel):
             * ```np.ndarray``` dist
               shape: ```[batch_size, seq_len]```
               Predicted mark distribution at when an event is observed.
-            * ```np.ndarray``` events_next
+            * ```np.ndarray``` mark_next
               shape: ```[batch_size, seq_len]```
-              Real marks of observed events.
+              Real marks of observed mark.
         """
         argument_check(opt, **{"sample_rate": int, "mae_step": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
         pred_time, mark_dist = self.next_event_prediction_time_mark(
             time_history,
             time_next,
-            events_history,
+            mark_history,
             mask_history,
             mean=mean,
             std=std,
             sample_rate=self.sample_rate,
             mae_step=opt.mae_step,
         )
-        # [batch_size, seq_len] + [batch_size, seq_len, num_events]
+        # [batch_size, seq_len] + [batch_size, seq_len, num_mark]
         mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
         mae = mae.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(pred_mark, mark_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]
 
-        mae, events_next, mark_dist, acc, macro_f1, micro_f1, mask_next = move_from_tensor_to_ndarray(
-            mae, events_next, mark_dist, acc, macro_f1, micro_f1, mask_next
+        mae, mark_next, mark_dist, acc, macro_f1, micro_f1, mask_next = move_from_tensor_to_ndarray(
+            mae, mark_next, mark_dist, acc, macro_f1, micro_f1, mask_next
         )
-        pred_time, events_next, mark_dist = break_batched_inputs_into_seqs(mask_next, pred_time, events_next, mark_dist)
-        return mae.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist(), pred_time, mark_dist, events_next
+        pred_time, mark_next, mark_dist = break_batched_inputs_into_seqs(mask_next, pred_time, mark_next, mark_dist)
+        return mae.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist(), pred_time, mark_dist, mark_next
 
     @torch.inference_mode()
     def get_mae_e_and_f1(self, input_data, opt):
@@ -962,14 +962,14 @@ class THPWrapper(BasicModel):
         Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
 
         You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint events for integration estimation.
+        1. ```int``` sample_rate: The number of interpolated points in a time interval between two adjoint mark for integration estimation.
                                   The number of interpolated points counts the start and end point of the interval.
         2. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
 
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -985,30 +985,30 @@ class THPWrapper(BasicModel):
               shape: ```[batch_size, seq_len]```
               The sum of calculated p(m) over all marks.
             * ```np.adarray``` p_m
-              shape: ```[batch_size, seq_len, num_events]```
+              shape: ```[batch_size, seq_len, num_mark]```
               The value of calculated p(m).
             * ```np.ndarray``` tau_pred_all_event
-              shape: ```[batch_size, seq_len, num_events]```
+              shape: ```[batch_size, seq_len, num_mark]```
               The predicted time for each mark using p(t|m).
             * ```np.ndarray``` time_next
               shape: ```[batch_size, seq_len]```
-              Real time of observed events.
-            * ```np.ndarray``` events_next
+              Real time of observed mark.
+            * ```np.ndarray``` mark_next
               shape: ```[batch_size, seq_len]```
-              Real marks of observed events.
+              Real marks of observed mark.
         """
         argument_check(opt, **{"sample_rate": int, "mae_e_step": int})
 
-        input_time, input_events, _, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, _, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         pred_time_all_marks, mark_dist = self.next_event_prediction_mark_time(
             time_history,
-            events_history,
-            events_next,
+            mark_history,
+            mark_next,
             mask_history,
             mean=mean,
             std=std,
@@ -1016,21 +1016,21 @@ class THPWrapper(BasicModel):
             mae_e_step=opt.mae_e_step,
             evaluation=False,
         )
-        # [batch_size, seq_len, num_events] + [batch_size, seq_len, num_events]
-        events_next_mask = torch.nn.functional.one_hot(events_next, num_classes=self.num_events)
-        # [batch_size, seq_len, num_events]
-        pred_time = (pred_time_all_marks * events_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_mark] + [batch_size, seq_len, num_mark]
+        mark_next_mask = torch.nn.functional.one_hot(mark_next, num_classes=self.num_mark)
+        # [batch_size, seq_len, num_mark]
+        pred_time = (pred_time_all_marks * mark_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_mark]
         mae_e = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
         mae_e = mae_e.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(pred_mark, mark_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]
 
         (
             mae_e,
-            events_next,
+            mark_next,
             mark_dist,
             acc,
             macro_f1,
@@ -1040,7 +1040,7 @@ class THPWrapper(BasicModel):
             time_next,
         ) = move_from_tensor_to_ndarray(
             mae_e,
-            events_next,
+            mark_next,
             mark_dist,
             acc,
             macro_f1,
@@ -1049,8 +1049,8 @@ class THPWrapper(BasicModel):
             pred_time_all_marks,
             time_next,
         )
-        mark_dist, pred_time_all_marks, time_next, events_next = break_batched_inputs_into_seqs(
-            mask_next, mark_dist, pred_time_all_marks, time_next, events_next
+        mark_dist, pred_time_all_marks, time_next, mark_next = break_batched_inputs_into_seqs(
+            mask_next, mark_dist, pred_time_all_marks, time_next, mark_next
         )
 
         return (
@@ -1061,7 +1061,7 @@ class THPWrapper(BasicModel):
             mark_dist,
             pred_time_all_marks,
             time_next,
-            events_next,
+            mark_next,
         )
 
     @torch.inference_mode()
@@ -1077,7 +1077,7 @@ class THPWrapper(BasicModel):
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -1092,56 +1092,56 @@ class THPWrapper(BasicModel):
         """
         argument_check(opt, **{"sample_rate": int, "sample_substep": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
-        inf_val, resolution_inf, resolution_between_events = decide_resolution_inf_and_resolution_between_events(
-            time_next, memory_ceiling, self.num_events, mean, std
+        inf_val, resolution_inf, resolution_between_mark = decide_resolution_inf_and_resolution_between_mark(
+            time_next, memory_ceiling, self.num_mark, mean, std
         )
         time_next_inf = torch.ones_like(time_history, device=self.device) * inf_val
         # [batch_size, seq_len]
         (
-            expanded_integral_all_events_to_inf,
-            expanded_intensity_all_events_to_inf,
+            expanded_integral_all_mark_to_inf,
+            expanded_intensity_all_mark_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next_inf, mask_history, resolution_inf
+            mark_history, time_history, time_next_inf, mask_history, resolution_inf
         )
-        # 2 * [batch_size, seq_len, resolution, num_events]
+        # 2 * [batch_size, seq_len, resolution, num_mark]
         expanded_probability_inf = (
-            torch.exp(-expanded_integral_all_events_to_inf.sum(dim=-1, keepdim=True))
-            * expanded_intensity_all_events_to_inf
+            torch.exp(-expanded_integral_all_mark_to_inf.sum(dim=-1, keepdim=True))
+            * expanded_intensity_all_mark_to_inf
         )
-        # [batch_size, seq_len, resolution, num_events]
+        # [batch_size, seq_len, resolution, num_mark]
         probability_integral_to_inf = approximate_integration(
             expanded_probability_inf, timestamp, dim=-2, only_integral=True
         )
-        # [batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_mark]
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(
             sampling_approach="its",
             task="mt",
-            events_history=events_history,
+            mark_history=mark_history,
             time_history=time_history,
             mask_history=mask_history,
             p_m=probability_integral_to_inf,
-            resolution=resolution_between_events,
+            resolution=resolution_between_mark,
             number_of_total_samples=opt.sample_rate,
             step=opt.sample_substep,
             inf_val=inf_val,
             mean=mean,
             std=std,
-        )  # [sample_rate, batch_size, seq_len, num_events]
+        )  # [sample_rate, batch_size, seq_len, num_mark]
 
-        sampled_times_mean = tau_pred_all_event.mean(dim=0)  # [batch_size, seq_len, num_events]
+        sampled_times_mean = tau_pred_all_event.mean(dim=0)  # [batch_size, seq_len, num_mark]
         predicted_time, predicted_mark = sampled_times_mean.min(dim=-1)  # [batch_size, seq_len] + [batch_size, seq_len]
         maes = torch.abs(time_next - predicted_time) * mask_next  # [batch_size, seq_len]
         maes = maes.sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
 
-        results = evaluate_on_one_batch(predicted_mark, events_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(predicted_mark, mark_next, mask_next, ["acc", "macro-f1", "micro-f1"])
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]
@@ -1161,7 +1161,7 @@ class THPWrapper(BasicModel):
         ### Args
             * ```list``` input_data
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```namespace``` opt
@@ -1169,62 +1169,62 @@ class THPWrapper(BasicModel):
 
         ### Outputs:
             * ```np.ndarray``` tau_pred_all_event
-              shape: ```[batch_size, seq_len, num_events]```
+              shape: ```[batch_size, seq_len, num_mark]```
               Predicted time for all marks using p(t|m)
             * ```np.ndarray``` probability_integral_to_inf
-              shape: ```[batch_size, seq_len, num_events]```
+              shape: ```[batch_size, seq_len, num_mark]```
               The value of p(m).
         """
         argument_check(opt, **{"sample_rate": int, "sample_substep": int})
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
 
-        input_time, input_events, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
+        input_time, input_mark, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(input_events)
+        mark_history, mark_next = self.divide_history_and_next(input_mark)
         # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
-        inf_val, resolution_inf, resolution_between_events = decide_resolution_inf_and_resolution_between_events(
-            time_next, memory_ceiling, self.num_events, mean, std
+        inf_val, resolution_inf, resolution_between_mark = decide_resolution_inf_and_resolution_between_mark(
+            time_next, memory_ceiling, self.num_mark, mean, std
         )
         time_next_inf = torch.ones_like(time_history, device=self.device) * inf_val
         # [batch_size, seq_len]
         (
-            expanded_integral_all_events_to_inf,
-            expanded_intensity_all_events_to_inf,
+            expanded_integral_all_mark_to_inf,
+            expanded_intensity_all_mark_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            events_history, time_history, time_next_inf, mask_history, resolution_inf
+            mark_history, time_history, time_next_inf, mask_history, resolution_inf
         )
-        # 2 * [batch_size, seq_len, resolution, num_events]
+        # 2 * [batch_size, seq_len, resolution, num_mark]
         expanded_probability_inf = (
-            torch.exp(-expanded_integral_all_events_to_inf.sum(dim=-1, keepdim=True))
-            * expanded_intensity_all_events_to_inf
+            torch.exp(-expanded_integral_all_mark_to_inf.sum(dim=-1, keepdim=True))
+            * expanded_intensity_all_mark_to_inf
         )
-        # [batch_size, seq_len, resolution, num_events]
+        # [batch_size, seq_len, resolution, num_mark]
         probability_integral_to_inf = approximate_integration(
             expanded_probability_inf, timestamp, dim=-2, only_integral=True
         )
-        # [batch_size, seq_len, num_events]
+        # [batch_size, seq_len, num_mark]
         # step 2: get the time prediction for that kind of event
         tau_pred_all_event = self.sample_time(
             sampling_approach="its",
             task="mt",
-            events_history=events_history,
+            mark_history=mark_history,
             time_history=time_history,
             mask_history=mask_history,
             p_m=probability_integral_to_inf,
-            resolution=resolution_between_events,
+            resolution=resolution_between_mark,
             number_of_total_samples=opt.sample_rate,
             step=opt.sample_substep,
             inf_val=inf_val,
             mean=mean,
             std=std,
-        )  # [sample_rate, batch_size, seq_len, num_events]
+        )  # [sample_rate, batch_size, seq_len, num_mark]
 
         probability_integral_to_inf, tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(
             probability_integral_to_inf, tau_pred_all_event, mask_next
@@ -1232,7 +1232,7 @@ class THPWrapper(BasicModel):
 
         probability_integral_to_inf, tau_pred_all_event = break_batched_inputs_into_seqs(
             mask_next, probability_integral_to_inf, rearrange(tau_pred_all_event, "sr b sl ne -> b sl ne sr")
-        )  # batch_size * [seq_len, num_events] + batch_size * [seq_len, num_events, sample_rate]
+        )  # batch_size * [seq_len, num_mark] + batch_size * [seq_len, num_mark, sample_rate]
 
         tau_pred_all_event = [rearrange(item, "sl ne sr -> sr sl ne") for item in tau_pred_all_event]
 
@@ -1273,15 +1273,15 @@ class THPWrapper(BasicModel):
         roc_result = []
         for (
             obs_time_for_one_seq,
-            obs_events_for_one_seq,
+            obs_mark_for_one_seq,
             obs_mask_for_one_seq,
             missing_mask_for_one_seq,
             _,
         ) in padded_obs_data:
             obs_time_history_for_one_seq, obs_time_next_for_one_seq = self.divide_history_and_next(obs_time_for_one_seq)
             # [batch_size, seq_len] * 2
-            obs_events_history_for_one_seq, obs_events_next_for_one_seq = self.divide_history_and_next(
-                obs_events_for_one_seq
+            obs_mark_history_for_one_seq, obs_mark_next_for_one_seq = self.divide_history_and_next(
+                obs_mark_for_one_seq
             )
             # [batch_size, seq_len] * 2
             obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
@@ -1289,16 +1289,16 @@ class THPWrapper(BasicModel):
 
             missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
             # [num_samples, ...]
-            integral_all_events, intensity_all_events = self.model(
+            integral_all_mark, intensity_all_mark = self.model(
                 obs_time_history_for_one_seq.float(),
                 obs_time_next_for_one_seq.float(),
-                obs_events_history_for_one_seq,
+                obs_mark_history_for_one_seq,
                 obs_mask_history_for_one_seq,
             )
-            # [num_samples, seq_len, num_events]
+            # [num_samples, seq_len, num_mark]
 
-            integral_sum = integral_all_events.sum(dim=-1)  # [num_samples, seq_len]
-            intensity_sum = intensity_all_events.sum(dim=-1)  # [num_samples, seq_len]
+            integral_sum = integral_all_mark.sum(dim=-1)  # [num_samples, seq_len]
+            intensity_sum = intensity_all_mark.sum(dim=-1)  # [num_samples, seq_len]
 
             all_roauc_area = []
             for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in zip(
@@ -1321,19 +1321,19 @@ class THPWrapper(BasicModel):
         return roc_result
 
     def cppod_commission_evaluation(self, input_data, opt):
-        (time_seq, events, commission, mask), (mean, std) = input_data
+        (time_seq, mark, commission, mask), (mean, std) = input_data
 
         time_history, time_next = self.divide_history_and_next(time_seq)  # [batch_size, seq_len]
-        events_history, events_next = self.divide_history_and_next(events)  # [batch_size, seq_len]
+        mark_history, mark_next = self.divide_history_and_next(mark)  # [batch_size, seq_len]
         _, commission_next = self.divide_history_and_next(commission)  # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
         time_history = time_history.float()
         time_next = time_next.float()
 
-        _, intensity_all_events = self.model(time_history, time_next, events_history, mask_history)
-        # 2 * [batch_size, seq_len, num_events]
+        _, intensity_all_mark = self.model(time_history, time_next, mark_history, mask_history)
+        # 2 * [batch_size, seq_len, num_mark]
 
-        intensity_sum_from_tl_to_time_next = intensity_all_events.sum(dim=-1)
+        intensity_sum_from_tl_to_time_next = intensity_all_mark.sum(dim=-1)
         # [batch_size, seq_len]
         score = -intensity_sum_from_tl_to_time_next  # [batch_size, seq_len]
 
@@ -1363,7 +1363,7 @@ class THPWrapper(BasicModel):
               The MTPP model that we train.
             * ```list``` minibatch
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```torch.device``` device
@@ -1380,16 +1380,16 @@ class THPWrapper(BasicModel):
         """
         self.model.train()
 
-        (time, events, fact, mask), (mean, std) = (
+        (time, mark, fact, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
         )
-        loss, neg_log_likeli_loss, marker_loss, the_number_of_events = self.forward(
-            "train", time, events, mask, mean, std
+        loss, neg_log_likeli_loss, marker_loss, the_number_of_mark = self.forward(
+            "train", time, mark, mask, mean, std
         )
         loss.backward()
 
         tpp_loss, mark_loss = neg_log_likeli_loss.item(), marker_loss.item()
-        fact = fact.sum() / the_number_of_events
+        fact = fact.sum() / the_number_of_mark
 
         return tpp_loss, fact, mark_loss
 
@@ -1402,7 +1402,7 @@ class THPWrapper(BasicModel):
               The MTPP model that we train.
             * ```list``` minibatch
               shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_events, score, mask], (mean, std)]
+              data structure: [[input_time, input_mark, score, mask], (mean, std)]
               data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
               The input minibatch.
             * ```torch.device``` device
@@ -1415,7 +1415,7 @@ class THPWrapper(BasicModel):
               The average NLL loss of the end event, which is the integral of the intensity function from the last occurred event to the end time.
             * ```float``` fact
               The average NLL loss with the real distribution. This value only makes sense for synthetic datasets.
-            * ```float``` events_loss
+            * ```float``` mark_loss
               The average cross-entropy loss of the event prediction distribution. The value is only for performance measure porpose.
             * ```float``` mae
               The average error between predicted time and real time.
@@ -1424,26 +1424,26 @@ class THPWrapper(BasicModel):
         """
         self.model.eval()
 
-        (time, events, fact, mask), (mean, std) = (
+        (time, mark, fact, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
         )
         (
             time_loss,
             loss_survival,
-            events_loss,
+            mark_loss,
             mae,
             acc,
             macro_f1,
             micro_f1,
-            the_number_of_events,
-        ) = self.forward("evaluate", time, events, mask, mean, std)
+            the_number_of_mark,
+        ) = self.forward("evaluate", time, mark, mask, mean, std)
 
         time_loss = time_loss.item()
         loss_survival = loss_survival.item()
-        events_loss = events_loss.item()
-        fact = fact.sum().item() / the_number_of_events
+        mark_loss = mark_loss.item()
+        fact = fact.sum().item() / the_number_of_mark
 
-        return time_loss, loss_survival, fact, events_loss, mae, acc, macro_f1, micro_f1
+        return time_loss, loss_survival, fact, mark_loss, mae, acc, macro_f1, micro_f1
 
     def postprocess(self, input_data, procedure):
         """
@@ -1463,14 +1463,14 @@ class THPWrapper(BasicModel):
         def train_postprocess(input_data):
             """
             Training process
-            [absolute loss, relative loss, events loss]
+            [absolute loss, relative loss, mark loss]
             """
             return [input_data[0], input_data[0] - input_data[1], input_data[2]]
 
         def test_postprocess(input_data):
             """
             Evaluation process
-            [absolute loss, relative loss, events loss, mae value]
+            [absolute loss, relative loss, mark loss, mae value]
             """
             return [
                 input_data[0],
@@ -1506,7 +1506,7 @@ class THPWrapper(BasicModel):
             format_dict = {}
             format_dict["absolute_loss"] = pack_one_value_to_dict(input_data[0])
             format_dict["relative_loss"] = pack_one_value_to_dict(input_data[1])
-            format_dict["events_loss"] = pack_one_value_to_dict(input_data[2])
+            format_dict["mark_loss"] = pack_one_value_to_dict(input_data[2])
             return format_dict
 
         def test_log_print_format(input_data):
@@ -1514,7 +1514,7 @@ class THPWrapper(BasicModel):
             format_dict["absolute_NLL_loss"] = pack_one_value_to_dict(input_data[0])
             format_dict["avg_survival_loss"] = pack_one_value_to_dict(input_data[1])
             format_dict["relative_NLL_loss"] = pack_one_value_to_dict(input_data[2])
-            format_dict["events_loss"] = pack_one_value_to_dict(input_data[3])
+            format_dict["mark_loss"] = pack_one_value_to_dict(input_data[3])
             format_dict["mae"] = pack_one_value_to_dict(input_data[4], "2.8f")
             format_dict["acc"] = pack_one_value_to_dict(input_data[5], "2.8f")
             format_dict["macro-f1"] = pack_one_value_to_dict(input_data[6], "2.8f")

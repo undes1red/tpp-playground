@@ -2,9 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from src.toolbox.position_embedding import BiasedPositionalEmbedding
-from src.toolbox.subsequent_mask import get_subsequent_mask
-from src.toolbox.transformer import TransformerLayer
+from src.toolbox.modules import BiasedPositionalEmbedding, TransformerLayer, get_subsequent_mask
 
 
 class TransformerEncoder(nn.Module):
@@ -50,28 +48,28 @@ class TransformerEncoder(nn.Module):
             device=self.device,
         )
 
-    def forward(self, time_history, events_history, non_pad_mask, custom_events_history=False):
+    def forward(self, time_history, mark_history, non_pad_mask, custom_mark_history=False):
         """
         Encode the input continuous-time event stream using Transformer.
 
         ### Args
           * ```torch.tensor``` time_history
             shape: ```[batch_size, seq_len]```
-            The length of all time intervals between two adjacent events.
-          * ```torch.tensor``` events_history
+            The length of all time intervals between two adjacent mark.
+          * ```torch.tensor``` mark_history
             shape: ```[batch_size, seq_len]```
             Vectors containing the information about each event.
           * ```torch.tensor``` non_pad_mask
             shape: ```[batch_size, seq_len]```
             Padding mask. 1 refers to the existence of an event, while 0 means a dummy event.
-          * ```bool``` custom_events_history
+          * ```bool``` custom_mark_history
             This argument should be true if the event_history has already been converted into embeddings.
         ### Outputs
             * ```torch.tensor``` enc_output
               shape: ```[batch_size, seq_len, d_input]```
               The representation of the original input.
         """
-        return self.encoder(time_history, events_history, non_pad_mask, custom_events_history)
+        return self.encoder(time_history, mark_history, non_pad_mask, custom_mark_history)
         # [batch_size, seq_len, d_input]
 
     def get_event_embedding(self, input_event):
@@ -81,7 +79,7 @@ class TransformerEncoder(nn.Module):
         ### Args
           * ```torch.tensor``` input_event
             shape: ```[batch_size, seq_len]```
-            The mark of observed events.
+            The mark of observed mark.
 
         ### Outputs
             * ```torch.tensor```
@@ -143,21 +141,21 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, time_history, events_history, non_pad_mask, custom_events_history):
+    def forward(self, time_history, mark_history, non_pad_mask, custom_mark_history):
         """
         Encode the input continuous-time event stream using Transformer.
 
         ### Args
           * ```torch.tensor``` time_history
             shape: ```[batch_size, seq_len]```
-            The length of all time intervals between two adjacent events.
-          * ```torch.tensor``` events_history
+            The length of all time intervals between two adjacent mark.
+          * ```torch.tensor``` mark_history
             shape: ```[batch_size, seq_len]```
             Vectors containing the information about each event.
           * ```torch.tensor``` non_pad_mask
             shape: ```[batch_size, seq_len]```
             Padding mask. 1 refers to the existence of an event, while 0 means a dummy event.
-          * ```bool``` custom_events_history
+          * ```bool``` custom_mark_history
             This argument should be true if the event_history has already been converted into embeddings.
         ### Outputs
             * ```torch.tensor``` mingled_emb
@@ -166,7 +164,7 @@ class Encoder(nn.Module):
         """
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
-        seq_len = events_history.shape[-1]
+        seq_len = mark_history.shape[-1]
         self_attn_mask_subseq = get_subsequent_mask(seq_len, device=self.device)
         # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = rearrange(non_pad_mask, "b s -> b () s")  # [batch_size, seq_len, seq_len]
@@ -176,12 +174,12 @@ class Encoder(nn.Module):
         time_emb = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_input]
 
         # Event Embedding
-        if events_history is not None:
-            events_emb = events_history if custom_events_history else self.event_emb(events_history)
+        if mark_history is not None:
+            mark_emb = mark_history if custom_mark_history else self.event_emb(mark_history)
         # [batch_size, seq_len, d_input]
         else:
-            events_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
-        mingled_emb = time_emb + events_emb  # [batch_size, seq_len, d_input]
+            mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
+        mingled_emb = time_emb + mark_emb  # [batch_size, seq_len, d_input]
 
         for enc_layer in self.layer_stack:
             mingled_emb, _ = enc_layer(
@@ -197,7 +195,7 @@ class Encoder(nn.Module):
         ### Args
           * ```torch.tensor``` input_event
             shape: ```[batch_size, seq_len]```
-            The mark of observed events.
+            The mark of observed mark.
 
         ### Outputs
             * ```torch.tensor```

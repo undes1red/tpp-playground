@@ -79,7 +79,7 @@ class GenericDataset(utils.data.Dataset):
         self.device = device
         self.float_dtype = torch.get_default_dtype()
         self.evaluate = evaluate
-        self.number_of_events = property_dict["num_events"]
+        self.number_of_mark = property_dict["num_marks"]
         self.start_time = property_dict["t_0"]
         self.end_time = property_dict["T"]
         self.mean = property_dict["mean"] if input_norm_data else 0
@@ -89,7 +89,8 @@ class GenericDataset(utils.data.Dataset):
         self.time_seq = data["time_seq"]
         self.score = data["score"]
         self.intensity = data["intensity"]
-        self.event = data["event"]
+        # compatible with old names.
+        self.marks = data["event"]
 
         self.dataset_size = len(self.time_seq)
 
@@ -104,11 +105,11 @@ class GenericDataset(utils.data.Dataset):
                 # Do not use T
                 self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
                 self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
-                self.event = [append(seq, self.number_of_events) for seq in self.event]
+                self.marks = [append(seq, self.number_of_mark) for seq in self.marks]
 
             self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
             self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
-            self.event = [prepend(seq, self.number_of_events) for seq in self.event]
+            self.marks = [prepend(seq, self.number_of_mark) for seq in self.marks]
         else:
             if self.evaluate:
                 self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
@@ -118,17 +119,17 @@ class GenericDataset(utils.data.Dataset):
                 # Do not use T
                 self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
                 self.time_seq = [append(seq, seq[-1] + 0.1) for seq in self.time_seq]
-                self.event = [append(seq, self.number_of_events) for seq in self.event]
+                self.marks = [append(seq, self.number_of_mark) for seq in self.marks]
 
-            self.event = [prepend(seq, self.number_of_events) for seq in self.event]
+            self.marks = [prepend(seq, self.number_of_mark) for seq in self.marks]
 
         # Fix datatype
         self.time_seq = [np.array(seq, dtype=np.float32) for seq in self.time_seq]
         self.score = [np.array(seq, dtype=np.float32) for seq in self.score]
         self.intensity = [np.array(seq, dtype=np.float32) for seq in self.intensity]
-        self.event = [np.array(seq, dtype=np.int64) for seq in self.event]
+        self.marks = [np.array(seq, dtype=np.int64) for seq in self.marks]
 
-        # Caveat: self.time_seq and self.event have dummy events while self.score and self.intensity do not.
+        # Caveat: self.time_seq and self.marks have dummy mark while self.score and self.intensity do not.
         self.max_seq_len = max([len(item) for item in self.time_seq])
 
     def __getitem__(self: Self, index: int | Iterable) -> list:
@@ -143,7 +144,7 @@ class GenericDataset(utils.data.Dataset):
         """
         """
         Synthetic dataloader is very simple. It doesn't have any event infomation at each timestamp,
-        and only the time differences between two neighboring events are available.
+        and only the time differences between two neighboring mark are available.
         """
         if isinstance(index, slice):
             return [self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)]
@@ -151,12 +152,12 @@ class GenericDataset(utils.data.Dataset):
         if self.evaluate:
             return (
                 self.time_seq[index],
-                self.event[index],
+                self.marks[index],
                 self.score[index],
                 self.intensity[index],
             )
 
-        return self.time_seq[index], self.event[index], self.score[index]
+        return self.time_seq[index], self.marks[index], self.score[index]
 
     def __len__(self: Self):
         """return the length of the dataset.
@@ -186,7 +187,7 @@ class GenericDataset(utils.data.Dataset):
                 item[1],
                 (0, pad_length),
                 mode="constant",
-                constant_values=self.number_of_events,
+                constant_values=self.number_of_mark,
             )
             padded_score = np.pad(item[2], (0, pad_length), mode="constant", constant_values=0)
             padded_item = [padded_time_seq, padded_event, padded_score, mask]

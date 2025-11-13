@@ -94,6 +94,10 @@ class TaskHost:
         # Do not break the CUDA graph from "tensor.item()".
         torch._dynamo.config.capture_scalar_outputs = True
 
+        # workaround for torch.compile not supporting RNNs.
+        # https://github.com/pytorch/pytorch/issues/91439
+        torch._dynamo.config.allow_rnn = True
+
         # Model explicit casting.
         if self.opt.dtype != "float32":
             logger.warning(

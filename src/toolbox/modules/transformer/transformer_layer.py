@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from src.toolbox.transformer.ffn import FFN
-from src.toolbox.transformer.selfattn import SelfAttn
+from src.toolbox.modules.transformer.ffn import FFN
+from src.toolbox.modules.transformer.selfattn import SelfAttn
 
 
 class TransformerLayer(nn.Module):
