@@ -83,7 +83,6 @@ class FullyNNModel(BasicModel):
         """
         super().__init__()
         self.device = device
-        self.compile_or_not = opt.compile
         self.num_marks = opt.info_dict["num_marks"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -126,26 +125,20 @@ class FullyNNModel(BasicModel):
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
-    def remove_dummy_event_from_mask(self, mask):
-        """
-        Remove the probability of the dummy event from the mask.
+    def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
+        """Remove the dummy events by altering the mask.
 
-        ### Args
-            * ```torch.tensor``` mask
-              shape: [batch_size, seq_len]
-              The input mask tensor.
+        Args:
+            self (Self): the SAHP model
+            mask (torch.Tensor): the input mask tensor. shape: [batch, seq_len]
 
-        ### Outputs
-            * ```torch.tensor``` mask_without_dummy
-              shape: [batch_size, seq_len]
-              The output mask tensor with the last unmask event in each sequence removed.
+        Returns:
+            torch.Tensor: The input mask tensor with the dummy events at the end removed. shape: [batch, seq_len]
         """
-        mask_without_dummy = torch.zeros_like(mask)  # [batch_size, seq_len - 1]
-        for idx, mask_per_seq in enumerate(mask):
-            dummy_index = mask_per_seq.sum() - 1
-            mask_without_dummy_per_seq = copy.deepcopy(mask_per_seq.detach())
-            mask_without_dummy_per_seq[dummy_index] = 0
-            mask_without_dummy[idx] = mask_without_dummy_per_seq
+        dummy_indices = mask.sum(dim=1, dtype=torch.long) - 1  # [batch_size]
+        mask_without_dummy = mask.clone()  # [batch_size, seq_len]
+        batch_indices = torch.arange(mask.size(0), device=mask.device)  # [batch_size]
+        mask_without_dummy[batch_indices, dummy_indices] = 0  # [batch_size, seq_len]
 
         return mask_without_dummy
 
@@ -1039,7 +1032,7 @@ class FullyNNModel(BasicModel):
             expanded_intensity_all_marks_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            time_history, time_next_inf, marks_history, mask_history, resolution_inf, mean, std
+            time_history, time_next_inf, marks_history, resolution_inf, mean, std
         )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
@@ -1057,7 +1050,6 @@ class FullyNNModel(BasicModel):
             task="mt",
             marks_history=marks_history,
             time_history=time_history,
-            mask_history=mask_history,
             p_m=probability_integral_to_inf,
             resolution=resolution_between_marks,
             number_of_total_samples=opt.sample_rate,
@@ -1122,7 +1114,7 @@ class FullyNNModel(BasicModel):
             expanded_intensity_all_marks_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            time_history, time_next_inf, marks_history, mask_history, resolution_inf, mean, std
+            time_history, time_next_inf, marks_history, resolution_inf, mean, std
         )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
@@ -1140,7 +1132,6 @@ class FullyNNModel(BasicModel):
             task="mt",
             marks_history=marks_history,
             time_history=time_history,
-            mask_history=mask_history,
             p_m=probability_integral_to_inf,
             resolution=resolution_between_marks,
             number_of_total_samples=opt.sample_rate,

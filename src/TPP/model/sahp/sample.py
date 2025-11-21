@@ -96,7 +96,7 @@ def sampling_by_its(self, task, *args, **kwargs):
 
 
 def sampling_by_its_for_mt(
-    self, marks_history, time_history, mask_history, p_m, resolution, number_of_total_samples, step, inf_val, mean, std
+    self, time_history, marks_history, mask_history, p_m, resolution, number_of_total_samples, step, inf_val, mean, std
 ):
     # Preprocess
     sample_rate_list = step_split(number_of_total_samples, step)
@@ -149,7 +149,7 @@ def sampling_by_its_for_mt(
     return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len, num_marks]
 
 
-def sampling_by_its_for_tm(self, marks_history, time_history, mask_history, number_of_total_samples, step, mean, std):
+def sampling_by_its_for_tm(self, time_history, marks_history, mask_history, number_of_total_samples, step, mean, std):
     sample_rate_list = step_split(number_of_total_samples, step)
 
     def bisect_target(taus, probability_threshold):

@@ -187,7 +187,7 @@ def sampling_by_thinning_for_mt(self, *args, **kwargs):
     raise Exception("Thinning algorithm can not solve task MT. Please use ITS by setting sampling_approach = its.")
 
 
-def sampling_by_thinning_for_tm(self, marks_history, time_history, number_of_total_samples, step, mean, std):
+def sampling_by_thinning_for_tm(self, time_history, marks_history, number_of_total_samples, step, mean, std):
     sample_rate_list = step_split(number_of_total_samples, step)
     batch_size, seq_len = time_history.shape
     maximum_thinning_loops = 50

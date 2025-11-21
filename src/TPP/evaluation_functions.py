@@ -88,29 +88,6 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     )
 
 
-def mae_e_and_f1_by_time_event_postprocess(all_evaluation_results, desc, opt):
-    mae_e, f1, events_pred_index, events_next = all_evaluation_results
-
-    f1 = np.mean(f1)
-    mean_mae_e = np.mean(flatten(mae_e))
-
-    """
-    Report the average of mae-e and f1.
-    """
-    result_file = opt.store_dir / f"{desc}_mae_e_and_macro-f1_by_time_event.txt"
-    strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e} and average macro-F1 is {f1}"
-    write_to_txt(strings, result_file)
-    result_dist_file = opt.store_dir / f"{desc}_mae_e_and_f1_by_time_event_result.pkl"
-    dump_to_pkl({"mae_e": mean_mae_e, "f1": f1}, result_dist_file, compression="bz2")
-
-    """
-    Dump the detailed distribution of mae-e for further usage.
-    """
-    mae_e_dist_file = opt.store_dir / f"{desc}_mae_e_by_time_event.pkl"
-    data = {"mae_e": mae_e, "f1": f1, "events_pred_index": events_pred_index, "event_next": events_next}
-    dump_to_pkl(data, mae_e_dist_file, compression="bz2")
-
-
 def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     """
     This function is called when task_name = which_event_occurs_first.
@@ -131,6 +108,7 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(
         {"mae": mae, "acc": acc, "macro-F1": macro_f1, "micro-F1": micro_f1}, result_dist_file, compression="bz2"
     )
+
 
 def balanced_sampling_from_distribution_postprocess(all_evaluation_results, desc, opt):
     """
@@ -285,15 +263,14 @@ desc_funcs = {
     "spearman_and_l1": {"desc_string": "Spearman and L1 for {0}", "postprocess_func": spearman_and_l1_postprocess},
     "mae_and_f1": {"desc_string": "MAE and macro-f1 for {0}", "postprocess_func": mae_and_f1_postprocess},
     "mae_e_and_f1": {"desc_string": "MAE-E and macro-f1 for {0}", "postprocess_func": mae_e_and_f1_postprocess},
-    "mae_e_and_f1_by_time_event": {
-        "desc_string": "MAE-E and macro-f1 for {0} following NER",
-        "postprocess_func": mae_e_and_f1_by_time_event_postprocess,
-    },
     "which_event_occurs_first": {
         "desc_string": "Predict the next event by finding which event occurs first for {0}",
         "postprocess_func": which_event_occurs_first_postprocess,
     },
-    "balanced_sampling_from_distribution": {"desc_string": "Samples of {0} for each mark", "postprocess_func": balanced_sampling_from_distribution_postprocess},
+    "balanced_sampling_from_distribution": {
+        "desc_string": "Samples of {0} for each mark",
+        "postprocess_func": balanced_sampling_from_distribution_postprocess,
+    },
     "generate_hypro_dataset": {
         "desc_string": "Generate HYPRO dataset for {0}",
         "postprocess_func": generate_hypro_dataset_postprocess,

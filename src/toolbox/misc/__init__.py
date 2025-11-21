@@ -14,7 +14,7 @@ from src.toolbox.misc.load_data import load_from_pkl
 from src.toolbox.misc.merge_dict import merge_list_of_dicts
 from src.toolbox.misc.mkdir_if_not_exist import mkdir_if_not_exist
 from src.toolbox.misc.pack_unpack_value import only_keep_data, pack_one_value_to_dict
-from src.toolbox.misc.predict_event import predict_event
+from src.toolbox.misc.predict_mark import predict_mark
 from src.toolbox.misc.print_args import print_args
 from src.toolbox.misc.reverse_dict_key_val import reverse_dict_key_val
 from src.toolbox.misc.save_matplotlib_figure import save_fig
@@ -46,7 +46,7 @@ __all__ = [
     "mkdir_if_not_exist",
     "only_keep_data",
     "pack_one_value_to_dict",
-    "predict_event",
+    "predict_mark",
     "print_args",
     "reverse_dict_key_val",
     "save_fig",

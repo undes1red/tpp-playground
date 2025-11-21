@@ -4,10 +4,9 @@ from einops import rearrange, repeat, reduce, pack
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score, top_k_accuracy_score
 from datetime import datetime, timedelta
 
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, move_from_tensor_to_list, pack_one_value_to_dict, argument_check, predict_event, reverse_dict_key_val
-from src.toolbox.integration import approximate_integration
+from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, move_from_tensor_to_list, pack_one_value_to_dict, argument_check, predict_mark, reverse_dict_key_val
+from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
-# from src.toolbox.llms import CustomOpenAIforVLLM, VLLMOfflineInference, extract_content, remove_thinking, create_messages
 
 from src.NTPP.model.basic_tpp_model import memory_ceiling, BasicModel
 from src.NTPP.model.ctlstm.plot import *
@@ -445,7 +444,7 @@ class CTLSTMWrapper(BasicModel):
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
         mark_distribution = intensity_all_events / intensity_all_events.sum(dim = -1, keepdim = True)
                                                                                # [llm_contrast_sample_num, batch_size, seq_len, num_events]
-        sampled_events = predict_event(mark_distribution, sample = True)       # [llm_contrast_sample_num, batch_size, seq_len]
+        sampled_events = predict_mark(mark_distribution, sample = True)       # [llm_contrast_sample_num, batch_size, seq_len]
         # merge the real next event with the pred_time
         # [real_pred_time, (sampled_times)]
         sampled_time, _ = pack((time_next, sampled_time), '* b s')             # [llm_contrast_sample_num + 1, batch_size, seq_len]

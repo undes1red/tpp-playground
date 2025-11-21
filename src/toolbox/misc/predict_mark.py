@@ -2,13 +2,13 @@ import numpy as np
 import torch
 
 
-def predict_event(probability, logits=False, sample=False):
+def predict_mark(probability, logits=False, sample=False):
     if torch.is_tensor(probability):
-        return predict_event_torch(probability, logits=logits, sample=sample)
-    return predict_event_numpy(probability, logits=logits, sample=sample)
+        return predict_mark_torch(probability, logits=logits, sample=sample)
+    return predict_mark_numpy(probability, logits=logits, sample=sample)
 
 
-def predict_event_numpy(probability, logits=False, sample=False):
+def predict_mark_numpy(probability, logits=False, sample=False):
     """
     Sample event from a (unnormalized) probability distribution using numpy.
     """
@@ -25,7 +25,7 @@ def predict_event_numpy(probability, logits=False, sample=False):
     return sampled_marks
 
 
-def predict_event_torch(probability, logits=False, sample=False):
+def predict_mark_torch(probability, logits=False, sample=False):
     """
     Sample event from a (unnormalized) probability distribution using pytorch.
     """
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     # test 1
     probability = np.array([[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]])
     expected = np.array([2, 1])
-    result = predict_event(probability, sample=False)
+    result = predict_mark(probability, sample=False)
     assert np.array_equal(result, expected), f"Expected {expected}, got {result}"
     print(result)
 
@@ -56,33 +56,33 @@ if __name__ == "__main__":
     probability = np.array(
         [[[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]], [[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]], [[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]]]
     )
-    result = predict_event(probability, sample=True)
+    result = predict_mark(probability, sample=True)
     assert result.shape == (3, 2), "Output shape should be (3, 2)"
     print(result)
 
     # test 3
-    probability = torch.tensor([[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]])
-    expected = torch.tensor([2, 1])
-    result = predict_event(probability, sample=False)
+    probability = torch.tensor([[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]], device='cuda')
+    expected = torch.tensor([2, 1], device='cuda')
+    result = predict_mark(probability, sample=False)
     assert torch.equal(result, expected), f"Expected {expected}, got {result}"
     print(result)
 
     # test 4
     probability = torch.tensor([[0.1, 0.2, 0.7], [0.3, 0.5, 0.2]])
-    result = predict_event(probability, sample=True)
+    result = predict_mark(probability, sample=True)
     assert result.shape == (2,), "Output shape should be (2,)"
     print(result)
 
     # test 5
     logits = np.array([[-np.inf, -np.inf, 0], [-np.inf, 0, -np.inf]])
     expected = np.array([2, 1])
-    result = predict_event(logits, logits=True, sample=False)
+    result = predict_mark(logits, logits=True, sample=False)
     assert np.array_equal(result, expected), f"Expected {expected}, got {result}"
     print(result)
 
     # test 6
     logits = torch.tensor([[-float("inf"), -float("inf"), 0], [-float("inf"), 0, -float("inf")]])
     expected = torch.tensor([2, 1])
-    result = predict_event(logits, logits=True, sample=False)
+    result = predict_mark(logits, logits=True, sample=False)
     assert torch.equal(result, expected), f"Expected {expected}, got {result}"
     print(result)

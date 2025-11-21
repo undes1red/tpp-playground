@@ -91,7 +91,6 @@ class FENNModel(BasicModel):
         """
         super().__init__()
         self.device = device
-        self.compile_or_not = opt.compile
         self.num_marks = opt.info_dict["num_marks"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -1051,7 +1050,7 @@ class FENNModel(BasicModel):
             expanded_intensity_all_marks_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            time_history, time_next_inf, marks_history, mask_history, resolution_inf, mean, std
+            time_history, time_next_inf, marks_history, resolution_inf, mean, std
         )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
@@ -1069,7 +1068,6 @@ class FENNModel(BasicModel):
             task="mt",
             marks_history=marks_history,
             time_history=time_history,
-            mask_history=mask_history,
             p_m=probability_integral_to_inf,
             resolution=resolution_between_marks,
             number_of_total_samples=opt.sample_rate,
@@ -1117,11 +1115,6 @@ class FENNModel(BasicModel):
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
         marks_history, marks_next = self.divide_history_and_next(input_marks)
         # [batch_size, seq_len]
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(input_marks)
-        # [batch_size, seq_len]
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_marks(
@@ -1134,7 +1127,7 @@ class FENNModel(BasicModel):
             expanded_intensity_all_marks_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            time_history, time_next_inf, marks_history, mask_history, resolution_inf, mean, std
+            time_history, time_next_inf, marks_history, resolution_inf, mean, std
         )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
@@ -1152,7 +1145,6 @@ class FENNModel(BasicModel):
             task="mt",
             marks_history=marks_history,
             time_history=time_history,
-            mask_history=mask_history,
             p_m=probability_integral_to_inf,
             resolution=resolution_between_marks,
             number_of_total_samples=opt.sample_rate,

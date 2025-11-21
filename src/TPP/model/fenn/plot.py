@@ -275,12 +275,8 @@ def generate_debug_figure(data, opt):
     marks_next = data["marks_next"]  # [batch_size, seq_len]
     time_next = data["time_next"]  # [batch_size, seq_len]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
-    expand_intensity = data[
-        "expand_intensity_for_each_mark"
-    ]  # [batch_size, seq_len, resolution, num_marks]
-    expand_integral = data[
-        "expand_integral_for_each_mark"
-    ]  # [batch_size, seq_len, resolution, num_marks]
+    expand_intensity = data["expand_intensity_for_each_mark"]  # [batch_size, seq_len, resolution, num_marks]
+    expand_integral = data["expand_integral_for_each_mark"]  # [batch_size, seq_len, resolution, num_marks]
     expand_timestamp = timestamp  # [batch_size, seq_len, resolution]
 
     packed_data = zip(
