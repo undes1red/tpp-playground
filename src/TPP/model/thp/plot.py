@@ -26,13 +26,13 @@ def generate_intensity_figure(data, opt):
           Task arguments.
     """
     timestamp = data["timestamp"]
-    num_mark = opt.info_dict["num_mark"]
-    color_palette = stable_palette([f"Mark {i}" for i in range(num_mark)])
+    num_marks = opt.info_dict["num_marks"]
+    color_palette = stable_palette([f"Mark {i}" for i in range(num_marks)])
 
     # Part 1: the sum of intensity functions over all markers.
-    expand_intensity = data["expand_intensity"]  # [batch_size, seq_len, resolution, num_mark]
+    expand_intensity = data["expand_intensity"]  # [batch_size, seq_len, resolution, num_marks]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
-    mark_next = data["mark_next"]  # [batch_size, seq_len]
+    marks_next = data["marks_next"]  # [batch_size, seq_len]
     time_next = data["time_next"]  # [batch_size, seq_len]
     input_intensity = data["input_intensity"]  # [batch_size, seq_len + 1]
 
@@ -40,11 +40,11 @@ def generate_intensity_figure(data, opt):
     true_intensity = expand_true_intensity(time_next, input_intensity, opt)  # [batch_size, seq_len, resolution]
 
     packed_data = zip(
-        *move_from_tensor_to_ndarray(expand_intensity, mark_next, time_next, mask_next, timestamp, true_intensity)
+        *move_from_tensor_to_ndarray(expand_intensity, marks_next, time_next, mask_next, timestamp, true_intensity)
     )
     for idx, (
         expand_intensity_per_seq,
-        mark_next_per_seq,
+        marks_next_per_seq,
         time_next_per_seq,
         mask_next_per_seq,
         timestamp_per_seq,
@@ -56,11 +56,11 @@ def generate_intensity_figure(data, opt):
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
         timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis=-1)
 
-        df_event = pd.DataFrame.from_dict(
+        df_mark = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(mark_next_per_seq),
-                "Mark": [f"Mark {item}" for item in mark_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
             }
         )
 
@@ -96,7 +96,7 @@ def generate_intensity_figure(data, opt):
             )
 
         fig = draw_intensity_integral_and_probability(
-            df_intensity_plot, df_event, annotation, "Intensity", color_palette, num_mark
+            df_intensity_plot, df_mark, annotation, "Intensity", color_palette, num_marks
         )
         save_fig(fig, opt.plot_store_dir_for_this_batch, f"intensity_{idx}.pdf")
         logger.info(f"intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
@@ -115,20 +115,20 @@ def generate_integral_figure(data, opt):
           Task arguments.
     """
     timestamp = data["timestamp"]
-    num_mark = opt.info_dict["num_mark"]
-    color_palette = stable_palette([f"Mark {i}" for i in range(num_mark)])
+    num_marks = opt.info_dict["num_marks"]
+    color_palette = stable_palette([f"Mark {i}" for i in range(num_marks)])
 
     # Part 1: the sum of intensity integrals over all markers.
     expand_integral = data["expand_integral"]  # [batch_size, seq_len, resolution]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
-    mark_next = data["mark_next"]  # [batch_size, seq_len]
+    marks_next = data["marks_next"]  # [batch_size, seq_len]
     time_next = data["time_next"]  # [batch_size, seq_len]
     expand_integral = expand_integral.sum(dim=-1)  # [batch_size, seq_len, resolution]
 
-    packed_data = zip(*move_from_tensor_to_ndarray(expand_integral, mark_next, time_next, mask_next, timestamp))
+    packed_data = zip(*move_from_tensor_to_ndarray(expand_integral, marks_next, time_next, mask_next, timestamp))
     for idx, (
         expand_integral_per_seq,
-        mark_next_per_seq,
+        marks_next_per_seq,
         time_next_per_seq,
         mask_next_per_seq,
         timestamp_per_seq,
@@ -139,11 +139,11 @@ def generate_integral_figure(data, opt):
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
         timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis=-1)
 
-        df_event = pd.DataFrame.from_dict(
+        df_mark = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(mark_next_per_seq),
-                "Mark": [f"Mark {item}" for item in mark_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
             }
         )
 
@@ -152,7 +152,7 @@ def generate_integral_figure(data, opt):
         )
 
         fig = draw_intensity_integral_and_probability(
-            df_integral_plot, df_event, None, "Integral", color_palette, num_mark
+            df_integral_plot, df_mark, None, "Integral", color_palette, num_marks
         )
         save_fig(fig, opt.plot_store_dir_for_this_batch, f"integral_{idx}.pdf")
         logger.info(f"integral_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
@@ -171,13 +171,13 @@ def generate_probability_figure(data, opt):
           Task arguments.
     """
     timestamp = data["timestamp"]
-    num_mark = opt.info_dict["num_mark"]
-    color_palette = stable_palette([f"Mark {i}" for i in range(num_mark)])
+    num_marks = opt.info_dict["num_marks"]
+    color_palette = stable_palette([f"Mark {i}" for i in range(num_marks)])
 
     # Part 1: the sum of probability distributions over all markers.
-    expand_probability = data["expand_probability"]  # [batch_size, seq_len, resolution, num_mark]
+    expand_probability = data["expand_probability"]  # [batch_size, seq_len, resolution, num_marks]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
-    mark_next = data["mark_next"]  # [batch_size, seq_len]
+    marks_next = data["marks_next"]  # [batch_size, seq_len]
     time_next = data["time_next"]  # [batch_size, seq_len]
     input_intensity = data["input_intensity"]  # [batch_size, seq_len + 1]
 
@@ -187,11 +187,11 @@ def generate_probability_figure(data, opt):
     )  # [batch_size, seq_len, resolution] or batch_size * None
 
     packed_data = zip(
-        *move_from_tensor_to_ndarray(expand_probability, mark_next, time_next, mask_next, timestamp, true_probability)
+        *move_from_tensor_to_ndarray(expand_probability, marks_next, time_next, mask_next, timestamp, true_probability)
     )
     for idx, (
         expand_probability_per_seq,
-        mark_next_per_seq,
+        marks_next_per_seq,
         time_next_per_seq,
         mask_next_per_seq,
         timestamp_per_seq,
@@ -203,11 +203,11 @@ def generate_probability_figure(data, opt):
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
         timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis=-1)
 
-        df_event = pd.DataFrame.from_dict(
+        df_mark = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(mark_next_per_seq),
-                "Mark": [f"Mark {item}" for item in mark_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
             }
         )
 
@@ -243,7 +243,7 @@ def generate_probability_figure(data, opt):
             )
 
         fig = draw_intensity_integral_and_probability(
-            df_probability_plot, df_event, annotation, "Probability", color_palette, num_mark
+            df_probability_plot, df_mark, annotation, "Probability", color_palette, num_marks
         )
         save_fig(fig, opt.plot_store_dir_for_this_batch, f"probability_{idx}.pdf")
         logger.info(f"probability_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
@@ -262,30 +262,30 @@ def generate_debug_figure(data, opt):
           Task arguments.
     """
     timestamp = data["timestamp"]
-    num_mark = opt.info_dict["num_mark"]
+    num_marks = opt.info_dict["num_marks"]
     resolution = opt.resolution
-    color_palette = stable_palette([f"Mark {i}" for i in range(num_mark)])
+    color_palette = stable_palette([f"Mark {i}" for i in range(num_marks)])
 
     # Part 1: expand intensity and expand integral
     # Required plots: lineplot and scatterplot
-    mark_next = data["mark_next"]  # [batch_size, seq_len]
+    marks_next = data["marks_next"]  # [batch_size, seq_len]
     time_next = data["time_next"]  # [batch_size, seq_len]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
     expand_intensity = data[
-        "expand_intensity_for_each_event"
-    ]  # [batch_size, seq_len, resolution, num_mark] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+        "expand_intensity_for_each_mark"
+    ]  # [batch_size, seq_len, resolution, num_marks] if self.mark_toggle else [batch_size, seq_len, resolution, 1]
     expand_integral = data[
-        "expand_integral_for_each_event"
-    ]  # [batch_size, seq_len, resolution, num_mark] if self.event_toggle else [batch_size, seq_len, resolution, 1]
+        "expand_integral_for_each_mark"
+    ]  # [batch_size, seq_len, resolution, num_marks] if self.mark_toggle else [batch_size, seq_len, resolution, 1]
     expand_timestamp = timestamp  # [batch_size, seq_len, resolution]
 
     packed_data = zip(
         *move_from_tensor_to_ndarray(
-            mark_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp
+            marks_next, time_next, mask_next, expand_intensity, expand_integral, expand_timestamp
         )
     )
     for idx, (
-        mark_next_per_seq,
+        marks_next_per_seq,
         time_next_per_seq,
         mask_next_per_seq,
         expand_intensity_per_seq,
@@ -300,36 +300,36 @@ def generate_debug_figure(data, opt):
 
         # Figure 1 and 2: Mark-wise intensity and integral function.
         # Required plots: lineplot
-        df_event = pd.DataFrame.from_dict(
+        df_mark = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(mark_next_per_seq),
-                "Mark": [f"Mark {item}" for item in mark_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
             }
         )
 
-        event_list = [f"Mark {i}" for i in range(num_mark)]
+        mark_list = [f"Mark {i}" for i in range(num_marks)]
 
         df_intensity = pd.DataFrame.from_dict(
             {
-                "Time": timestamp_per_seq.flatten().repeat(num_mark),
+                "Time": timestamp_per_seq.flatten().repeat(num_marks),
                 "Intensity": expand_intensity_per_seq[:seq_len, :, :].flatten(),
-                "Mark": event_list * (seq_len * resolution),
+                "Mark": mark_list * (seq_len * resolution),
             }
         )
         df_integral = pd.DataFrame.from_dict(
             {
-                "Time": timestamp_per_seq.flatten().repeat(num_mark),
+                "Time": timestamp_per_seq.flatten().repeat(num_marks),
                 "Integral": expand_integral_per_seq[:seq_len, :, :].flatten(),
-                "Mark": event_list * (seq_len * resolution),
+                "Mark": mark_list * (seq_len * resolution),
             }
         )
 
-        fig1 = draw_intensity_integral_per_mark(df_intensity, df_event, "Intensity", color_palette, num_mark)
+        fig1 = draw_intensity_integral_per_mark(df_intensity, df_mark, "Intensity", color_palette, num_marks)
         save_fig(fig1, opt.plot_store_dir_for_this_batch, f"mark_wise_intensity_{idx}.pdf")
         logger.info(f"mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
 
-        fig2 = draw_intensity_integral_per_mark(df_integral, df_event, "Integral", color_palette, num_mark)
+        fig2 = draw_intensity_integral_per_mark(df_integral, df_mark, "Integral", color_palette, num_marks)
         save_fig(fig2, opt.plot_store_dir_for_this_batch, f"mark_wise_integral_{idx}.pdf")
         logger.info(f"mark_wise_integral_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
 
@@ -344,10 +344,10 @@ def generate_debug_figure(data, opt):
 
     # Part 6: plot for Top-K accuracy
     # Required plots: lineplot
-    top_k = data["top_k"]  # [batch_size, num_mark - 1]
+    top_k = data["top_k"]  # [batch_size, num_marks - 1]
     for idx, top_k_per_seq in enumerate(top_k):
         data_top_k_per_seq = {
-            "K": np.arange(1, max(num_mark, 2)),
+            "K": np.arange(1, max(num_marks, 2)),
             "Accuracy": top_k_per_seq,
         }
 
@@ -360,7 +360,7 @@ def generate_debug_figure(data, opt):
         save_fig(fig6, opt.plot_store_dir_for_this_batch, f"topk_{idx}.pdf")
         logger.info(f"Top-K_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
 
-    # Part 7: Logarithm of MAE at each event
+    # Part 7: Logarithm of MAE at each mark
     maes_ptm = data["maes_ptm"]  # [batch_size, seq_len]
     mae_pt = data["mae_pt"]  # [batch_size, seq_len]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
@@ -412,23 +412,23 @@ def generate_debug_figure(data, opt):
         logger.info(f"sum_of_p_m_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
 
     """
-    Part 9: The Logarithm of time prediction against all mark
+    Part 9: The Logarithm of time prediction against all marks
     """
-    tau_pred_all_event = data["tau_pred_all_event"]  # [batch_size, seq_len, num_mark]
+    tau_pred_all_mark = data["tau_pred_all_mark"]  # [batch_size, seq_len, num_marks]
     mask_next = data["mask_next"]  # [batch_size, seq_len]
-    tau_pred_all_event, mask_next = move_from_tensor_to_ndarray(tau_pred_all_event, mask_next)
-    # [batch_size, seq_len, num_mark] + [batch_size, seq_len]
-    for idx, (tau_pred_all_event_per_seq, mask_next) in enumerate(zip(tau_pred_all_event, mask_next)):
+    tau_pred_all_mark, mask_next = move_from_tensor_to_ndarray(tau_pred_all_mark, mask_next)
+    # [batch_size, seq_len, num_marks] + [batch_size, seq_len]
+    for idx, (tau_pred_all_mark_per_seq, mask_next) in enumerate(zip(tau_pred_all_mark, mask_next)):
         seq_len = mask_next_per_seq.sum()
 
-        data_tau_pred_all_event_per_seq = {
-            "Event Index": [ele for ele in range(seq_len) for _ in range(num_mark)],
-            r"$\log(1 + t_p)$": np.log(1 + tau_pred_all_event_per_seq[:seq_len, :]).flatten(),
-            "Mark": [f"Mark {i}" for i in range(num_mark)] * seq_len,
+        data_tau_pred_all_mark_per_seq = {
+            "Event Index": [ele for ele in range(seq_len) for _ in range(num_marks)],
+            r"$\log(1 + t_p)$": np.log(1 + tau_pred_all_mark_per_seq[:seq_len, :]).flatten(),
+            "Mark": [f"Mark {i}" for i in range(num_marks)] * seq_len,
         }
 
         fig9 = draw_lineplot(
-            data=data_tau_pred_all_event_per_seq,
+            data=data_tau_pred_all_mark_per_seq,
             x="Event Index",
             y=r"$\log(1 + t_p)$",
             hue="Mark",

@@ -25,29 +25,31 @@ class BasicModel(nn.Module, metaclass=ABCMeta):
         """
         return NotImplementedError("Please Implement forward()!")
 
-    def mean_absolute_error(self, *args):
+    @abstractmethod
+    def next_event_prediction_time_mark(self, *args):
         """
         This function calculates the MAE (Mean Absolute Error) of one input minibatch.
         This function usually outputs the raw MAE values and corresponding predicted time.
         """
-        return NotImplementedError("mean_absolute_error() not implemented!")
-
-    def mean_absolute_error_e(self, *args):
-        """
-        This function calculates the MAE (Mean Absolute Error) of one input minibatch.
-        This function usually outputs the raw MAE values and corresponding predicted time.
-        """
-        return NotImplementedError("mean_absolute_error_e() not implemented!")
+        return NotImplementedError("next_event_prediction_time_mark() not implemented!")
 
     @abstractmethod
-    def train_step(self, minibatch, device):
+    def next_event_prediction_mark_time(self, *args):
+        """
+        This function calculates the MAE (Mean Absolute Error) of one input minibatch.
+        This function usually outputs the raw MAE values and corresponding predicted time.
+        """
+        return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
+
+    @abstractmethod
+    def train_step(self, minibatch):
         """
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the training dataset.
         """
         return NotImplementedError("Please Implement train_step()!")
 
     @abstractmethod
-    def evaluation_step(self, minibatch, device):
+    def evaluation_step(self, minibatch):
         """
         Please tell us how your model propagates and obtains a proper loss value using one minibatch from the evaluation dataset.
         """

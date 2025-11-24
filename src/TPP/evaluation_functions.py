@@ -1,7 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 
-from src.toolbox.misc import dump_to_pkl, flatten, get_logger, mkdir_if_not_exist, write_to_txt, write_yaml
+from src.toolbox.misc import dump_to_pkl, get_logger, mkdir_if_not_exist, write_to_txt, write_yaml
 
 logger = get_logger(name=__file__)
 
@@ -88,9 +88,9 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
     )
 
 
-def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
+def which_mark_occurs_first_postprocess(all_evaluation_results, desc, opt):
     """
-    This function is called when task_name = which_event_occurs_first.
+    This function is called when task_name = which_mark_occurs_first.
     """
     mae, acc, macro_f1, micro_f1 = all_evaluation_results
     mae = np.mean(mae)
@@ -104,7 +104,7 @@ def which_event_occurs_first_postprocess(all_evaluation_results, desc, opt):
     result_file = opt.store_dir / f"{desc}_which_event_first.txt"
     strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mae}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}."
     write_to_txt(strings, result_file)
-    result_dist_file = opt.store_dir / f"{desc}_which_event_occurs_first_result.pkl"
+    result_dist_file = opt.store_dir / f"{desc}_which_mark_occurs_first_result.pkl"
     dump_to_pkl(
         {"mae": mae, "acc": acc, "macro-F1": macro_f1, "micro-F1": micro_f1}, result_dist_file, compression="bz2"
     )
@@ -263,9 +263,9 @@ desc_funcs = {
     "spearman_and_l1": {"desc_string": "Spearman and L1 for {0}", "postprocess_func": spearman_and_l1_postprocess},
     "mae_and_f1": {"desc_string": "MAE and macro-f1 for {0}", "postprocess_func": mae_and_f1_postprocess},
     "mae_e_and_f1": {"desc_string": "MAE-E and macro-f1 for {0}", "postprocess_func": mae_e_and_f1_postprocess},
-    "which_event_occurs_first": {
-        "desc_string": "Predict the next event by finding which event occurs first for {0}",
-        "postprocess_func": which_event_occurs_first_postprocess,
+    "which_mark_occurs_first": {
+        "desc_string": "Predict the next event by finding which mark occurs first for {0}",
+        "postprocess_func": which_mark_occurs_first_postprocess,
     },
     "balanced_sampling_from_distribution": {
         "desc_string": "Samples of {0} for each mark",

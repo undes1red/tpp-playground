@@ -75,7 +75,7 @@ class MarkedLogNormMixWrapper(BasicModel):
             'spearman_and_l1': self.get_spearman_and_l1,
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
-            # 'which_event_occurs_first': self.get_which_event_first,
+            # 'which_mark_occurs_first': self.get_which_event_first,
             # 'samples_from_et': self.samples_from_et,
 
             # Figure Drawing.

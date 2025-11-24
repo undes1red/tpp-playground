@@ -17,7 +17,7 @@ class AttNHPWrapper(BasicModel):
     def __init__(self, opt, device, d_input = 64, d_rnn = 64, d_hidden = 256, n_layers = 3,
                  n_head = 3, d_qk = 64, d_v = 64, dropout = 0.1, epsilon = 1e-20, sample_rate = 32,
                  mae_step = 8, mae_e_step = 8, integration_sample_rate = 2, survival_loss_during_training = True):
-        super(AttNHPWrapper, self).__init__()
+        super().__init__()
         self.device = device
         self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']
@@ -101,7 +101,7 @@ class AttNHPWrapper(BasicModel):
             'mae_and_f1': self.get_mae_and_f1,
             'mae_e_and_f1': self.get_mae_e_and_f1,
             'debug': self.plot,
-            'which_event_occurs_first': self.get_which_event_first,
+            'which_mark_occurs_first': self.get_which_event_first,
             'samples_from_et': self.samples_from_et,
 
             # Functions for the EHD task.

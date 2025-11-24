@@ -1,4 +1,4 @@
-from src.TPP.model.rmtpp.model import RMTPP
+from src.TPP.model.rmtpp_old.model import RMTPP
 
 
 def get_model():

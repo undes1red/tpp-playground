@@ -380,6 +380,8 @@ class CTLSTM(nn.Module):
         integration_sample_rate,
         num_dimension_prior_batch=0,
         time_next_start=None,
+        mean=None,
+        std=None,
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.

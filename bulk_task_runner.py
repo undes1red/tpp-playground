@@ -94,12 +94,22 @@ parser.add_argument(
     default=0,
     help="This argument directs the script to start from the work with the given index. Useful during debug.",
 )
+parser.add_argument(
+    "--dry_run",
+    type=bool,
+    default=False,
+    help="When true, we jump over the task running process. Useful when you want to check if the task parsing is correct.",
+)
 
 # Preprocess
 opt = parser.parse_args()
 
 # Sleep opt.sleep seconds.
 time.sleep(opt.sleep)
+
+# Is dry_run open?
+if opt.dry_run:
+    logger.warning('We are in dry run mode!')
 
 # Get GPU devices.
 use_gpu = False
@@ -176,6 +186,7 @@ if opt.script_type == "previous_failed_tasks":
 
     mkdir_if_not_exist(stdout_dir)
     failed_tasks = monitor_and_automaticly_run_tasks(
+        opt.dry_run,
         generated_tasks,
         use_gpu,
         gpu_pool,
@@ -246,6 +257,7 @@ else:
             generated_tasks, the_number_of_task = task_generator(sub_job)
 
             failed_tasks = monitor_and_automaticly_run_tasks(
+                opt.dry_run,
                 generated_tasks,
                 use_gpu,
                 gpu_pool,

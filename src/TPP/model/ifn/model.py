@@ -7,7 +7,6 @@ from einops import rearrange, repeat
 from src.toolbox.metrics import evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
-    break_batched_inputs_into_seqs,
     compile_model,
     move_from_tensor_to_ndarray,
     pack_one_value_to_dict,
@@ -16,10 +15,23 @@ from src.TPP.model.basic_tpp_model import BasicModel
 from src.TPP.model.ifn.plot import generate_debug_figure, generate_probability_figure
 from src.TPP.model.ifn.sample import sample_mark_time, sample_time, sample_time_mark
 from src.TPP.model.ifn.submodel import IFN
-from src.TPP.resources import expand_true_probability
+from src.TPP.model.utils import (
+    BalancedSamplingFromDistributionMixin,
+    GetWhichEventFirstMixin,
+    NextEventPredictionMarkTimeMixin,
+    NextEventPredictionTimeMarkMixin,
+    SpearmanL1EvaluationMixin,
+)
 
 
-class IFNModel(BasicModel):
+class IFNModel(
+    BasicModel,
+    BalancedSamplingFromDistributionMixin,
+    GetWhichEventFirstMixin,
+    NextEventPredictionMarkTimeMixin,
+    NextEventPredictionTimeMarkMixin,
+    SpearmanL1EvaluationMixin,
+):
     """
     IFN (Integration-free Neural Marked Temporal Point Process)
     """
@@ -128,8 +140,8 @@ class IFNModel(BasicModel):
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
-    def remove_dummy_mark_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
-        """Remove the dummy mark by altering the mask.
+    def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
+        """Remove the dummy event by altering the mask.
 
         Args:
             self (Self): the SAHP model
@@ -159,12 +171,10 @@ class IFNModel(BasicModel):
             "spearman_and_l1": self.get_spearman_and_l1,
             "mae_and_f1": self.get_mae_and_f1,
             "mae_e_and_f1": self.get_mae_e_and_f1,
-            "which_mark_occurs_first": self.get_which_mark_first,
+            "which_mark_occurs_first": self.get_which_event_first,
             "balanced_sampling_from_distribution": self.balanced_sampling_from_distribution,
             "generate_hypro_dataset": self.generate_hypro_dataset,
             # Figure Drawing.
-            "intensity": self.figure_intensity,
-            "integral": self.figure_integral,
             "probability": self.figure_probability,
             "debug": self.figure_debug,
             # For CPPOD, should be used with the od_generic dataloader.
@@ -216,7 +226,7 @@ class IFNModel(BasicModel):
         # [batch_size, seq_len, num_marks] * 2
 
         # Remove the probability of the dummy mark by mask.
-        mask_next_without_dummy = self.remove_dummy_mark_from_mask(mask_next)  # [batch_size, seq_len]
+        mask_next_without_dummy = self.remove_dummy_events_from_mask(mask_next)  # [batch_size, seq_len]
         marks_next_without_dummy = marks_next * mask_next_without_dummy  # [batch_size, seq_len]
         the_number_of_marks = mask_next_without_dummy.sum().item()
 
@@ -288,7 +298,7 @@ class IFNModel(BasicModel):
         mask_history, mask_next = self.divide_history_and_next(mask)  # 2 * [batch_size, seq_len]
 
         # Remove the probability of the dummy mark by mask.
-        mask_next_without_dummy = self.remove_dummy_mark_from_mask(mask_next)  # [batch_size, seq_len]
+        mask_next_without_dummy = self.remove_dummy_events_from_mask(mask_next)  # [batch_size, seq_len]
         marks_next_without_dummy = marks_next * mask_next_without_dummy  # [batch_size, seq_len]
         the_number_of_marks = mask_next_without_dummy.sum().item()
 
@@ -396,6 +406,8 @@ class IFNModel(BasicModel):
         std: float,
         sample_rate: int,
         mae_step: int,
+        mask_history: torch.Tensor = None,
+        get_time_sample: bool = False,
         evaluation: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         pred_time = self.sample_time(
@@ -408,7 +420,8 @@ class IFNModel(BasicModel):
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len]
-        pred_time = pred_time.mean(dim=0)  # [batch_size, seq_len]
+        if not get_time_sample:
+            pred_time = pred_time.mean(dim=0)  # [batch_size, seq_len]
 
         if evaluation:
             _, probablity_all_marks = self.model(time_history, time_next, marks_history, mean, std)
@@ -430,7 +443,9 @@ class IFNModel(BasicModel):
         std: float,
         sample_rate: int,
         mae_e_step: int,
+        mask_history: torch.Tensor = None,
         evaluation: bool = True,
+        get_time_sample: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next event prediction from the SAHP by MAE and F1.
         This function first predict the time of the next event then the mark of the next event given the TRUE time.
@@ -454,12 +469,10 @@ class IFNModel(BasicModel):
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        time_zero = torch.zeros_like(time_history)  # [batch_size, seq_len]
-        mark_distribution, _ = self.model(
-            time_history, time_zero, marks_history, mean=mean, std=std
-        )  # [batch_size, seq_len, num_marks]
+        mark_distribution = self.get_pm_next_event(time_history, marks_history, 0, 0, mean, std)
+        # [batch_size, seq_len, num_marks]
 
-        tau_sampled_all_event = self.sample_time(
+        tau_sampled_all_mark = self.sample_time(
             sampling_approach="its",
             task="mt",
             time_history=time_history,
@@ -471,16 +484,58 @@ class IFNModel(BasicModel):
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len, num_marks]
-        tau_pred_all_event = tau_sampled_all_event.mean(dim=0)  # [batch_size, seq_len, num_marks]
+        if not get_time_sample:
+            tau_sampled_all_mark = tau_sampled_all_mark.mean(dim=0)  # [batch_size, seq_len, num_marks]
+        else:
+            evaluation = False
 
         if evaluation:
             marks_next_mask = torch.nn.functional.one_hot(marks_next, num_classes=self.num_marks)
             # [batch_size, seq_len, num_marks]
-            pred_time = (tau_pred_all_event * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len]
+            pred_time = (tau_sampled_all_mark * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len]
         else:
-            pred_time = tau_pred_all_event  # [batch_size, seq_len, num_marks]
+            pred_time = tau_sampled_all_mark  # [batch_size, seq_len, num_marks]
 
         return pred_time, mark_distribution
+
+    def get_pm_next_event(
+        self: Self,
+        time_history: torch.Tensor,
+        marks_history: torch.Tensor,
+        inf_val: int,
+        resolution_inf: int,
+        mean,
+        std,
+        mask_history: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate the next mark prediction from the SAHP by MAE and F1.
+        This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
+        This can ensure the mark accuracy is only influenced by the model, not by the predicted time.
+
+        Args:
+            self (Self): the SAHP model.
+            time_history (torch.Tensor): the time of historical marks.
+            marks_history (torch.Tensor): the mark of historical marks.
+            mask_history (torch.Tensor): the mask of historical sequences, 1 meaning a true mark, and 0 meaning a fake mark.
+            inf_val (float): the number treated as positive infinity.
+            resolution_inf (int): how many samples are needed for mark distribution estimation.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: predicted mark distribution
+        """
+        time_zero = torch.zeros_like(time_history)  # [batch_size, seq_len]
+        mark_distribution, _ = self.model(
+            time_history, time_zero, marks_history, mean=mean, std=std
+        )  # [batch_size, seq_len, num_marks]
+
+        return mark_distribution
+
+    def probability_time_next_2d(
+        self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
+    ):
+        return self.model.probability_time_next_2d(
+            time_history, time_next, marks_history, integration_sample_rate, mean, std
+        )
 
     def extract_plot_data(self, minibatch):
         """
@@ -512,42 +567,6 @@ class IFNModel(BasicModel):
         mean, std = minibatch[1]
 
         return input_time, input_marks, input_intensity, mask, mean, std
-
-    def figure_intensity(self, input_data, opt):
-        """
-        Function prober, used by evaluator to draw plots of the intensity function.
-        Not implemented for IFN since this model does not provide the intensity function.
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-        """
-        return NotImplementedError(
-            "IFIB is intensity-free. Therefore, it can not provide the plot for the intensity function."
-        )
-
-    def figure_integral(self, input_data, opt):
-        """
-        Function prober, used by evaluator to draw plots of integral of the intensity function.
-        Not implemented for IFN since this model does not provide the intensity function.
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-        """
-        return NotImplementedError(
-            "IFIB is intensity-free. Therefore, it can not provide the plot for the intensity integral."
-        )
 
     def figure_probability(self, input_data, opt):
         """
@@ -756,366 +775,6 @@ class IFNModel(BasicModel):
         )
 
         generate_debug_figure(data, opt)
-
-    # Evaluation over the entire dataset.
-    def get_spearman_and_l1(self, input_data, opt):
-        """
-        Used by evaluator to calculate the average gap between the predicted and real distribution using L1 distance and spearman coefficient.
-
-        You should declare the following arguments in your config file:
-        1. ```int``` resolution: The number of interpolated points in a time interval between two adjoint marks for integration estimation.
-                                 The number of interpolated points counts the start and end point of the interval.
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```float``` spearman
-              The spearman coefficient between the predicted and real distribution.
-            * ```float``` l1
-              The l1 distance between the predicted and real distribution.
-        """
-        argument_check(opt, **{"resolution": int})
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, _ = self.divide_history_and_next(input_marks)  # [batch_size, seq_len]
-        _, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
-
-        expand_probability, timestamp = self.model.probability_time_next_2d(
-            time_history, time_next, marks_history, opt.resolution, mean, std
-        )
-        # [batch_size, seq_len, resolution, num_marks]
-
-        expand_probability = expand_probability.sum(dim=-1)  # [batch_size, seq_len, resolution]
-        true_probability = expand_true_probability(time_next, input_intensity, opt)
-        # [batch_size, seq_len, resolution] or batch_size * None
-
-        expand_probability, true_probability, timestamp = move_from_tensor_to_ndarray(
-            expand_probability, true_probability, timestamp
-        )
-        spearman = evaluate_on_one_batch(expand_probability, true_probability, mask_next, "spearman", -2, -2, -1)
-        l1 = evaluate_on_one_batch(
-            expand_probability,
-            true_probability,
-            mask_next,
-            "l1",
-            -2,
-            -2,
-            -1,
-            additional_inputs=[
-                timestamp,
-            ],
-        )
-
-        return spearman.tolist(), l1.tolist()
-
-    def get_mae_and_f1(self, input_data, opt):
-        """
-        Used by evaluator to evaluate the performance of predicted time from p(t) and mark from p(m|t).
-
-        You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
-        2. ```int``` mae_step: This parameter controls how many samples are generated in one shot when sampling from p(t).
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```np.ndarray``` mae
-              shape: ```[batch_size, seq_len]```
-              The MAE value, which is the time gap between each predicted and real mark.
-            * ```float``` f1_1
-              The f1 value shows the accuracy of the predicted marks.
-            * ```torch.tensor``` dist
-              shape: ```[batch_size, seq_len, num_marks]```
-              The mark distribution at when the real mark happens.
-            * ```np.ndarray``` marks_next
-              shape: ```[batch_size, seq_len]```
-              Real marks of observed marks.
-        """
-        argument_check(opt, **{"sample_rate": int, "mae_step": int})
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(input_marks)
-        # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
-
-        pred_time, mark_dist = self.next_event_prediction_time_mark(
-            time_history,
-            time_next,
-            marks_history,
-            mean=mean,
-            std=std,
-            sample_rate=self.sample_rate,
-            mae_step=opt.mae_step,
-        )
-        # [batch_size, seq_len] + [batch_size, seq_len, num_marks]
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        mae = mae.sum(dim=-1) / mask_next.sum(dim=-1)
-        pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
-        acc = results["acc"]
-        macro_f1 = results["macro-f1"]
-        micro_f1 = results["micro-f1"]
-
-        mae, marks_next, mark_dist, acc, macro_f1, micro_f1, mask_next = move_from_tensor_to_ndarray(
-            mae, marks_next, mark_dist, acc, macro_f1, micro_f1, mask_next
-        )
-        pred_time, marks_next, mark_dist = break_batched_inputs_into_seqs(mask_next, pred_time, marks_next, mark_dist)
-        return mae.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist(), pred_time, mark_dist, marks_next
-
-    def get_mae_e_and_f1(self, input_data, opt):
-        """
-        Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
-
-        You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
-        2. ```int``` mae_e_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```np.ndarray``` maes
-              shape: ```[batch_size, seq_len]```
-              The MAE-E values when we pick predicted times using real marks.
-            * ```float``` f1_2
-              The f1 value shows the accuracy of the predicted marks.
-            * ```np.ndarray``` probability_sum
-              shape: ```[batch_size, seq_len]```
-              The sum of calculated p(m) over all marks.
-            * ```np.ndarray``` probability_integral_from_zero_to_infinite
-              shape: ```[batch_size, seq_len, num_marks]```
-              The value of calculated p(m).
-            * ```np.ndarray``` tau_pred_all_mark
-              shape: ```[batch_size, seq_len, num_marks]```
-              The predicted time for each mark using p(t|m).
-            * ```np.ndarray``` time_next
-              shape: ```[batch_size, seq_len]```
-              Real time of observed marks.
-            * ```np.ndarray``` marks_next
-              shape: ```[batch_size, seq_len]```
-              Real marks of observed marks.
-        """
-        argument_check(opt, **{"sample_rate": int, "mae_e_step": int})
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(input_marks)
-        # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
-
-        pred_time_all_marks, mark_dist = self.next_event_prediction_mark_time(
-            time_history,
-            marks_history,
-            marks_next,
-            mean=mean,
-            std=std,
-            sample_rate=self.sample_rate,
-            mae_e_step=opt.mae_e_step,
-            evaluation=False,
-        )
-        # [batch_size, seq_len, num_marks] + [batch_size, seq_len, num_marks]
-        marks_next_mask = torch.nn.functional.one_hot(marks_next, num_classes=self.num_marks)
-        # [batch_size, seq_len, num_marks]
-        pred_time = (pred_time_all_marks * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_marks]
-        mae_e = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        mae_e = mae_e.sum(dim=-1) / mask_next.sum(dim=-1)
-        pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
-        acc = results["acc"]
-        macro_f1 = results["macro-f1"]
-        micro_f1 = results["micro-f1"]
-
-        (
-            mae_e,
-            marks_next,
-            mark_dist,
-            acc,
-            macro_f1,
-            micro_f1,
-            mask_next,
-            pred_time_all_marks,
-            time_next,
-        ) = move_from_tensor_to_ndarray(
-            mae_e,
-            marks_next,
-            mark_dist,
-            acc,
-            macro_f1,
-            micro_f1,
-            mask_next,
-            pred_time_all_marks,
-            time_next,
-        )
-        mark_dist, pred_time_all_marks, time_next, marks_next = break_batched_inputs_into_seqs(
-            mask_next, mark_dist, pred_time_all_marks, time_next, marks_next
-        )
-
-        return (
-            mae_e.tolist(),
-            acc.tolist(),
-            macro_f1.tolist(),
-            micro_f1.tolist(),
-            mark_dist,
-            pred_time_all_marks,
-            time_next,
-            marks_next,
-        )
-
-    def get_which_mark_first(self, input_data, opt):
-        """
-        Used by evaluator to evaluate the performance of predicted time from p(m) and mark from p(t|m).
-        Instead of picking the most probable mark, we pick the mark predicted to happen first.
-
-        You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
-        2. ```int``` which_mark_first_step: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```np.ndarray``` maes
-              shape: ```[batch_size, seq_len]```
-              The MAE values when we pick predicted times using real marks.
-            * ```float``` f1
-              The f1 value shows the accuracy of the predicted marks.
-        """
-        argument_check(opt, **{"sample_rate": int, "which_mark_first_step": int})
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(input_marks)
-        # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
-
-        time_zero = torch.zeros_like(time_next)  # [batch_size, seq_len]
-        # preparing for multi-mark training when needed
-        probability_integral_from_zero_to_infinite, _ = self.model(
-            time_history, time_zero, marks_history, mean=mean, std=std
-        )
-        # [batch_size, seq_len, num_marks]
-        # step 2: get the time prediction for that kind of mark
-        tau_pred_all_mark = self.sample_time(
-            sampling_approach="its",
-            task="mt",
-            marks_history=marks_history,
-            time_history=time_history,
-            p_m=probability_integral_from_zero_to_infinite,
-            number_of_total_samples=opt.sample_rate,
-            step=opt.which_mark_first_step,
-            inf_val=1e6,
-            mean=mean,
-            std=std,
-        )
-        # [sample_rate, batch_size, seq_len, num_marks]
-
-        sampled_times_mean = tau_pred_all_mark.mean(dim=0)  # [batch_size, seq_len, num_marks]
-        predicted_time, predicted_mark = sampled_times_mean.min(dim=-1)  # [batch_size, seq_len] + [batch_size, seq_len]
-        maes = torch.abs(time_next - predicted_time) * mask_next  # [batch_size, seq_len]
-
-        results = evaluate_on_one_batch(predicted_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
-        acc = results["acc"]
-        macro_f1 = results["macro-f1"]
-        micro_f1 = results["micro-f1"]
-        maes = move_from_tensor_to_ndarray(maes)
-
-        return maes.tolist(), acc.tolist(), macro_f1.tolist(), micro_f1.tolist()
-
-    def balanced_sampling_from_distribution(self, input_data, opt):
-        """
-        This function samples from the distribution p(m, t) by sampling the mark first from p(m) then time from p(t|m).
-        All samples can later be used to draw the distribution plot.
-
-        You should declare the following arguments in your config file:
-        1. ```int``` sample_rate: how many time samples from the time distribution are needed.
-        2. ```int``` sample_substep: This parameter controls how many samples are generated in one shot when sampling from p(t|m).
-
-        ### Args
-            * ```list``` input_data
-              shape: ```[[batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], [batch_size, seq_len + 1], (int, int)]```
-              data structure: [[input_time, input_marks, score, mask], (mean, std)]
-              data type: [```torch.tensor```, ```torch.tensor```, ```torch.tensor```, ```torch.tensor```, (```float```, ```float```)]
-              The input minibatch.
-            * ```namespace``` opt
-              plot and model configs
-
-        ### Outputs:
-            * ```np.ndarray``` tau_pred_all_mark
-              shape: ```[batch_size, seq_len, num_marks]```
-              Predicted time for all marks using p(t|m)
-            * ```np.ndarray``` p_m
-              shape: ```[batch_size, seq_len, num_marks]```
-              The value of p(m).
-        """
-        argument_check(opt, **{"sample_rate": int, "sample_substep": int})
-
-        input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
-        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(input_marks)
-        # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)
-
-        time_zero = torch.zeros_like(time_next)  # [batch_size, seq_len]
-        probability_integral_from_zero_to_infinite, _ = self.model(
-            time_history, time_zero, marks_history, mean=mean, std=std
-        )
-        # [batch_size, seq_len, num_marks]
-        # step 2: get the time prediction for that kind of mark
-        tau_pred_all_mark = self.sample_time(
-            sampling_approach="its",
-            task="mt",
-            marks_history=marks_history,
-            time_history=time_history,
-            p_m=probability_integral_from_zero_to_infinite,
-            number_of_total_samples=opt.sample_rate,
-            step=opt.sample_substep,
-            inf_val=1e6,
-            mean=mean,
-            std=std,
-        )
-        # [sample_rate, batch_size, seq_len, num_marks]
-
-        tau_pred_all_mark, probability_integral_from_zero_to_infinite, mask_next = move_from_tensor_to_ndarray(
-            tau_pred_all_mark, probability_integral_from_zero_to_infinite, mask_next
-        )
-
-        probability_integral_to_inf, tau_pred_all_mark = break_batched_inputs_into_seqs(
-            mask_next,
-            probability_integral_from_zero_to_infinite,
-            rearrange(tau_pred_all_mark, "sr b sl ne -> b sl ne sr"),
-        )  # batch_size * [seq_len, num_marks] + batch_size * [seq_len, num_marks, sample_rate]
-
-        tau_pred_all_mark = [rearrange(item, "sl ne sr -> sr sl ne") for item in tau_pred_all_mark]
-
-        return tau_pred_all_mark, probability_integral_to_inf
 
     def convert_missing_mask_to_gap_mask(self, missing_mask):
         # input shape: [num_samples, seq_len]

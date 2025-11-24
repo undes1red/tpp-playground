@@ -24,6 +24,7 @@ wait_after_task_finished = 10
 
 
 def monitor_and_automaticly_run_tasks(
+    dry_run: bool,
     tasks: list[list],
     use_gpu: bool,
     available_gpus: list,

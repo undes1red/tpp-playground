@@ -6,12 +6,12 @@ from src.toolbox.modules import BiasedPositionalEmbedding, TransformerLayer, get
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, num_types, device, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk, d_v, dropout):
+    def __init__(self, num_marks, device, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk, d_v, dropout):
         """
         This function builds a Transformer encoder.
 
         ### Args
-          * ```int``` num_types
+          * ```int``` num_marks
             The number of all possible marks.
           * ```torch.device``` device
             The device where we place this transformer encoder.
@@ -34,10 +34,10 @@ class TransformerEncoder(nn.Module):
         """
         super().__init__()
         self.device = device
-        self.num_types = num_types if num_types > 0 else 1
+        self.num_marks = num_marks if num_marks > 0 else 1
 
         self.encoder = Encoder(
-            num_types=self.num_types,
+            num_marks=self.num_marks,
             d_input=d_input,
             d_hidden=d_hidden,
             n_layers=n_layers,
@@ -90,12 +90,12 @@ class TransformerEncoder(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_types, d_input, d_hidden, n_layers, n_head, d_qk, d_v, dropout, device):
+    def __init__(self, num_marks, d_input, d_hidden, n_layers, n_head, d_qk, d_v, dropout, device):
         """
         This function builds a Transformer encoder.
 
         ### Args
-          * ```int``` num_types
+          * ```int``` num_marks
             The number of all possible marks.
           * ```torch.device``` device
             The device where we place this transformer encoder.
@@ -117,14 +117,14 @@ class Encoder(nn.Module):
         super().__init__()
         self.device = device
         self.d_input = d_input
-        self.num_types = num_types
+        self.num_marks = num_marks
 
         # position vector, used for temporal encoding
         # TODO(me): set max_len during runtime, current max_len = 4096
         self.position_emb = BiasedPositionalEmbedding(d_input, max_len=4096, device=self.device)
 
         # event type embedding
-        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx=num_types, device=self.device)
+        self.event_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
 
         self.layer_stack = nn.ModuleList(
             [

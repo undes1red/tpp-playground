@@ -152,7 +152,9 @@ class FullyNN(nn.Module):
         """
         return self.marks(input_event)  # [batch_size, seq_len, d_history]
 
-    def integral_intensity_time_next_2d(self, time_history, time_next, marks_history, resolution, mean, std):
+    def integral_intensity_time_next_2d(
+        self, time_history, time_next, marks_history, integration_sample_rate, mean, std,
+    ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_event.
@@ -198,11 +200,11 @@ class FullyNN(nn.Module):
         hidden_history, (_, _) = self.his_encoder(history)  # [batch_size, seq_len, d_history]
         hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
 
-        hidden_history = repeat(hidden_history, "b s di -> b s r ne di", r=resolution, ne=self.num_marks)
+        hidden_history = repeat(hidden_history, "b s di -> b s r ne di", r=integration_sample_rate, ne=self.num_marks)
         # [batch_size, seq_len, resolution, num_marks, d_intensity]
 
         # Prepare the time embedding.
-        time_multiplier = torch.linspace(0, 1, resolution, device=self.device)
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         # [resolution]
         original_time_expand = time_next.unsqueeze(dim=-1) * time_multiplier  # [batch_size, seq_len, resolution]
         time_expand = original_time_expand.clone()  # [batch_size, seq_len, resolution]
@@ -243,7 +245,7 @@ class FullyNN(nn.Module):
 
         return expand_integral, expand_intensity, original_time_expand
 
-    def integral_intensity_time_next_3d(self, time_history, time_next, marks_history, resolution, mean, std):
+    def integral_intensity_time_next_3d(self, time_history, time_next, marks_history, integration_sample_rate, mean, std):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_marks]```.
@@ -287,12 +289,12 @@ class FullyNN(nn.Module):
         hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(
-            hidden_history, "b s di -> b s r ne ne1 di", r=resolution, ne=self.num_marks, ne1=self.num_marks
+            hidden_history, "b s di -> b s r ne ne1 di", r=integration_sample_rate, ne=self.num_marks, ne1=self.num_marks
         )
         # [batch_size, seq_len, resolution, num_marks, num_marks, d_intensity]
 
         # Prepare the time embedding.
-        time_multiplier = torch.linspace(0, 1, resolution, device=self.device)
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         # [resolution]
         original_time_expand = time_next.unsqueeze(dim=-2) * rearrange(
             time_multiplier, f"r -> {'() ' * (len(time_next.shape) - 1)}r 1"

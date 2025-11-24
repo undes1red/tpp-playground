@@ -5,10 +5,10 @@ from scipy.stats import spearmanr
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict, argument_check
 from src.toolbox.metrics import L1_distance_between_two_funcs
 
-from src.TPP.model.rmtpp.rmtpp import RMTPPModule
-from src.TPP.model.rmtpp.plot import *
+from src.TPP.model.rmtpp_old.rmtpp import RMTPPModule
+from src.TPP.model.rmtpp_old.plot import *
 from src.TPP.model.basic_tpp_model import BasicModel
-from src.TPP.model.rmtpp.sample import sample_time
+from src.TPP.model.rmtpp_old.sample import sample_time
 
 
 class RMTPP(BasicModel):

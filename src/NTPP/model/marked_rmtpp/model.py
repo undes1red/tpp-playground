@@ -1,17 +1,22 @@
-import torch, copy
+import copy
+
+import torch
 import torch.nn.functional as F
-from sklearn.metrics import f1_score
 from einops import rearrange
+from sklearn.metrics import f1_score
 
-from src.TPP.model.utils import predict_event, decide_resolution_inf_and_resolution_between_events, get_f1_and_top_k_acc_in_mae_e
-from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray, argument_check, pack_one_value_to_dict
-from src.toolbox.integration import approximate_integration
+from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_between_two_funcs
-
-from src.TPP.model.marked_rmtpp.rmtpp import MRMTPPModule
-from src.TPP.model.marked_rmtpp.plot import *
+from src.toolbox.misc import argument_check, check_tensor, move_from_tensor_to_ndarray, pack_one_value_to_dict
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling
-from src.TPP.model.marked_rmtpp.sample import sample_time
+from src.TPP.model.rmtpp.plot import *
+from src.TPP.model.rmtpp.rmtpp import MRMTPPModule
+from src.TPP.model.rmtpp.sample import sample_time
+from src.TPP.model.utils import (
+    decide_resolution_inf_and_resolution_between_events,
+    get_f1_and_top_k_acc_in_mae_e,
+    predict_event,
+)
 
 
 class MRMTPP(BasicModel):
@@ -24,7 +29,7 @@ class MRMTPP(BasicModel):
                  survival_loss_during_training = True, mae_step = 32, mae_e_step = 32):
         '''
         This function creates a MRMTPP model.
-        
+
         ### Args
             * ```int``` input_size
               The dimension of the event representation that is fed into the history encoder.
@@ -57,7 +62,7 @@ class MRMTPP(BasicModel):
             * ```bool``` survival_loss_during_training
               When true, the training loss includes the integral between the last observed event to the end time T. Most of time this argument should be true.
         '''
-        super(MRMTPP, self).__init__()
+        super().__init__()
         self.device = device
         self.compile_or_not = opt.compile
         self.num_events = opt.info_dict['num_events']

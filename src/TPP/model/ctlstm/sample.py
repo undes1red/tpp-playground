@@ -2,9 +2,9 @@ import torch
 from einops import pack, rearrange
 
 from src.toolbox.algorithms import approximate_integration, bisection
-from src.toolbox.misc import check_should_we_stop_sampling
+from src.toolbox.misc import check_should_we_stop_sampling, predict_mark
 from src.TPP.model.basic_tpp_model import its_lower_bound, its_upper_bound
-from src.TPP.model.utils import predict_mark, step_split, thinning_sampling
+from src.TPP.model.utils import step_split, thinning_sampling
 
 
 @torch.inference_mode()
