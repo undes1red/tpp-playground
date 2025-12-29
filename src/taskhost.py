@@ -6,7 +6,6 @@ import time
 from typing import Self
 
 import matplotlib as mpl
-import numpy as np
 import torch
 
 from src.toolbox.misc import get_logger, version_check
@@ -99,7 +98,7 @@ class TaskHost:
         torch._dynamo.config.allow_rnn = True
 
         # allows more torch recompilation.
-        # In the worse case, forward() will be compiled (2 * 3 + 2 =) 8 times per dataloader.
+        # In the worse case, the input of MTPP models has (2 * 3 + 2 =) 8 different shapes per dataloader.
         # So we set the upper limit to 25.
         torch._dynamo.config.cache_size_limit = 25
 
@@ -109,7 +108,7 @@ class TaskHost:
                 f"Explicit casting enabled! We will train our model in {self.dict_torch_dtype[self.opt.dtype]}."
             )
             logger.warning(
-                "Training MTPP models using lower precision may cause suboptimal results or failed training. If your model is sensitive to the precision. We recommend to stay on float32."
+                "Training MTPP models using lower precision may cause suboptimal results or even failed training. If your model is sensitive to precision, we recommend to stay on float32."
             )
             torch.set_default_dtype(self.dict_torch_dtype[self.opt.dtype])
 

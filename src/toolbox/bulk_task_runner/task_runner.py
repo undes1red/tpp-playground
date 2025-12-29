@@ -328,7 +328,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
                 else:
                     logger.warning(f"----> Task No.{task['task_id']}/{number_of_tasks} completed!. <----")
 
-                gpu_pool.add(task["gpu_id"])
+                gpu_pool.append(task["gpu_id"])
                 ticket_pool.add(ticket)
                 running_tasks[ticket] = {}
                 time.sleep(wait_after_task_finished)
