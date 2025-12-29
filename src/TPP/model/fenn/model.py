@@ -52,6 +52,7 @@ class FENNModel(
 
     def __init__(
         self,
+        training,
         opt,
         device,
         d_history,
@@ -185,7 +186,7 @@ class FENNModel(
             "debug": self.figure_debug,
             # Functions for the EHD task.
             "ehd_perplexity": self.ehd_perplexity,
-            "ehd_event_emb": self.get_event_embedding,
+            "ehd_mark_emb": self.get_mark_embedding,
             # For CPPOD, should be used with the od_generic dataloader.
             "cppod_evaluation": self.cppod_evaluation,
             "cppod_commission_evaluation": self.cppod_commission_evaluation,
@@ -966,8 +967,8 @@ class FENNModel(
         all_roauc_area = np.array(all_roauc_area)
         return all_roauc_area
 
-    def get_event_embedding(self, input_marks):
-        return self.model.get_event_embedding(input_marks)  # [batch_size, seq_len, d_history]
+    def get_mark_embedding(self, input_marks):
+        return self.model.get_mark_embedding(input_marks)  # [batch_size, seq_len, d_history]
 
     def ehd_perplexity(
         self,
@@ -978,12 +979,13 @@ class FENNModel(
         seq_len_x,
         mean,
         std,
+        training,
     ):
         padded_filtered_time_history, padded_filtered_time_next = self.divide_history_and_next(padded_filtered_time)
         # 2 * [batch_size, filtered_seq_len - 1]
         padded_filtered_marks_history, padded_filtered_marks_next = self.divide_history_and_next(padded_filtered_marks)
         # 2 * [batch_size, filtered_seq_len- 1]
-        padded_filtered_marks_embeddings_history, padded_filtered_marks_embeddings_next = self.divide_history_and_next(
+        padded_filtered_marks_embeddings_history, _ = self.divide_history_and_next(
             padded_filtered_event_embeddings
         )  # 2 * [batch_size, filtered_seq_len- 1, d_history]
         _, padded_filtered_mask_next = self.divide_history_and_next(padded_filtered_masks)
@@ -995,32 +997,17 @@ class FENNModel(
         # [batch_size, filtered_seq_len - 1]
         padded_filtered_marks_next_without_dummy = padded_filtered_marks_next * padded_filtered_mask_next_without_dummy
         # [batch_size, filtered_seq_len - 1]
-        padded_filtered_time_next = repeat(padded_filtered_time_next, "b s -> b s ne", ne=self.num_marks)
-        # [batch_size, filtered_seq_len - 1, num_marks]
 
-        if padded_filtered_time_next.requires_grad == False and padded_filtered_time_next.is_leaf == True:
-            padded_filtered_time_next.requires_grad = True
         # \\int_{t}^{+\\inf}{p(m, \\tau|\\mathcal{H})d\\tau}
-        padded_filtered_intensity_integral_from_t_o_to_t = self.model(
-            padded_filtered_marks_embeddings_history,
+        padded_filtered_intensity_integral_from_t_o_to_t, intensity_for_each_event = self.model(
             padded_filtered_time_history,
             padded_filtered_time_next,
+            padded_filtered_marks_embeddings_history,
             mean=mean,
             std=std,
             custom_marks_history=True,
+            training=training
         )
-        # [batch_size, filtered_seq_len - 1, num_marks]
-        # p(m, t|\\mathcal{H})
-        intensity_for_each_event = torch.autograd.grad(
-            outputs=padded_filtered_intensity_integral_from_t_o_to_t,
-            inputs=padded_filtered_time_next,
-            grad_outputs=torch.ones_like(padded_filtered_intensity_integral_from_t_o_to_t),
-            create_graph=not padded_filtered_time_next.is_leaf,
-        )[0]  # [batch_size, filtered_seq_len - 1, num_marks]
-
-        if padded_filtered_time_next.requires_grad == True and padded_filtered_time_next.is_leaf == True:
-            padded_filtered_time_next.requires_grad = False
-            padded_filtered_intensity_integral_from_t_o_to_t = padded_filtered_intensity_integral_from_t_o_to_t.detach()
 
         event_mask = torch.nn.functional.one_hot(padded_filtered_marks_next_without_dummy, num_classes=self.num_marks)
         # [batch_size, filtered_seq_len - 1, num_marks]
@@ -1033,9 +1020,7 @@ class FENNModel(
         log_probability_x = pick_log_probability(log_probability, the_number_of_marks_per_sequence, seq_len_x)
         # [batch_size, seq_len_x]
         # -\\frac{1}{N} \\log p(\\mathbf{x}_o|\\mathcal{H})
-        log_perplexity = -log_probability_x.mean(dim=-1)  # [batch_size]
-
-        return log_perplexity
+        return -log_probability_x.mean(dim=-1)  # [batch_size]
 
     def train_step(self, minibatch):
         """

@@ -27,6 +27,7 @@ if __name__ == "__main__":
     """
     model = easy_model_load(
         "TPP",
+        False,
         root_path,
         "",
         "hawkes_1_v2",
@@ -34,6 +35,7 @@ if __name__ == "__main__":
         "cuda:0",
         compile=True,
         evaluation=True,
+        only_model_structure=False,
         model_name="sahp",
         lr=0.002,
         used_batch_size=128,

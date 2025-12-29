@@ -259,6 +259,27 @@ def llm_mtpp_classification_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(data, ranking_results_file, compression="bz2")
 
 
+def nll_with_label_postprocess(all_evaluation_results, desc, opt):
+    nll_per_seq, labels = all_evaluation_results
+
+    categorized_nll = {}
+    for nll, label in zip(nll_per_seq, labels):
+        if categorized_nll.get(label) is None:
+            categorized_nll[label] = [nll]
+        else:
+            categorized_nll[label].append(nll)
+
+    nll_results_file = opt.store_dir / f"{desc}_nll.pkl"
+    dump_to_pkl(categorized_nll, nll_results_file, compression="bz2")
+
+    string_list = [f"For dataset {desc}:\n"]
+    for label, nll in categorized_nll.items():
+        string_list.append(f'There are {len(nll)} sequences with label {label}.\n')
+        string_list.append(f'Sequences with label {label} has mean NLL value as {np.mean(nll)}. Standard deviation is {np.std(nll)}. \n')
+
+    result_file = opt.store_dir / f"{desc}_nll.txt"
+    write_to_txt(string_list, result_file)
+
 desc_funcs = {
     "spearman_and_l1": {"desc_string": "Spearman and L1 for {0}", "postprocess_func": spearman_and_l1_postprocess},
     "mae_and_f1": {"desc_string": "MAE and macro-f1 for {0}", "postprocess_func": mae_and_f1_postprocess},
@@ -270,6 +291,10 @@ desc_funcs = {
     "balanced_sampling_from_distribution": {
         "desc_string": "Samples of {0} for each mark",
         "postprocess_func": balanced_sampling_from_distribution_postprocess,
+    },
+    "nll_with_label":{
+        "desc_string": "Measure and group NLL based on labels for {0}",
+        "postprocess_func": nll_with_label_postprocess,
     },
     "generate_hypro_dataset": {
         "desc_string": "Generate HYPRO dataset for {0}",

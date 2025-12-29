@@ -262,7 +262,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_gpu_node(
 
     # I don't quite know how the GPU allocation works in slurm.
     # Due to this, we temporarily disable gpu_pool in this function.
-    gpu_pool = set(available_gpus)
+    gpu_pool = list(available_gpus)
     ticket_pool = set(range(num_task_parallel))
     number_of_gpus = len(gpu_pool)
     number_of_tasks = len(tasks)

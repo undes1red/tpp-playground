@@ -45,6 +45,7 @@ class THPWrapper(
 
     def __init__(
         self,
+        training,
         opt,
         device,
         d_input=64,

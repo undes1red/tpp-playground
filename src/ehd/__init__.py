@@ -1,22 +1,24 @@
-'''
-TPPTrainerArgument and TPPPlotterArguments are argument parser for model training and model evaluation
-You need Trainer_postprocess() and Plotter_postprocess() for postprocessing the arguments.
-
-TPPTrainer and TPPPlotter handles the main process of training and evaluation.
-
+"""
 TaskHost needs this file to start required tasks. Please, do not modify the content of this file.
-'''
+"""
 
-from src.ehd.trainer_arguments import TrainerArguments, Trainer_postprocess
-from src.ehd.evaluator_arguments import EvaluatorArguments, Evaluator_postprocess
-
-
-# Model and dataloader entry.
-from src.ehd.model import get_model
 from src.ehd.dataloader import get_dataloader
+from src.ehd.evaluate_arguments import Evaluator_postprocess, EvaluatorArguments
+from src.ehd.evaluate_functions import desc_funcs as get_evaluation_funcs
+from src.ehd.model import get_model
+from src.ehd.train_arguments import Trainer_postprocess, TrainerArguments
+from src.ehd.utils import easy_model_load
 
-# Evaluation.
-# from src.TPP.tpp_evaluation_functions import desc_funcs as get_evaluation_funcs
+__all__ = [
+    "get_dataloader",
+    "Evaluator_postprocess",
+    "EvaluatorArguments",
+    "get_evaluation_funcs",
+    "get_model",
+    "Trainer_postprocess",
+    "TrainerArguments",
+    "easy_model_load",
+]
 
 
 pytorch_version_warnings = {

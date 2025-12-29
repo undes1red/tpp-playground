@@ -7,7 +7,7 @@ from src.toolbox.misc import read_yaml, move_from_tensor_to_ndarray, \
                              check_tensor, get_logger, print_args, pack_one_value_to_dict
 
 from src.ehd.model.ehd_perplexity.submodel import EHD_backend
-from src.ehd.model.utils import BasicModule
+from src.ehd.model.basic_ehd_model import BasicModule
 
 from src.ehd.model.ehd_perplexity.plot import * 
 from src.ehd.model.ehd_perplexity.utils import generate_masks, filter

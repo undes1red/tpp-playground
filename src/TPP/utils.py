@@ -37,6 +37,7 @@ def suffix(opt: argparse.Namespace, *args) -> str:
 
 
 def easy_model_load(
+    training: bool,
     root_path: str,
     replace_id: str,
     dataset_name: str,
@@ -44,6 +45,7 @@ def easy_model_load(
     device: str,
     compile: bool,
     evaluation: bool,
+    only_model_structure: bool,
     **kwargs,
 ):
     kwargs_should_have = {
@@ -95,7 +97,10 @@ def easy_model_load(
     merged_param = procedure_param | model_param
 
     dataset_info_dict = SimpleNamespace(info_dict=info_dict, compile=compile, compile_backend='inductor')
-    model = model_class(device=device, opt=dataset_info_dict, **merged_param)
+    model = model_class(training=training, device=device, opt=dataset_info_dict, **merged_param)
+
+    if only_model_structure:
+        return model
 
     model_identifier = suffix(SimpleNamespace(**kwargs), *kwargs_should_have.keys())
     checkpoint_folder_suffix = "model_" + model_identifier

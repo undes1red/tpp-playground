@@ -4,7 +4,7 @@ TaskHost needs this file to start required tasks. Please, do not modify the cont
 
 from src.TPP.dataloader import get_dataloader
 from src.TPP.evaluate_arguments import Evaluator_postprocess, EvaluatorArguments
-from src.TPP.evaluation_functions import desc_funcs as get_evaluation_funcs
+from src.TPP.evaluate_functions import desc_funcs as get_evaluation_funcs
 from src.TPP.model import get_model
 from src.TPP.train_arguments import Trainer_postprocess, TrainerArguments
 from src.TPP.utils import easy_model_load

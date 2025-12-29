@@ -311,9 +311,7 @@ def pick_log_probability(log_probability, last_index, seq_len_x):
     index_indices = torch.arange(seq_len_x, device=device)  # [seq_len_x]
     index_indices = repeat(index_indices, "... -> b ...", b=batch_size) + start_idx.unsqueeze(dim=-1)
     # [batch_size, seq_len_x]
-    log_probability_x = log_probability.gather(-1, index_indices)  # [batch_size, seq_len_x]
-
-    return log_probability_x
+    return log_probability.gather(-1, index_indices)  # [batch_size, seq_len_x]
 
 
 """

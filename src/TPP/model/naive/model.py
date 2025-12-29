@@ -46,6 +46,7 @@ class NaiveMTPPWrapper(
 
     def __init__(
         self,
+        training,
         opt,
         device,
         process_name="Poisson",

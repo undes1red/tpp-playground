@@ -98,6 +98,11 @@ class TaskHost:
         # https://github.com/pytorch/pytorch/issues/91439
         torch._dynamo.config.allow_rnn = True
 
+        # allows more torch recompilation.
+        # In the worse case, forward() will be compiled (2 * 3 + 2 =) 8 times per dataloader.
+        # So we set the upper limit to 25.
+        torch._dynamo.config.cache_size_limit = 25
+
         # Model explicit casting.
         if self.opt.dtype != "float32":
             logger.warning(

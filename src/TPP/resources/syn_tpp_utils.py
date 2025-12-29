@@ -3,6 +3,8 @@ from operator import itemgetter
 import numpy as np
 import torch
 
+from src.toolbox.misc import move_from_tensor_to_ndarray
+
 
 def expand_true_intensity(time, intensity, opt):
     """
@@ -322,7 +324,7 @@ def stationary_renewal_probability(time, intensity, opt, device):
 
     time_multiplier = torch.linspace(0, 1, resolution, device=device)  # [resolution]
     expand_time = time_multiplier * time.unsqueeze(-1)  # [batch_size, seq_len, resolution]
-    distribution_values = lognorm.pdf(expand_time.cpu().numpy(), s=s, scale=np.exp(mu))
+    distribution_values = lognorm.pdf(move_from_tensor_to_ndarray(expand_time), s=s, scale=np.exp(mu))
     # [batch_size, seq_len, resolution]
     return torch.from_numpy(distribution_values)  # [batch_size, seq_len, resolution]
 

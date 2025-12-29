@@ -1,119 +1,102 @@
-import torch.utils as utils
-import os
-import pandas as pd
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import Any, Self
+
 import numpy as np
+import torch.utils as utils
+
+from src.toolbox.misc import load_from_pkl
 
 
-def prepend(per_line, number):
-    return np.concatenate([np.array([number]), per_line])
+def prepend_and_append(per_line: np.ndarray, prepend_item = None, append_item = None):
+    if prepend_item is None and append_item is None:
+        return np.array([prepend_item])
+    if prepend_item is not None and append_item is None:
+        return np.concatenate([np.array([prepend_item]), per_line])
+    if prepend_item is None and append_item is not None:
+        return np.concatenate([per_line, np.array([append_item])])
+    return np.concatenate([np.array([prepend_item]), per_line, np.array([append_item])])
 
 
-def append(per_line, number):
-    return np.concatenate([per_line, np.array([number])])
-
-
-def diff(per_line, prepend = np._NoValue, append = np._NoValue):
-    '''
-    Avoid potential 0 output.
-    '''
-    return np.diff(per_line, prepend = prepend, append = append)
-
-
-class generic_dataset(utils.data.Dataset):
+class GenericDataset(utils.data.Dataset):
     '''
     Self defined dataset. The required pandas DataFrame are listed in start.py.
     But...what can we do if we need prediction? It is strange.
     '''
-    def __init__(self, data, device, property_dict, evaluate = False, shift = False, input_norm_data = False):
-        super(generic_dataset, self).__init__()
-        self.data = data
+    def __init__(self, data, device, property_dict, evaluate = False, input_norm_data = False):
+        super().__init__()
         self.device = device
         self.evaluate = evaluate
-        self.number_of_events = property_dict['num_events']
+        self.number_of_marks = property_dict['num_marks']
         self.start_time = property_dict['t_0']
         self.end_time = property_dict['T']
         self.mean = property_dict['mean'] if input_norm_data else 0
         self.std = property_dict['std'] if input_norm_data else 1
 
-        '''
-        Convert data from list to np.array.
-        '''
-        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
-        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
-        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int64)
+        # Convert data from list to np.array.
+        self.time_seq = data["time_seq"]
+        # compatible with old names.
+        self.marks = data["event"]
+        self.mask = data["mask"]
+
+        self.dataset_size = len(self.time_seq)
 
         # Data preprocessing
-        self.data.time_seq = self.data.time_seq + (1e-30 if shift else 0)
+        self.marks = [prepend_and_append(per_line, prepend_item=self.number_of_marks, append_item=self.number_of_marks) for per_line in self.marks]
+        self.time_seq = [prepend_and_append(per_line, prepend_item=0, append_item=0) for per_line in self.time_seq]
+        self.mask = [prepend_and_append(per_line, prepend_item=1, append_item=1) for per_line in self.mask]
 
-        self.data.event = self.data.event.apply(append, number = self.number_of_events)
-        self.data.time_seq = self.data.time_seq.apply(append, number = 0)
-
-        self.data.event = self.data.event.apply(prepend, number = self.number_of_events)
-        self.data.time_seq = self.data.time_seq.apply(prepend, number = 0)
-
-        self.data['mask'] = self.data['mask'].apply(append, number = 1)
-        self.data['mask'] = self.data['mask'].apply(prepend, number = 1)
-
-        '''
-        Fix datatype
-        '''
-        self.data.time_seq = self.data.time_seq.apply(np.array, dtype = np.float32)
-        self.data.score = self.data.score.apply(np.array, dtype = np.float32)
-        self.data.intensity = self.data.intensity.apply(np.array, dtype = np.float32)
-        self.data.event = self.data.event.apply(np.array, dtype = np.int64)
-        self.data['mask'] = self.data['mask'].apply(np.array, dtype = np.int32)
+        # Fix datatype
+        self.time_seq = [np.array(seq, dtype=np.float32) for seq in self.time_seq]
+        self.marks = [np.array(seq, dtype=np.int64) for seq in self.marks]
+        self.mask = [np.array(seq, dtype=np.bool) for seq in self.mask]
 
 
     def __getitem__(self, index):
         '''
-        Synthetic dataloader is very simple. It doesn't have any event infomation at each timestamp,
-        and only the time differences between two neighboring events are available.
+        Synthetic dataloader is very simple. It doesn't have any mark infomation at each timestamp,
+        and only the time differences between two neighboring marks are available.
         '''
         if isinstance(index, slice):
             return [
                 self[idx] for idx in range(index.start or 0, index.stop or len(self), index.step or 1)
             ]
-        else:
-            return self.data.iloc[index].time_seq, \
-                   self.data.iloc[index].event, \
-                   self.data.iloc[index].score, \
-                   self.data.iloc[index]['mask']
+
+        return self.time_seq[index], self.marks[index], self.mask[index]
 
 
     def __len__(self):
-        return self.data.shape[0]
-    
-    
+        return len(self.time_seq)
+
+
     def data_collator(self, data):
         '''
         The structure of data:
         [
-            (time_seq, event, score, mask, intensity if self.evaluate else it doesn't exist at all.)
+            (time_seq, mark, score, mask, intensity if self.evaluate else it doesn't exist at all.)
         ], (mean, var)
         '''
         from torch.utils.data._utils.collate import default_collate
         data = default_collate(data)
-        
+
         return data, (self.mean, self.std)
 
 
-def read_data(path, file_names):
-    data_raw = {}
-    try:
-        for file_name in file_names:
-            file, _ = file_name.split('.')
-            data_raw[file] = pd.read_json(
-                os.path.join(path, file_name))
-    except:
-        raise TypeError(
-            f"Wrong datafile format. Please check your data file in {path}")
-    
-    return data_raw
+def read_data(path: str, file_name: str) -> dict:
+    """Load the dataset.
+
+    Args:
+        path (str): the folder where the dataset locates.
+        file_name (str): the name of the dataset file.
+
+    Returns:
+        dict: the loaded data.
+    """
+    return load_from_pkl(Path(path, file_name))
 
 
 def generic_dataloader():
     '''
     Synthetic dataloader for all synthetic datasets.
     '''
-    return [generic_dataset, read_data]
+    return [GenericDataset, read_data]

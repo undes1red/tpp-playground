@@ -45,6 +45,7 @@ class RMTPP(
 
     def __init__(
         self,
+        training,
         device,
         input_size,
         hidden_size,

@@ -50,6 +50,7 @@ class SAHPWrapper(
 
     def __init__(
         self: Self,
+        training: bool,
         opt: argparse.Namespace,
         device: torch.device,
         d_input: int = 64,
@@ -164,6 +165,7 @@ class SAHPWrapper(
             "mae_e_and_f1": self.get_mae_e_and_f1,
             "which_mark_occurs_first": self.get_which_event_first,
             "balanced_sampling_from_distribution": self.balanced_sampling_from_distribution,
+            "nll_with_label": self.nll_with_label,
             # Figure Drawing.
             "intensity": self.figure_intensity,
             "integral": self.figure_integral,
@@ -793,6 +795,44 @@ class SAHPWrapper(
         )
 
         generate_debug_figure(data, opt)
+
+    @torch.inference_mode()
+    def nll_with_label(self: Self, input_data: list, opt: argparse.Namespace) -> None:
+        def extract_plot_data(minibatch: list) -> tuple[Any]:
+            """This function extracts input_time, input_marks, input_intensity, mask, mean, and std from the minibatch.
+
+            Args:
+                self (Self): The model
+                minibatch (list): The minibatch from the dataloader.
+
+            Returns:
+                tuple[Any]: The extracted data from the minibatch.
+            """
+            input_time, input_marks, _, mask, input_intensity, input_seq_label = minibatch[0]
+            mean, std = minibatch[1]
+
+            return input_time, input_marks, input_intensity, mask, input_seq_label, mean, std
+
+        input_time, input_marks, input_intensity, mask, input_seq_label, mean, std = extract_plot_data(input_data)
+
+        time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len] * 2
+        marks_history, marks_next = self.divide_history_and_next(input_marks)  # [batch_size, seq_len] * 2
+        mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len] * 2
+
+        integral_all_marks, intensity_all_marks = self.model(time_history, time_next, marks_history, mask_history)
+        # 2 * [batch_size, seq_len, num_marks]
+
+        mark_next_without_dummy = (mask_next * marks_next).long()
+        type_mask = F.one_hot(mark_next_without_dummy, num_classes=self.num_marks)  # [batch_size, seq_len, num_marks]
+
+        # MTPP loss function
+        selected_intensity = (intensity_all_marks * type_mask).sum(dim=-1)  # [batch_size, seq_len]
+        log_intensity = torch.log(selected_intensity + self.epsilon)  # [batch_size, seq_len]
+        nll = -log_intensity + integral_all_marks.sum(dim=-1)  # [batch_size, seq_len]
+
+        nll = (nll * mask_next).sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
+
+        return nll.tolist(), input_seq_label.tolist()
 
     def get_mark_embedding(self, input_marks):
         return self.model.get_mark_embedding(input_marks)  # [batch_size, seq_len, d_history]

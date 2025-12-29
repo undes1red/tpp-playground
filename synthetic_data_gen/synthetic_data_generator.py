@@ -1,12 +1,14 @@
 # The synthetic data generator bases on Omi's FullyNN project.
 # Derives from Omi's code in https://github.com/omitakahiro/NeuralNetworkPointProcess.
 
+import argparse
+import os
+
 import numpy as np
 import pandas as pd
-import argparse, os
-
-from scipy.stats import lognorm
 from scipy.special import erf
+from scipy.stats import lognorm
+
 
 ######################################################
 ### homogeneous possion process

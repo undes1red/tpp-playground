@@ -19,7 +19,7 @@ main_procedure_translator = {
     # Outlier Detection with Temporal Point Process
     "OD_train": "OD",
     "OD_evaluate": "OD",
-    # Explainable History Distillation.
+    # Explanation for MTPP
     "ehd_train": "ehd",
     "ehd_evaluate": "ehd",
     "Transformers": "Transformers",
@@ -42,7 +42,7 @@ sub_procedure_translator = {
     # Outlier Detection with Temporal Point Process
     "OD_train": "Trainer",
     "OD_evaluate": "Evaluator",
-    # Explainable History Distillation.
+    # Explanation for MTPP
     "ehd_train": "Trainer",
     "ehd_evaluate": "Evaluator",
     "Transformers": "Trainer",
@@ -60,7 +60,7 @@ def environment_var_settings():
         env_dict["MATPLOTLIBRC"] = str(root_path / "config" / "matplotlibrc")
 
     # set up PYTORCH_CUDA_ALLOC_CONF to mitigate GPU memory fragmentation.
-    env_dict["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    env_dict["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     env_dict["TOKENIZERS_PARALLELISM"] = "true"
 
     # Reproducibility.
@@ -91,7 +91,7 @@ if __name__ == "__main__":
         # Noted Temporal point process
         ["NTPP_train", ""],
         ["NTPP_evaluate", ""],
-        # Explainable History Distillation.
+        # Explanation for MTPP
         ["ehd_train", ""],
         ["ehd_evaluate", ""],
         # Long-horizon Temporal point process

@@ -16,15 +16,21 @@ def load_checkpoint(logger, checkpoint_dir, model, device, evaluation=True, comp
     # Remove _orig_mod from the key name.
     # Now we can load checkpoints of compiled models into uncompiled models.
     if not compile:
+        # all modules in the model are not compiled.
+        # Remove all existing _orig_mod.
         for item in model_state_dict:
             if '_orig_mod' in item:
                 new_dict[item.replace('._orig_mod', '')] = model_state_dict[item]
                 recorded_keys.append(item)
     else:
-        for item in model_state_dict:
-            if item != '_metadata' and '_orig_mod' not in item:
-                new_dict[item.replace('.', '._orig_mod.', 1)] = model_state_dict[item]
-                recorded_keys.append(item)
+        for module_name, module in model._modules.items():
+            # compiled module.
+            # add _orig_mod if needed.
+            if isinstance(module, torch._dynamo.OptimizedModule):
+                for item in model_state_dict:
+                    if item != '_metadata' and item.split('.', 1)[0] == module_name and '_orig_mod' not in item:
+                        new_dict[item.replace('.', '._orig_mod.', 1)] = model_state_dict[item]
+                        recorded_keys.append(item)
 
     for recorded_key in recorded_keys:
         model_state_dict.pop(recorded_key, None)

@@ -7,7 +7,7 @@ class EvaluatorArguments(BasicEvaluatorArguments):
     def __init__(self, parser, root_path):
         super().__init__(parser)
 
-        self.root_path = root_path        
+        self.root_path = root_path
 
         # plotter specific
         parser.add_argument('--figure_count', type = int, help='We will select {figure_count} records from training set(if set),\

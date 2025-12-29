@@ -102,7 +102,9 @@ class FENN(nn.Module):
         # [batch_size, seq_len, num_marks, d_history]
 
         time_next = repeat(time_next, "... -> ... ne", ne=self.num_marks)  # [..., batch_size, seq_len, num_marks]
-        time_next.requires_grad = True
+        time_next_requires_grad = time_next.requires_grad
+        if not time_next_requires_grad:
+            time_next.requires_grad = True
         time_next_scaled = (time_next - mean) / std  # [..., batch_size, seq_len, num_marks]
         time_embedding = time_next_scaled.unsqueeze(dim=-1) * self.nonneg_activation(self.weight_for_t)
         # [..., batch_size, seq_len, num_marks, d_intensity]
@@ -133,7 +135,8 @@ class FENN(nn.Module):
             create_graph=training,
         )[0]
         check_tensor(intensity_for_each_mark)  # [batch_size, seq_len, num_marks]
-        time_next.requires_grad = False
+        if not time_next_requires_grad:
+            time_next.requires_grad = False
 
         return integral_for_each_mark, intensity_for_each_mark
 

@@ -57,7 +57,7 @@ class Evaluator:
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         logger.info(f"The input model hyperparameters are {model_param}.")
         self.model_class = self.get_model(self.opt)
-        model = self.model_class(device=self.opt.device, opt=self.opt, **model_param, **procedure_param)
+        model = self.model_class(training=False, device=self.opt.device, opt=self.opt, **model_param, **procedure_param)
         self.opt.__dict__.update(model_param)
         self.opt.__dict__.update(procedure_param)
 

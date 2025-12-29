@@ -33,6 +33,7 @@ class TIFNModel(
 
     def __init__(
         self,
+        training,
         d_history,
         d_intensity,
         dropout,
