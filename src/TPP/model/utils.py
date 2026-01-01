@@ -4,11 +4,16 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-from einops import rearrange, repeat
+from einops import pack, rearrange, repeat
 from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 
 from src.toolbox.metrics import evaluate_on_one_batch
-from src.toolbox.misc import argument_check, break_batched_inputs_into_seqs, move_from_tensor_to_ndarray
+from src.toolbox.misc import (
+    argument_check,
+    break_batched_inputs_into_seqs,
+    check_should_we_stop_sampling,
+    move_from_tensor_to_ndarray,
+)
 from src.TPP.resources import expand_true_probability
 
 default_figure_kwargs = {"font.size": 18, "figure.figsize": (8, 4)}
@@ -317,6 +322,108 @@ def pick_log_probability(log_probability, last_index, seq_len_x):
 """
 Mixins
 """
+class SeqGenTimeMarkMixin:
+    def sample_time_mark(self, time_history_for_sampling, marks_history_for_sampling, mean, std, end_sampling_requirement="time", **kwargs):
+        """
+        This function will sample x sequences by the learned probability distribution following the time-mark prediction procedure.
+        Steps:
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this mark by comparing \\(\\lambda^*(m, t_s)\\).
+        """
+        if time_history_for_sampling is None and marks_history_for_sampling is None:
+            number_of_sampled_sequences = kwargs["number_of_sampled_sequences"]
+            time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device=self.device)
+            # [number_of_sampled_sequences, 1]
+            marks_history_for_sampling = (
+                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int32) * self.num_marks
+            )
+            # [number_of_sampled_sequences, 1]
+        else:
+            if not (time_history_for_sampling is not None and marks_history_for_sampling is not None):
+                raise ValueError("How is it possible that one input history is not None while another one is?")
+
+            if not marks_history_for_sampling.shape[0] == time_history_for_sampling.shape[0]:
+                raise ValueError(
+                    f"time_history_for_sampling says we will sample {time_history_for_sampling.shape[0]} sequences, while marks_history_for_sampling suggests {marks_history_for_sampling.shape[0]}. So, how many sequences should we sample?"
+                )
+            number_of_sampled_sequences = marks_history_for_sampling.shape[0]
+
+        sampled_mask = None
+
+        while True:
+            should_we_stop, sampled_mask = check_should_we_stop_sampling(
+                time_history_for_sampling, end_sampling_requirement, **kwargs
+            )
+
+            if should_we_stop:
+                break
+
+            sampled_time, sampled_marks = self.next_one_event_prediction_time_mark(
+                time_history_for_sampling,
+                marks_history_for_sampling,
+                number_of_sampled_sequences,
+                mean,
+                std,
+            )
+
+            time_history_for_sampling, _ = pack([time_history_for_sampling, sampled_time], "nss *")
+            # [number_of_sampled_sequences, history_length + 1]
+            marks_history_for_sampling, _ = pack([marks_history_for_sampling, sampled_marks], "nss *")
+            # [number_of_sampled_sequences, history_length + 1]
+
+        return time_history_for_sampling, marks_history_for_sampling, sampled_mask
+
+
+class SeqGenMarkTimeMixin:
+    def sample_mark_time(self, time_history_for_sampling, marks_history_for_sampling, mean, std, end_sampling_requirement="time", **kwargs):
+        """
+        This function will sample x sequences by the learned probability distribution following the time-mark prediction procedure.
+        Steps:
+        1. Sample a time \\(t_s\\) from p^*(t) = \\sum{n \\in M}{p^*(m, t)} referring to existing history
+        2. Judge the mark of this mark by comparing \\(\\lambda^*(m, t_s)\\).
+        """
+        if time_history_for_sampling is None and marks_history_for_sampling is None:
+            number_of_sampled_sequences = kwargs["number_of_sampled_sequences"]
+            time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device=self.device)
+            # [number_of_sampled_sequences, 1]
+            marks_history_for_sampling = (
+                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int32) * self.num_marks
+            )
+            # [number_of_sampled_sequences, 1]
+        else:
+            if not (time_history_for_sampling is not None and marks_history_for_sampling is not None):
+                raise ValueError("How is it possible that one input history is not None while another one is?")
+
+            if not marks_history_for_sampling.shape[0] == time_history_for_sampling.shape[0]:
+                raise ValueError(
+                    f"time_history_for_sampling says we will sample {time_history_for_sampling.shape[0]} sequences, while marks_history_for_sampling suggests {marks_history_for_sampling.shape[0]}. So, how many sequences should we sample?"
+                )
+            number_of_sampled_sequences = marks_history_for_sampling.shape[0]
+
+        sampled_mask = None
+
+        while True:
+            should_we_stop, sampled_mask = check_should_we_stop_sampling(
+                time_history_for_sampling, end_sampling_requirement, **kwargs
+            )
+
+            if should_we_stop:
+                break
+
+            sampled_time, sampled_marks = self.next_one_event_prediction_mark_time(
+                time_history_for_sampling,
+                marks_history_for_sampling,
+                number_of_sampled_sequences,
+                mean,
+                std,
+            )
+
+            time_history_for_sampling, _ = pack([time_history_for_sampling, sampled_time], "nss *")
+            # [number_of_sampled_sequences, history_length + 1]
+            marks_history_for_sampling, _ = pack([marks_history_for_sampling, sampled_marks], "nss *")
+            # [number_of_sampled_sequences, history_length + 1]
+
+        return time_history_for_sampling, marks_history_for_sampling, sampled_mask
 
 
 class SpearmanL1EvaluationMixin:

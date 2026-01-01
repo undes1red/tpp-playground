@@ -25,7 +25,8 @@ base = [
     "datasets",
     "termcolor",
     "submitit",
-    "accelerate"
+    "accelerate",
+    "ipykernel"
 ]
 
 optional = [
@@ -34,19 +35,15 @@ optional = [
 
 llm = [
     "openai",
-    "vllm==0.12.0",
+    "vllm==0.13.0",
     "flashinfer-python",
     "ninja"
-]
-
-dev = [
-    "ipython"
 ]
 
 # Settings for uv
 [tool.uv]
 # Something we need during development while not when release.
-default-groups = ["base", "optional", "llm", "dev"]
+default-groups = ["base", "optional", "llm"]
 no-build-isolation-package = ["gptqmodel"]
 
 # Install pytorch from the official pytorch repo.

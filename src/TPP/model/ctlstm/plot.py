@@ -296,15 +296,15 @@ def generate_debug_figure(data, opt):
         start_time = time_next_per_seq[:seq_len].cumsum(axis=-1)
         timestamp_offset = np.concatenate((np.array([0.0]), start_time[:-1]), axis=-1)
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
-        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis=-1)
+        timestamp_per_seq = timestamp_per_seq[:seq_len] + np.expand_dims(timestamp_offset, axis=-1)
 
         # Figure 1 and 2: Mark-wise intensity and integral function.
         # Required plots: lineplot
         df_event = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(marks_next_per_seq),
-                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq[:seq_len]),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq[:seq_len]],
             }
         )
 
@@ -407,5 +407,145 @@ def generate_debug_figure(data, opt):
         )
         save_fig(fig9, opt.plot_store_dir_for_this_batch, f"log_pred_time_{idx}.pdf")
         logger.info(f"log_pred_time_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+
+    # Part 9 and 10: expand intensity and expand integral on sampled mark sequences.
+    # Required plots: lineplot and scatterplot
+    sampled_marks_next_mark_time = data["sampled_marks_next_mark_time"]  # [batch_size, seq_len]
+    sampled_time_next_mark_time = data["sampled_time_next_mark_time"]  # [batch_size, seq_len]
+    sampled_mask_next_mark_time = data["sampled_mask_next_mark_time"]  # [batch_size, seq_len]
+    sampled_expand_subintensity_mark_time = data["sampled_subintensity_mark_time"]
+    # [batch_size, seq_len, resolution, num_marks]
+    sampled_expand_timestamp_mark_time = data["sampled_timestamp_mark_time"]  # [batch_size, seq_len, resolution]
+
+    sampled_expand_intensity_mark_time = sampled_expand_subintensity_mark_time.sum(dim=-1)
+    # [batch_size, seq_len, resolution]
+
+    packed_data = zip(
+        *move_from_tensor_to_ndarray(
+            sampled_marks_next_mark_time,
+            sampled_time_next_mark_time,
+            sampled_mask_next_mark_time,
+            sampled_expand_intensity_mark_time,
+            sampled_expand_subintensity_mark_time,
+            sampled_expand_timestamp_mark_time,
+        )
+    )
+    for idx, (
+        sampled_marks_next_per_seq,
+        sampled_time_next_per_seq,
+        sampled_mask_next_per_seq,
+        sampled_expand_intensity_per_seq,
+        sampled_expand_subintensity_per_seq,
+        sampled_timestamp_per_seq,
+    ) in enumerate(packed_data):
+        seq_len = sampled_mask_next_per_seq.sum()
+        start_time = sampled_time_next_per_seq[:seq_len].cumsum(axis=-1)
+        timestamp_offset = np.concatenate((np.array([0.0]), start_time[:-1]), axis=-1)
+        sampled_timestamp_per_seq[:, 0] = sampled_timestamp_per_seq[:, 0] + 1e-30
+        sampled_timestamp_per_seq = sampled_timestamp_per_seq[:seq_len] + np.expand_dims(timestamp_offset, axis=-1)
+
+        df_mark = pd.DataFrame.from_dict(
+            {
+                "Time": start_time,
+                "Point": np.zeros_like(sampled_marks_next_per_seq[:seq_len]),
+                "Mark": [f"Mark {item}" for item in sampled_marks_next_per_seq[:seq_len]],
+            }
+        )
+
+        mark_list = [f"Mark {i}" for i in range(num_marks)]
+
+        df_subintensity = pd.DataFrame.from_dict(
+            {
+                "Time": sampled_timestamp_per_seq.flatten().repeat(num_marks),
+                "Intensity": sampled_expand_subintensity_per_seq[:seq_len, :, :].flatten(),
+                "Mark": mark_list * (seq_len * resolution),
+            }
+        )
+
+        df_intensity = pd.DataFrame.from_dict(
+            {
+                "Time": sampled_timestamp_per_seq.flatten(),
+                "Intensity": sampled_expand_intensity_per_seq[:seq_len, :].flatten(),
+            }
+        )
+
+        fig10 = draw_intensity_integral_per_mark(df_subintensity, df_mark, "Intensity", color_palette, num_marks)
+        save_fig(fig10, opt.plot_store_dir_for_this_batch, f"sample_mark_time_mark_wise_intensity_{idx}.pdf")
+        logger.info(f"sample_mark_time_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+
+        fig11 = draw_intensity_integral_and_probability(
+            df_intensity, df_mark, None, "Intensity", color_palette, num_marks
+        )
+        save_fig(fig11, opt.plot_store_dir_for_this_batch, f"sample_mark_time_intensity_{idx}.pdf")
+        logger.info(f"sample_mark_time_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+
+    sampled_marks_next_time_mark = data["sampled_marks_next_time_mark"]  # [batch_size, seq_len]
+    sampled_time_next_time_mark = data["sampled_time_next_time_mark"]  # [batch_size, seq_len]
+    sampled_mask_next_time_mark = data["sampled_mask_next_time_mark"]  # [batch_size, seq_len]
+    sampled_expand_subintensity_time_mark = data["sampled_subintensity_time_mark"]
+    # [batch_size, seq_len, resolution, num_marks]
+    sampled_expand_timestamp_time_mark = data["sampled_timestamp_time_mark"]  # [batch_size, seq_len, resolution]
+
+    sampled_expand_intensity_time_mark = sampled_expand_subintensity_time_mark.sum(dim=-1)
+    # [batch_size, seq_len, resolution]
+
+    packed_data = zip(
+        *move_from_tensor_to_ndarray(
+            sampled_marks_next_time_mark,
+            sampled_time_next_time_mark,
+            sampled_mask_next_time_mark,
+            sampled_expand_intensity_time_mark,
+            sampled_expand_subintensity_time_mark,
+            sampled_expand_timestamp_time_mark,
+        )
+    )
+    for idx, (
+        sampled_marks_next_per_seq,
+        sampled_time_next_per_seq,
+        sampled_mask_next_per_seq,
+        sampled_expand_intensity_per_seq,
+        sampled_expand_subintensity_per_seq,
+        sampled_timestamp_per_seq,
+    ) in enumerate(packed_data):
+        seq_len = sampled_mask_next_per_seq.sum()
+        start_time = sampled_time_next_per_seq[:seq_len].cumsum(axis=-1)
+        timestamp_offset = np.concatenate((np.array([0.0]), start_time[:-1]), axis=-1)
+        sampled_timestamp_per_seq[:, 0] = sampled_timestamp_per_seq[:, 0] + 1e-30
+        sampled_timestamp_per_seq = sampled_timestamp_per_seq[:seq_len] + np.expand_dims(timestamp_offset, axis=-1)
+
+        df_mark = pd.DataFrame.from_dict(
+            {
+                "Time": start_time,
+                "Point": np.zeros_like(sampled_marks_next_per_seq[:seq_len]),
+                "Mark": [f"Mark {item}" for item in sampled_marks_next_per_seq[:seq_len]],
+            }
+        )
+
+        mark_list = [f"Mark {i}" for i in range(num_marks)]
+
+        df_subintensity = pd.DataFrame.from_dict(
+            {
+                "Time": sampled_timestamp_per_seq.flatten().repeat(num_marks),
+                "Intensity": sampled_expand_subintensity_per_seq[:seq_len, :, :].flatten(),
+                "Mark": mark_list * (seq_len * resolution),
+            }
+        )
+
+        df_intensity = pd.DataFrame.from_dict(
+            {
+                "Time": sampled_timestamp_per_seq.flatten(),
+                "Intensity": sampled_expand_intensity_per_seq[:seq_len, :].flatten(),
+            }
+        )
+
+        fig12 = draw_intensity_integral_per_mark(df_subintensity, df_mark, "Intensity", color_palette, num_marks)
+        save_fig(fig12, opt.plot_store_dir_for_this_batch, f"sample_time_mark_mark_wise_intensity_{idx}.pdf")
+        logger.info(f"sample_time_mark_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+
+        fig13 = draw_intensity_integral_and_probability(
+            df_intensity, df_mark, None, "Probability", color_palette, num_marks
+        )
+        save_fig(fig13, opt.plot_store_dir_for_this_batch, f"sample_time_mark_probability_{idx}.pdf")
+        logger.info(f"sample_time_mark_probability_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
 
     return 0

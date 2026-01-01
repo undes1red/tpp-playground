@@ -1,3 +1,4 @@
+import argparse
 from typing import Self
 
 import torch
@@ -10,8 +11,8 @@ from src.toolbox.misc import (
     argument_check,
     check_tensor,
     compile_model,
-    move_from_tensor_to_ndarray,
     pack_one_value_to_dict,
+    predict_mark,
 )
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling
 from src.TPP.model.ctlstm.plot import (
@@ -27,6 +28,8 @@ from src.TPP.model.utils import (
     GetWhichEventFirstMixin,
     NextEventPredictionMarkTimeMixin,
     NextEventPredictionTimeMarkMixin,
+    SeqGenMarkTimeMixin,
+    SeqGenTimeMarkMixin,
     SpearmanL1EvaluationMixin,
     decide_resolution_inf_and_resolution_between_events,
 )
@@ -37,6 +40,8 @@ class CTLSTMWrapper(
     BalancedSamplingFromDistributionMixin,
     NextEventPredictionTimeMarkMixin,
     NextEventPredictionMarkTimeMixin,
+    SeqGenMarkTimeMixin,
+    SeqGenTimeMarkMixin,
     SpearmanL1EvaluationMixin,
     GetWhichEventFirstMixin,
 ):
@@ -45,23 +50,23 @@ class CTLSTMWrapper(
     """
 
     def __init__(
-        self,
-        training,
-        opt,
-        device,
-        d_input=64,
-        history_module_name="LSTM",
-        history_encoder_layers=1,
-        d_mark_embedding=64,
-        d_hidden=256,
-        dropout=0.1,
-        epsilon=1e-20,
-        sample_rate=32,
-        mae_step=8,
-        mae_e_step=8,
-        integration_sample_rate=100,
-        survival_loss_during_training=True,
-    ):
+        self: Self,
+        training: bool,
+        opt: argparse.Namespace,
+        device: torch.device,
+        d_input: int = 64,
+        history_module_name: str = "LSTM",
+        history_encoder_layers: int = 1,
+        d_mark_embedding: int = 64,
+        d_hidden: int = 256,
+        dropout: float = 0.1,
+        epsilon: float = 1e-20,
+        sample_rate: int = 32,
+        mae_step: int = 8,
+        mae_e_step: int = 8,
+        integration_sample_rate: int = 100,
+        survival_loss_during_training: bool = True,
+    ) -> Self:
         """
         This function creates a CTLSTM model.
 
@@ -183,9 +188,6 @@ class CTLSTMWrapper(
             "integral": self.figure_integral,
             "probability": self.figure_probability,
             "debug": self.figure_debug,
-            # For CPPOD, should be used with the od_generic dataloader.
-            # "cppod_evaluation": self.cppod_evaluation,
-            # "cppod_commission_evaluation": self.cppod_commission_evaluation,
         }
 
         return task_mapper[task_name](*args, **kwargs)
@@ -466,6 +468,36 @@ class CTLSTMWrapper(
         return pred_time, mark_distribution
 
     @torch.inference_mode()
+    def next_one_event_prediction_time_mark(
+        self,
+        time_history_for_sampling,
+        marks_history_for_sampling,
+        number_of_sampled_sequences,
+        mean,
+        std,
+    ):
+        sampled_time = self.sample_time(
+            sampling_approach="its",
+            task="tm",
+            autoregressive=True,
+            marks_history=marks_history_for_sampling,
+            time_history=time_history_for_sampling,
+            number_of_total_samples=number_of_sampled_sequences,
+            step=number_of_sampled_sequences,
+            mean=mean,
+            std=std,
+        )
+        # [number_of_sampled_sequences]
+        _, intensity_all_marks, _ = self.model.integral_intensity_next_one_event_time_next_1d(
+            time_history_for_sampling, sampled_time, marks_history_for_sampling, only_value_at_time_next=True
+        )
+        # [number_of_sampled_sequences]
+        sampled_marks = predict_mark(intensity_all_marks, sample=True)  # [number_of_sampled_sequences]
+
+        return sampled_time, sampled_marks
+        # [number_of_sampled_sequences] + [number_of_sampled_sequences]
+
+    @torch.inference_mode()
     def next_event_prediction_mark_time(
         self: Self,
         time_history: torch.Tensor,
@@ -535,6 +567,54 @@ class CTLSTMWrapper(
             pred_time = tau_sampled_all_mark  # [batch_size, seq_len, num_marks]
 
         return pred_time, mark_distribution
+
+    @torch.inference_mode()
+    def next_one_event_prediction_mark_time(
+        self,
+        time_history_for_sampling,
+        marks_history_for_sampling,
+        number_of_sampled_sequences,
+        mean,
+        std,
+    ):
+        inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
+            time_history_for_sampling, memory_ceiling, self.num_marks, mean, std
+        )
+
+        expand_integral_inf, expand_intensity_inf, timestamp = self.model.integral_intensity_next_one_event_time_next_1d(
+            time_history_for_sampling,
+            torch.ones(number_of_sampled_sequences, device=self.device) * inf_val,
+            marks_history_for_sampling,
+            resolution_inf,
+        )
+        # [number_of_sampled_sequences, resolution_inf, num_marks]
+        probability_inf = expand_intensity_inf * torch.exp(-expand_integral_inf.sum(dim=-1, keepdim=True))
+        # [number_of_sampled_sequences, resolution_inf, num_marks]
+        p_m = approximate_integration(probability_inf, timestamp, dim=-2, only_integral=True)
+        # [number_of_sampled_sequences, num_marks]
+        sampled_marks = predict_mark(p_m, sample=True)  # [number_of_sampled_sequences]
+        # [number_of_sampled_sequences]
+
+        sampled_time = self.sample_time(
+            sampling_approach="its",
+            task="mt",
+            autoregressive=True,
+            marks_history=marks_history_for_sampling,
+            time_history=time_history_for_sampling,
+            p_m = p_m,
+            inf_val = inf_val,
+            number_of_total_samples=number_of_sampled_sequences,
+            step=number_of_sampled_sequences,
+            mean=mean,
+            std=std,
+        )
+        # [number_of_sampled_sequences, num_marks]
+
+        selected_time = (sampled_time * F.one_hot(sampled_marks, num_classes=self.num_marks)).sum(dim=-1)
+        # [number_of_sampled_sequences]
+
+        return selected_time, sampled_marks
+        # [number_of_sampled_sequences] + [number_of_sampled_sequences]
 
     @torch.inference_mode()
     def get_pm_next_event(
@@ -829,13 +909,81 @@ class CTLSTMWrapper(
             evaluation=False,
         )
         # [batch_size, seq_len, num_marks] + [batch_size, seq_len, num_marks]
-        marks_next_mask = torch.nn.functional.one_hot(marks_next, num_classes=self.num_marks)
+        marks_next_mask = torch.nn.functional.one_hot(marks_next * mask_next, num_classes=self.num_marks)
         # [batch_size, seq_len, num_marks]
         pred_time = (pred_time_all_marks * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_marks]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
         top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2)
         # [batch_size, num_marks]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
+
+        # We show how porobability distribution goes on two sampled sequences, one following the mark-time routine, and
+        # the other following the time-mark routine.
+        time_history_for_sampling_mark_time, marks_history_for_sampling_mark_time, sampled_mask_mark_time = (
+            self.sample_mark_time(
+                None,
+                None,
+                mean,
+                std,
+                end_sampling_requirement="time_and_event_num",
+                number_of_sampled_sequences=1,
+                end_time=self.end_time - self.start_time,
+                max_seq_len=250,
+            )
+        )
+        # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
+
+        sampled_time_history_mark_time, sampled_time_next_mark_time = self.divide_history_and_next(
+            time_history_for_sampling_mark_time
+        )
+        # 2 * [batch_size, seq_len]
+        sampled_marks_history_mark_time, sampled_marks_next_mark_time = self.divide_history_and_next(
+            marks_history_for_sampling_mark_time
+        )
+        # 2 * [batch_size, seq_len]
+        _, sampled_mask_next_mark_time = self.divide_history_and_next(sampled_mask_mark_time)
+        # 2 * [batch_size, seq_len]
+
+        sampled_data_mark_time, sampled_timestamp_mark_time = self.model.model_probe_function(
+            sampled_time_history_mark_time,
+            sampled_time_next_mark_time,
+            sampled_marks_history_mark_time,
+            sampled_mask_next_mark_time,
+            opt.resolution,
+        )
+
+        time_history_for_sampling_time_mark, marks_history_for_sampling_time_mark, sampled_mask_time_mark = (
+            self.sample_time_mark(
+                None,
+                None,
+                mean,
+                std,
+                end_sampling_requirement="time_and_event_num",
+                number_of_sampled_sequences=1,
+                end_time=self.end_time - self.start_time,
+                max_seq_len=250,
+            )
+        )
+        # 3 * [number_of_sampled_sequences, length_of_sampled_sequences]
+
+        sampled_time_history_time_mark, sampled_time_next_time_mark = self.divide_history_and_next(
+            time_history_for_sampling_time_mark
+        )
+        # 2 * [batch_size, seq_len]
+        sampled_marks_history_time_mark, sampled_marks_next_time_mark = self.divide_history_and_next(
+            marks_history_for_sampling_time_mark
+        )
+        # 2 * [batch_size, seq_len]
+        _, sampled_mask_next_time_mark = self.divide_history_and_next(sampled_mask_time_mark)
+        # 2 * [batch_size, seq_len]
+
+        sampled_data_time_mark, sampled_timestamp_time_mark = self.model.model_probe_function(
+            sampled_time_history_time_mark,
+            sampled_time_next_time_mark,
+            sampled_marks_history_time_mark,
+            sampled_mask_next_time_mark,
+            opt.resolution,
+        )
 
         # Append additional info into the data dict.
         data.update(
@@ -849,122 +997,22 @@ class CTLSTMWrapper(
                 "tau_pred_all_mark": pred_time_all_marks,
                 "probability_sum": probability_sum,
                 "timestamp": timestamp,
+                # Show the mark sequence sampled from p(t) and p(m|t)
+                "sampled_marks_next_mark_time": sampled_marks_next_mark_time,
+                "sampled_time_next_mark_time": sampled_time_next_mark_time,
+                "sampled_mask_next_mark_time": sampled_mask_next_mark_time,
+                "sampled_timestamp_mark_time": sampled_timestamp_mark_time,
+                "sampled_subintensity_mark_time": sampled_data_mark_time["expand_intensity_for_each_mark"],
+                # Show the mark sequence sampled from p(m) and p(t|m)
+                "sampled_marks_next_time_mark": sampled_marks_next_time_mark,
+                "sampled_time_next_time_mark": sampled_time_next_time_mark,
+                "sampled_mask_next_time_mark": sampled_mask_next_time_mark,
+                "sampled_timestamp_time_mark": sampled_timestamp_time_mark,
+                "sampled_subintensity_time_mark": sampled_data_time_mark["expand_intensity_for_each_mark"],
             }
         )
 
         generate_debug_figure(data, opt)
-
-    def convert_missing_mask_to_gap_mask(self, missing_mask):
-        # input shape: [num_samples, seq_len]
-
-        masks = []
-        for missing_mask_per_seq in missing_mask:
-            current_in_missing = False
-            mask_current_seq = []
-            for item in missing_mask_per_seq[1:]:
-                if item == 1 and not current_in_missing:
-                    mask_current_seq.append(1)
-                elif item == 1 and current_in_missing:
-                    current_in_missing = False
-                elif item == 0 and not current_in_missing:
-                    mask_current_seq.append(0)
-                    current_in_missing = True
-                else:
-                    continue
-
-            masks.append(mask_current_seq)
-
-        return masks
-
-    def cppod_evaluation(self, input_data, opt):
-        """
-        Take care. This function only evaluates the omission outlier.
-        Interestingly, the original CPPOD code seems only focusing on omission too as only omission scores are recorded in model.detect_outlier().
-        Paired with the od_genetic dataloader.
-        """
-        forward_complete_data, backward_complete_data, padded_obs_data, padded_backward_obs_mark_seq, (mean, std) = (
-            input_data
-        )
-
-        roc_result = []
-        for (
-            obs_time_for_one_seq,
-            obs_marks_for_one_seq,
-            obs_mask_for_one_seq,
-            missing_mask_for_one_seq,
-            _,
-        ) in padded_obs_data:
-            obs_time_history_for_one_seq, obs_time_next_for_one_seq = self.divide_history_and_next(obs_time_for_one_seq)
-            # [batch_size, seq_len] * 2
-            obs_marks_history_for_one_seq, obs_marks_next_for_one_seq = self.divide_history_and_next(
-                obs_marks_for_one_seq
-            )
-            # [batch_size, seq_len] * 2
-            obs_mask_history_for_one_seq, obs_mask_next_for_one_seq = self.divide_history_and_next(obs_mask_for_one_seq)
-            # [batch_size, seq_len]
-
-            missing_mask_for_one_seq = self.convert_missing_mask_to_gap_mask(missing_mask_for_one_seq)
-            # [num_samples, ...]
-            integral_all_marks, intensity_all_marks = self.model(
-                obs_time_history_for_one_seq.float(), obs_time_next_for_one_seq.float(), obs_marks_history_for_one_seq
-            )
-            # [num_samples, seq_len, num_marks]
-
-            integral_sum = integral_all_marks.sum(dim=-1)  # [num_samples, seq_len]
-            intensity_sum = intensity_all_marks.sum(dim=-1)  # [num_samples, seq_len]
-
-            all_roauc_area = []
-            for integral_sum_per_seq_per_sample, missing_mask_for_one_seq_per_sample in zip(
-                integral_sum, missing_mask_for_one_seq
-            ):
-                sample_len = len(missing_mask_for_one_seq_per_sample)
-                selected_integral_sum_per_seq_per_sample = move_from_tensor_to_ndarray(
-                    integral_sum_per_seq_per_sample[:sample_len]
-                )
-
-                roauc_area = roc_auc_score(
-                    y_true=np.array(missing_mask_for_one_seq_per_sample) ^ 1,
-                    y_score=selected_integral_sum_per_seq_per_sample,
-                )
-                all_roauc_area.append(roauc_area)
-
-            roc_result.append(np.mean(all_roauc_area))
-
-        roc_result = np.array(roc_result)
-        return roc_result
-
-    def cppod_commission_evaluation(self, input_data, opt):
-        (time_seq, marks, commission, mask), (mean, std) = input_data
-
-        time_history, time_next = self.divide_history_and_next(time_seq)  # [batch_size, seq_len]
-        marks_history, marks_next = self.divide_history_and_next(marks)  # [batch_size, seq_len]
-        _, commission_next = self.divide_history_and_next(commission)  # [batch_size, seq_len]
-        mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
-        time_history = time_history.float()
-        time_next = time_next.float()
-
-        _, intensity_all_marks = self.model(time_history, time_next, marks_history)
-        # 2 * [batch_size, seq_len, num_marks]
-
-        intensity_sum_from_tl_to_time_next = intensity_all_marks.sum(dim=-1)
-        # [batch_size, seq_len]
-        score = -intensity_sum_from_tl_to_time_next  # [batch_size, seq_len]
-
-        packed_data = zip(score, commission_next, mask_next)
-        all_roauc_area = []
-
-        for score_per_seq, commission_next_per_seq, mask_next_per_seq in packed_data:
-            available_score = score_per_seq[mask_next_per_seq]
-            available_commission_label = commission_next_per_seq[mask_next_per_seq]
-
-            available_score, available_commission_label = move_from_tensor_to_ndarray(
-                available_score, available_commission_label
-            )
-            roauc_area = roc_auc_score(y_true=available_commission_label, y_score=available_score)
-            all_roauc_area.append(roauc_area)
-
-        all_roauc_area = np.array(all_roauc_area)
-        return all_roauc_area
 
     def train_step(self, minibatch):
         """

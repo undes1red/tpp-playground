@@ -87,6 +87,13 @@ class TaskHost:
         # suggested by pytorch.
         torch.set_float32_matmul_precision('high')
 
+        # https://github.com/pytorch/pytorch/issues/166387
+        # torch.backends.fp32_precision = "ieee"
+        # torch.backends.cuda.matmul.fp32_precision = "ieee"
+        # torch.backends.cudnn.fp32_precision = "ieee"
+        # torch.backends.cudnn.conv.fp32_precision = "tf32"
+        # torch.backends.cudnn.rnn.fp32_precision = "tf32"
+
         # Might benefit the Dataloader.
         torch.multiprocessing.set_sharing_strategy("file_system")
 

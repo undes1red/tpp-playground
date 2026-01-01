@@ -237,7 +237,9 @@ class CTLSTM(nn.Module):
     def nhps_get_intensity(self, input_state):
         return self.intensity_layer(input_state)  # [..., num_marks]
 
-    def sample_for_tm(self, time_history, time_next, marks_history):
+    def integral_intensity_next_one_event_time_next_1d(
+        self, time_history, time_next, marks_history, integration_sample_rate=None, only_value_at_time_next=False
+    ):
         """
         CTLSTM's forwardpropagation function specific for sampling time first then mark.
 
@@ -260,6 +262,9 @@ class CTLSTM(nn.Module):
               The value of \\lambda^*(m, t) on at t_i.
         """
         seq_len = marks_history.shape[-1]
+        integration_sample_rate = (
+            self.integration_sample_rate if integration_sample_rate is None else integration_sample_rate
+        )
         marks_embeddings = self.marks_embedding(
             marks_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
@@ -278,34 +283,37 @@ class CTLSTM(nn.Module):
         mu = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
         gamma = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
 
-        time_next = time_next.unsqueeze(dim=-1)  # [number_of_sampled_sequences, 1]
         hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=time_next, num_dimension_prior_batch=0
+            mu=mu, eta=eta, gamma=gamma, duration_t=time_next.unsqueeze(dim=-1), num_dimension_prior_batch=0
         )
         # [number_of_sampled_sequences, 1, d_input]
         # calculate the intensity.
         intensity_all_marks = self.intensity_layer(hidden_state_at_t)  # [number_of_sampled_sequences, 1, num_marks]
         intensity_all_marks = intensity_all_marks.squeeze(dim=-2)  # [number_of_sampled_sequences, num_marks]
         # calculate the integral
-        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device=self.device)
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         expanded_time = (
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [number_of_sampled_sequences, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
             mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=0
         )
-        # [number_of_sampled_sequences, 1, integration_sample_rate, d_input]
+        # [number_of_sampled_sequences, integration_sample_rate, d_input]
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)
-        # [number_of_sampled_sequences, 1, integration_sample_rate, num_marks]
+        # [number_of_sampled_sequences, integration_sample_rate, num_marks]
         integral_all_marks = approximate_integration(
-            expanded_intensity_all_marks, expanded_time, dim=-2, only_integral=True
+            expanded_intensity_all_marks, expanded_time, dim=-2, only_integral=only_value_at_time_next
         )
-        # [number_of_sampled_sequences, 1, num_marks]
-        integral_all_marks = integral_all_marks.squeeze(dim=-2)  # [number_of_sampled_sequences, num_marks]
+        # [number_of_sampled_sequences, num_marks]/[number_of_sampled_sequences, integration_sample_rate, num_marks]
 
-        return integral_all_marks, intensity_all_marks
+        if only_value_at_time_next:
+            return integral_all_marks, intensity_all_marks, expanded_time
 
-    def sample_for_mt(self, time_history, time_next, marks_history):
+        return integral_all_marks, expanded_intensity_all_marks, expanded_time
+
+    def integral_intensity_next_one_event_time_next_2d(
+        self, time_history, time_next, marks_history, integration_sample_rate=None
+    ):
         """
         CTLSTM's forwardpropagation function specific for sampling mark first then time.
 
@@ -328,6 +336,9 @@ class CTLSTM(nn.Module):
               The value of \\lambda^*(m, t) on at t_i.
         """
         seq_len = marks_history.shape[-1]
+        integration_sample_rate = (
+            self.integration_sample_rate if integration_sample_rate is None else integration_sample_rate
+        )
         marks_embeddings = self.marks_embedding(
             marks_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
@@ -345,32 +356,21 @@ class CTLSTM(nn.Module):
         mu = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
         gamma = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
 
-        time_next = time_next.unsqueeze(dim=-1)  # [number_of_sampled_sequences, 1]
-        hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=time_next, num_dimension_prior_batch=0
-        )
-        # [number_of_sampled_sequences, 1, d_input]
-        # calculate the intensity.
-        intensity_all_marks = self.intensity_layer(hidden_state_at_t)  # [number_of_sampled_sequences, 1, num_marks]
-        intensity_all_marks = intensity_all_marks.squeeze(dim=-2)  # [number_of_sampled_sequences, num_marks]
         # calculate the integral
-        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device=self.device)
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         expanded_time = (
             time_next.unsqueeze(dim=-1) * time_multiplier
-        )  # [number_of_sampled_sequences, integration_sample_rate]
+        )  # [number_of_sampled_sequences, num_marks, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
             mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=0
         )
-        # [number_of_sampled_sequences, 1, integration_sample_rate, d_input]
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, d_input]
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)
-        # [number_of_sampled_sequences, 1, integration_sample_rate, num_marks]
-        integral_all_marks = approximate_integration(
-            expanded_intensity_all_marks, expanded_time, dim=-2, only_integral=True
-        )
-        # [number_of_sampled_sequences, 1, num_marks]
-        integral_all_marks = integral_all_marks.squeeze(dim=-2)  # [number_of_sampled_sequences, num_marks]
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks]
+        expanded_integral_all_marks = approximate_integration(expanded_intensity_all_marks, expanded_time, dim=-2)
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks]
 
-        return integral_all_marks, intensity_all_marks
+        return expanded_integral_all_marks, expanded_intensity_all_marks, expanded_time
 
     def integral_intensity_time_next_2d(
         self,

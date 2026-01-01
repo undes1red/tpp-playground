@@ -28,16 +28,30 @@ class BasicModel(nn.Module, metaclass=ABCMeta):
     @abstractmethod
     def next_event_prediction_time_mark(self, *args):
         """
-        This function calculates the MAE (Mean Absolute Error) of one input minibatch.
-        This function usually outputs the raw MAE values and corresponding predicted time.
+        """
+        return NotImplementedError("next_event_prediction_time_mark() not implemented!")
+
+    @abstractmethod
+    def next_one_event_prediction_time_mark(self, *args):
+        """
         """
         return NotImplementedError("next_event_prediction_time_mark() not implemented!")
 
     @abstractmethod
     def next_event_prediction_mark_time(self, *args):
         """
-        This function calculates the MAE (Mean Absolute Error) of one input minibatch.
-        This function usually outputs the raw MAE values and corresponding predicted time.
+        """
+        return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
+
+    @abstractmethod
+    def next_one_event_prediction_mark_time(self, *args):
+        """
+        """
+        return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
+
+    @abstractmethod
+    def probability_time_next_2d(self, *args):
+        """
         """
         return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
 

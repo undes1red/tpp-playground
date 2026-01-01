@@ -6,7 +6,7 @@ import torch
 import torch.optim as optim
 
 from src.toolbox.list_operation import list_mean
-from src.toolbox.misc import get_logger, read_yaml, conditional_compile_func
+from src.toolbox.misc import get_logger, read_yaml
 
 logger = get_logger(__name__)
 

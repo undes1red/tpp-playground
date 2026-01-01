@@ -12,10 +12,10 @@ def compile_model(model, use_compile, backend=None, *args, **kwargs):
         )
 
         return torch.compile(
-            model, *args, backend=backend, dynamic=False, fullgraph=True, disable=not use_compile, **kwargs
+            model, *args, backend=backend, dynamic=False, fullgraph=True, mode='max-autotune-no-cudagraphs', disable=not use_compile, **kwargs
         )
     return model
 
 
 def conditional_compile_func(func, compile_or_not, backend, *args, **kwargs):
-    return torch.compile(func, backend=backend, dynamic=False, disable=not compile_or_not, *args, **kwargs)
+    return torch.compile(func, backend=backend, dynamic=False, mode='max-autotune', disable=not compile_or_not, *args, **kwargs)
