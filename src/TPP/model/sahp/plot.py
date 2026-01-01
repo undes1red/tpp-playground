@@ -296,15 +296,15 @@ def generate_debug_figure(data, opt):
         start_time = time_next_per_seq[:seq_len].cumsum(axis=-1)
         timestamp_offset = np.concatenate((np.array([0.0]), start_time[:-1]), axis=-1)
         timestamp_per_seq[:, 0] = timestamp_per_seq[:, 0] + 1e-30
-        timestamp_per_seq = timestamp_per_seq + np.expand_dims(timestamp_offset, axis=-1)
+        timestamp_per_seq = timestamp_per_seq[:seq_len] + np.expand_dims(timestamp_offset, axis=-1)
 
         # Figure 1 and 2: Mark-wise intensity and integral function.
         # Required plots: lineplot
         df_mark = pd.DataFrame.from_dict(
             {
                 "Time": start_time,
-                "Point": np.zeros_like(marks_next_per_seq),
-                "Mark": [f"Mark {item}" for item in marks_next_per_seq],
+                "Point": np.zeros_like(marks_next_per_seq[:seq_len]),
+                "Mark": [f"Mark {item}" for item in marks_next_per_seq[:seq_len]],
             }
         )
 

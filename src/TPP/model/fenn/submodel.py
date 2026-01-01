@@ -155,6 +155,195 @@ class FENN(nn.Module):
         """
         return self.marks(input_mark)  # [batch_size, seq_len, d_history]
 
+    def integral_intensity_next_one_event_time_next_1d(
+        self,
+        time_history,
+        time_next,
+        marks_history,
+        mean,
+        std,
+        integration_sample_rate=None,
+        only_value_at_time_next=False,
+    ):
+        """
+        FENN's forwardpropagation function specific for sampling time first then mark.
+
+        ### Args
+            * ```torch.tensor``` marks_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical mark sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              Guessed time when the next mark will happen.
+        ### Outputs
+            * ```torch.tensor``` integral_all_marks
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_marks
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              The value of \\lambda^*(m, t) on at t_i.
+        """
+        if only_value_at_time_next:
+            integration_sample_rate = 2
+
+        time_history = (time_history - mean) / std  # [number_of_sampled_sequences, seq_len]
+
+        marks_embeddings = self.marks(marks_history)
+        # [number_of_sampled_sequences, seq_len, d_history]
+        history, _ = pack(
+            [marks_embeddings, time_history], "b s *"
+        )  # [number_of_sampled_sequences, seq_len, d_history + 1]
+
+        # Reshape hidden output for full connection layers.
+        _, (hidden_history, _) = self.his_encoder(history)  # [1, number_of_sampled_sequences, d_hidden]
+
+        hidden_history = rearrange(hidden_history, "a nss dh -> nss a dh")
+        # [number_of_sampled_sequences, 1, d_hidden]
+
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+        expanded_time_next = time_next.unsqueeze(dim=-1) * time_multiplier  # [number_of_sampled_sequences, resolution]
+        expanded_time_next = repeat(
+            expanded_time_next, "... -> ... ne", ne=self.num_marks
+        )  # [number_of_sampled_sequences, resolution, num_marks]
+
+        expanded_time_next.requires_grad = True
+        expanded_time_next_scaled = (
+            expanded_time_next - mean
+        ) / std  # [number_of_sampled_sequences, resolution, num_marks]
+        time_embedding = expanded_time_next_scaled.unsqueeze(dim=-1) * self.nonneg_activation(self.weight_for_t)
+        # [number_of_sampled_sequences, resolution, num_marks, d_intensity]
+
+        hidden_history = self.history_mapper(hidden_history)  # [number_of_sampled_sequences, 1, d_intensity]
+        time_embedding = self.time_mapper(
+            time_embedding
+        )  # [number_of_sampled_sequences, resolution, num_marks, d_intensity]
+        output = self.layer_activation(
+            time_embedding + hidden_history.unsqueeze(dim=-2)
+        )  # [number_of_sampled_sequences, resolution, num_marks, d_intensity]
+
+        for nonneg_layer in self.mlp:
+            output = nonneg_layer(output)  # [number_of_sampled_sequences, resolution, num_marks, d_intensity]
+            output = self.layer_activation(output)  # [number_of_sampled_sequences, resolution, num_marks, d_intensity]
+
+        integral_for_each_mark = self.nonneg_activation(
+            self.aggregate(output)
+        )  # [number_of_sampled_sequences, resolution, num_marks, 1]
+        integral_for_each_mark = integral_for_each_mark.squeeze(
+            dim=-1
+        )  # [number_of_sampled_sequences, resolution, num_marks]
+
+        intensity_for_each_mark = torch.autograd.grad(
+            outputs=integral_for_each_mark,
+            inputs=expanded_time_next,
+            grad_outputs=torch.ones_like(integral_for_each_mark),
+        )[0]
+        check_tensor(intensity_for_each_mark)  # [number_of_sampled_sequences, resolution, num_marks]
+        expanded_time_next.requires_grad = False
+
+        if only_value_at_time_next:
+            return (
+                integral_for_each_mark[:, -1, :].detach(),
+                intensity_for_each_mark[:, -1, :].detach(),
+                expanded_time_next,
+            )
+
+        return integral_for_each_mark.detach(), intensity_for_each_mark.detach(), expanded_time_next
+
+    def integral_intensity_next_one_event_time_next_2d(
+        self, time_history, time_next, marks_history, mean, std, integration_sample_rate=None
+    ):
+        """
+        CTLSTM's forwardpropagation function specific for sampling mark first then time.
+
+        ### Args
+            * ```torch.tensor``` marks_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical mark sequence.
+            * ```torch.tensor``` time_history
+              shape: ```[number_of_sampled_sequences, sampled_seq_len]```
+              Historical time sequence.
+            * ```torch.tensor``` time_next
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              Guessed time when the next mark will happen.
+        ### Outputs
+            * ```torch.tensor``` integral_all_marks
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
+            * ```torch.tensor``` intensity_all_marks
+              shape: ```[number_of_sampled_sequences, num_marks]```
+              The value of \\lambda^*(m, t) on at t_i.
+        """
+        # Prepare the history embedding.
+        time_history = (time_history - mean) / std  # [number_of_sampled_sequences, seq_len]
+
+        marks_embeddings = self.marks(marks_history)  # [number_of_sampled_sequences, seq_len, d_history]
+        history, history_ps = pack(
+            [marks_embeddings, time_history], "b s *"
+        )  # [number_of_sampled_sequences, seq_len, d_history + 1]
+
+        _, (hidden_history, _) = self.his_encoder(history)  # [1, number_of_sampled_sequences, d_hidden]
+
+        hidden_history = rearrange(hidden_history, "a nss dh -> nss a dh")
+        # [number_of_sampled_sequences, 1, d_hidden]
+        hidden_history = self.history_mapper(hidden_history)  # [number_of_sampled_sequences, 1, d_intensity]
+        hidden_history = rearrange(
+            hidden_history,
+            "b () di -> b () () () di",
+        )
+        # [number_of_sampled_sequences, resolution, num_marks, num_marks, d_intensity]
+
+        # Prepare the time embedding.
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+        # [resolution]
+        original_time_expand = time_next.unsqueeze(dim=-1) * rearrange(time_multiplier, "r -> () () r")
+        # [number_of_sampled_sequences, num_marks, resolution]
+        time_expand = repeat(original_time_expand.clone(), "... -> ... ne", ne=self.num_marks)
+        # [number_of_sampled_sequences, num_marks, resolution, num_marks]
+        time_expand.requires_grad = True
+        normed_time_expand = (
+            time_expand - mean
+        ) / std  # [number_of_sampled_sequences, num_marks, resolution, num_marks]
+
+        emb_normed_time_expand = normed_time_expand.unsqueeze(dim=-1) * self.nonneg_activation(self.weight_for_t)
+        # [number_of_sampled_sequences, num_marks, resolution, num_marks, d_intensity]
+        emb_normed_time_expand = self.time_mapper(
+            emb_normed_time_expand
+        )  # [number_of_sampled_sequences, num_marks, resolution, num_marks, d_intensity]
+        output = self.layer_activation(
+            emb_normed_time_expand + hidden_history
+        )  # [number_of_sampled_sequences, num_marks, resolution, num_marks, d_intensity]
+
+        # Get intensity integrals.
+        for nonneg_layer in self.mlp:
+            output = nonneg_layer(
+                output
+            )  # [number_of_sampled_sequences, num_marks, resolution, num_marks, d_intensity]
+            output = self.layer_activation(
+                output
+            )  # [number_of_sampled_sequences, num_marks, resolution, num_marks, d_intensity]
+
+        expand_integral = self.nonneg_activation(
+            self.aggregate(output)
+        )  # [number_of_sampled_sequences, num_marks, resolution, num_marks, 1]
+
+        # Get intensity values at every sampled $ t $.
+        expand_intensity = torch.autograd.grad(
+            outputs=expand_integral,
+            inputs=time_expand,
+            grad_outputs=torch.ones_like(expand_integral),
+        )[0]  # [number_of_sampled_sequences, num_marks, resolution, num_marks]
+        time_expand.requires_grad = False
+
+        expand_integral = expand_integral.squeeze(
+            dim=-1
+        ).detach()  # [number_of_sampled_sequences, num_marks, resolution, num_marks]
+        expand_intensity = expand_intensity.detach()  # [number_of_sampled_sequences, num_marks, resolution, num_marks]
+
+        return expand_integral, expand_intensity, original_time_expand
+
     def integral_intensity_time_next_2d(
         self, time_history, time_next, marks_history, integration_sample_rate, mean, std, time_next_start=None
     ):
@@ -256,7 +445,9 @@ class FENN(nn.Module):
 
         return expand_integral, expand_intensity, original_time_expand
 
-    def integral_intensity_time_next_3d(self, time_history, time_next, marks_history, integration_sample_rate, mean, std):
+    def integral_intensity_time_next_3d(
+        self, time_history, time_next, marks_history, integration_sample_rate, mean, std
+    ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_marks]```.
@@ -300,7 +491,11 @@ class FENN(nn.Module):
         hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(
-            hidden_history, "b s di -> b s r ne ne1 di", r=integration_sample_rate, ne=self.num_marks, ne1=self.num_marks
+            hidden_history,
+            "b s di -> b s r ne ne1 di",
+            r=integration_sample_rate,
+            ne=self.num_marks,
+            ne1=self.num_marks,
         )
         # [batch_size, seq_len, resolution, num_marks, num_marks, d_intensity]
 

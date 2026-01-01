@@ -581,18 +581,20 @@ class CTLSTMWrapper(
             time_history_for_sampling, memory_ceiling, self.num_marks, mean, std
         )
 
-        expand_integral_inf, expand_intensity_inf, timestamp = self.model.integral_intensity_next_one_event_time_next_1d(
-            time_history_for_sampling,
-            torch.ones(number_of_sampled_sequences, device=self.device) * inf_val,
-            marks_history_for_sampling,
-            resolution_inf,
+        expand_integral_inf, expand_intensity_inf, timestamp = (
+            self.model.integral_intensity_next_one_event_time_next_1d(
+                time_history_for_sampling,
+                torch.ones(number_of_sampled_sequences, device=self.device) * inf_val,
+                marks_history_for_sampling,
+                resolution_inf,
+            )
         )
         # [number_of_sampled_sequences, resolution_inf, num_marks]
         probability_inf = expand_intensity_inf * torch.exp(-expand_integral_inf.sum(dim=-1, keepdim=True))
         # [number_of_sampled_sequences, resolution_inf, num_marks]
         p_m = approximate_integration(probability_inf, timestamp, dim=-2, only_integral=True)
         # [number_of_sampled_sequences, num_marks]
-        sampled_marks = predict_mark(p_m, sample=True)  # [number_of_sampled_sequences]
+        sampled_marks = predict_mark(p_m, sample=True)
         # [number_of_sampled_sequences]
 
         sampled_time = self.sample_time(
@@ -601,8 +603,8 @@ class CTLSTMWrapper(
             autoregressive=True,
             marks_history=marks_history_for_sampling,
             time_history=time_history_for_sampling,
-            p_m = p_m,
-            inf_val = inf_val,
+            p_m=p_m,
+            inf_val=inf_val,
             number_of_total_samples=number_of_sampled_sequences,
             step=number_of_sampled_sequences,
             mean=mean,

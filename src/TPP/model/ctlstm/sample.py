@@ -110,18 +110,14 @@ def autoregressive_sampling_by_its_for_mt(
 
     def evaluate_all_mark(taus):
         expanded_integral_across_marks, expanded_intensity_across_marks, timestamp = (
-            self.model.integral_intensity_next_one_event_time_next_2d(
-                time_history, taus, marks_history
-            )
+            self.model.integral_intensity_next_one_event_time_next_2d(time_history, taus, marks_history)
         )
         # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks] * 2 + [number_of_sampled_sequences, num_marks, integration_sample_rate]
         expanded_integral_sum_across_marks = expanded_integral_across_marks.sum(dim=-1)
         # [number_of_sampled_sequences, num_marks, integration_sample_rate]
         intensity_mark_mask = torch.diag(torch.ones(self.num_marks, device=self.device))
         # [num_marks, num_marks]
-        intensity_mark_mask = rearrange(
-            intensity_mark_mask, "ne ne1 -> () ne () ne1"
-        )
+        intensity_mark_mask = rearrange(intensity_mark_mask, "ne ne1 -> () ne () ne1")
         # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks]
         expanded_intensity_per_mark = (expanded_intensity_across_marks * intensity_mark_mask).sum(dim=-1)
         # [number_of_sampled_sequences, num_marks, integration_sample_rate]
@@ -160,11 +156,9 @@ def autoregressive_sampling_by_its_for_tm(self, marks_history, time_history, num
         2. marks: the sequence containing information about marks. shape: [batch_size, seq_len + 1]
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         """
-        (
-            expanded_integral_all_marks,
-            _,
-            _
-        ) = self.model.integral_intensity_next_one_event_time_next_1d(time_history, taus, marks_history, only_value_at_time_next=True)
+        (expanded_integral_all_marks, _, _) = self.model.integral_intensity_next_one_event_time_next_1d(
+            time_history, taus, marks_history, only_value_at_time_next=True
+        )
         # [number_of_sampled_sequences, num_marks]
         expanded_integral = expanded_integral_all_marks.sum(dim=-1)  # [number_of_sampled_sequences]
 

@@ -83,9 +83,99 @@ def sample_time(self, sampling_approach="its", task="mt", autoregressive=False, 
         * ```float``` std
           Used for input time scaling.
     """
-    dict_sampling_apparoch = {"its": sampling_by_its, "thinning": sampling_by_thinning}
+    if autoregressive:
+        dict_sampling_apparoch = {
+            "its": autoregressive_sampling_by_its,
+            "thinning": autoregressive_sampling_by_thinning,
+        }
+    else:
+        dict_sampling_apparoch = {"its": sampling_by_its, "thinning": sampling_by_thinning}
 
-    return dict_sampling_apparoch[sampling_approach](self, task, *args, **kwargs)
+    return dict_sampling_apparoch[sampling_approach](self, task=task, *args, **kwargs)
+
+
+# Sample marks from p^*(m, t) using inversed transform sampling in a autoregressive manner.
+def autoregressive_sampling_by_its(self, task, *args, **kwargs):
+    dict_apparoch_for_tasks = {"mt": autoregressive_sampling_by_its_for_mt, "tm": autoregressive_sampling_by_its_for_tm}
+
+    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
+
+
+def autoregressive_sampling_by_its_for_mt(
+    self, marks_history, time_history, p_m, resolution, inf_val, number_of_total_samples, step, mean, std
+):
+    # Preprocess
+    sample_rate_list = step_split(number_of_total_samples, step)
+
+    def evaluate_all_mark(taus):
+        expanded_integral_across_marks, expanded_intensity_across_marks, timestamp = (
+            self.model.integral_intensity_next_one_event_time_next_2d(
+                time_history, taus, marks_history, mean=mean, std=std, integration_sample_rate=resolution
+            )
+        )
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks] * 2 + [number_of_sampled_sequences, num_marks, integration_sample_rate]
+        expanded_integral_sum_across_marks = expanded_integral_across_marks.sum(dim=-1)
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate]
+        intensity_mark_mask = torch.diag(torch.ones(self.num_marks, device=self.device))
+        # [num_marks, num_marks]
+        intensity_mark_mask = rearrange(intensity_mark_mask, "ne ne1 -> () ne () ne1")
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks]
+        expanded_intensity_per_mark = (expanded_intensity_across_marks * intensity_mark_mask).sum(dim=-1)
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate]
+        expanded_probability_per_mark = expanded_intensity_per_mark * torch.exp(-expanded_integral_sum_across_marks)
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate]
+        return approximate_integration(expanded_probability_per_mark, timestamp, dim=-1, only_integral=True)
+        # [number_of_sampled_sequences, num_marks]
+
+    def bisect_target(taus, probability_threshold):
+        p_mt = evaluate_all_mark(taus)  # [number_of_sampled_sequences, num_marks]
+        p_t_m = p_mt / p_m  # [number_of_sampled_sequences, num_marks]
+        return p_t_m - probability_threshold  # [number_of_sampled_sequences, num_marks]
+
+    tau_pred = []
+    for sub_sample_rate in sample_rate_list:
+        probability_threshold = torch.zeros((sub_sample_rate), device=self.device)
+        # [sub_sample_rate]
+        torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
+        # [sub_sample_rate]
+        tau_pred.append(
+            bisection(
+                self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold, r_val=inf_val
+            )
+        )
+        # [sub_sample_rate]
+    return torch.cat(tau_pred, dim=0)  # [number_of_sampled_sequences, num_marks]
+
+
+def autoregressive_sampling_by_its_for_tm(self, marks_history, time_history, number_of_total_samples, step, mean, std):
+    sample_rate_list = step_split(number_of_total_samples, step)
+
+    def bisect_target(taus, probability_threshold):
+        """
+        Args:
+        1. time: the sequence containing marks' timestamps. shape: [batch_size, seq_len + 1]
+        2. marks: the sequence containing information about marks. shape: [batch_size, seq_len + 1]
+        3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
+        """
+        (expanded_integral_all_marks, _, _) = self.model.integral_intensity_next_one_event_time_next_1d(
+            time_history, taus, marks_history, only_value_at_time_next=True, mean=mean, std=std
+        )
+        # [number_of_sampled_sequences, num_marks]
+        expanded_integral = expanded_integral_all_marks.sum(dim=-1)  # [number_of_sampled_sequences]
+
+        return expanded_integral + torch.log(1 - probability_threshold)
+
+    tau_pred = []
+    for sub_sample_rate in sample_rate_list:
+        probability_threshold = torch.zeros((sub_sample_rate), device=self.device)
+        # [sub_sample_rate]
+        torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
+        # [sub_sample_rate]
+        tau_pred.append(
+            bisection(self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold)
+        )
+        # [sub_sample_rate]
+    return torch.cat(tau_pred, dim=0)  # [sample_rate]
 
 
 def sampling_by_its(self, task, *args, **kwargs):
@@ -181,6 +271,24 @@ def sampling_by_its_for_tm(self, time_history, marks_history, number_of_total_sa
         )
         # [sample_rate, batch_size, seq_len]
     return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len]
+
+
+# Sample marks from p^*(m, t) using thinning algorithm in a autoregressive manner.
+def autoregressive_sampling_by_thinning(self, task, *args, **kwargs):
+    dict_apparoch_for_tasks = {
+        "mt": autoregressive_sampling_by_thinning_for_mt,
+        "tm": autoregressive_sampling_by_thinning_for_tm,
+    }
+
+    return dict_apparoch_for_tasks[task](self, *args, **kwargs)
+
+
+def autoregressive_sampling_by_thinning_for_mt(self):
+    pass
+
+
+def autoregressive_sampling_by_thinning_for_tm(self):
+    pass
 
 
 def sampling_by_thinning_for_mt(self, *args, **kwargs):

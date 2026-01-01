@@ -471,7 +471,9 @@ def generate_debug_figure(data, opt):
 
         fig10 = draw_intensity_integral_per_mark(df_subintensity, df_mark, "Intensity", color_palette, num_marks)
         save_fig(fig10, opt.plot_store_dir_for_this_batch, f"sample_mark_time_mark_wise_intensity_{idx}.pdf")
-        logger.info(f"sample_mark_time_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+        logger.info(
+            f"sample_mark_time_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!"
+        )
 
         fig11 = draw_intensity_integral_and_probability(
             df_intensity, df_mark, None, "Intensity", color_palette, num_marks
@@ -540,7 +542,9 @@ def generate_debug_figure(data, opt):
 
         fig12 = draw_intensity_integral_per_mark(df_subintensity, df_mark, "Intensity", color_palette, num_marks)
         save_fig(fig12, opt.plot_store_dir_for_this_batch, f"sample_time_mark_mark_wise_intensity_{idx}.pdf")
-        logger.info(f"sample_time_mark_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!")
+        logger.info(
+            f"sample_time_mark_mark_wise_intensity_{idx} drawed and saved in {opt.plot_store_dir_for_this_batch}!"
+        )
 
         fig13 = draw_intensity_integral_and_probability(
             df_intensity, df_mark, None, "Probability", color_palette, num_marks

@@ -265,6 +265,9 @@ class CTLSTM(nn.Module):
         integration_sample_rate = (
             self.integration_sample_rate if integration_sample_rate is None else integration_sample_rate
         )
+        if only_value_at_time_next:
+            integration_sample_rate = 2
+
         marks_embeddings = self.marks_embedding(
             marks_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]

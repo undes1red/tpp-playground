@@ -17,7 +17,9 @@ def predict_mark_numpy(probability, logits=False, sample=False):
         if logits:
             distribution_of_marks = torch.distributions.categorical.Categorical(logits=torch.from_numpy(probability)) # [...]
         else:
-            distribution_of_marks = torch.distributions.categorical.Categorical(probs=torch.from_numpy(probability)) # [...]
+            # https://github.com/pytorch/pytorch/issues/87468
+            probability = probability / probability.sum(dim=-1, keepdim=True)  # [...]
+            distribution_of_marks = torch.distributions.categorical.Categorical(probs=torch.from_numpy(probability), validate_args=False) # [...]
         sampled_marks = distribution_of_marks.sample().numpy()
     else:
         sampled_marks = np.argmax(probability, axis=-1)  # [...]
@@ -35,7 +37,9 @@ def predict_mark_torch(probability, logits=False, sample=False):
             distribution_of_marks = torch.distributions.categorical.Categorical(logits=probability)
         # [...]
         else:
-            distribution_of_marks = torch.distributions.categorical.Categorical(probs=probability)
+            # https://github.com/pytorch/pytorch/issues/87468
+            probability = probability / probability.sum(dim=-1, keepdim=True)  # [...]
+            distribution_of_marks = torch.distributions.categorical.Categorical(probs=probability, validate_args=False)
             # [...]
         sampled_marks = distribution_of_marks.sample()
     else:
