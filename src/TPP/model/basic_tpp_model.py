@@ -31,11 +31,11 @@ class BasicModel(nn.Module, metaclass=ABCMeta):
         """
         return NotImplementedError("next_event_prediction_time_mark() not implemented!")
 
-    @abstractmethod
-    def next_one_event_prediction_time_mark(self, *args):
-        """
-        """
-        return NotImplementedError("next_event_prediction_time_mark() not implemented!")
+    # @abstractmethod
+    # def next_one_event_prediction_time_mark(self, *args):
+    #     """
+    #     """
+    #     return NotImplementedError("next_event_prediction_time_mark() not implemented!")
 
     @abstractmethod
     def next_event_prediction_mark_time(self, *args):
@@ -43,11 +43,11 @@ class BasicModel(nn.Module, metaclass=ABCMeta):
         """
         return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
 
-    @abstractmethod
-    def next_one_event_prediction_mark_time(self, *args):
-        """
-        """
-        return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
+    # @abstractmethod
+    # def next_one_event_prediction_mark_time(self, *args):
+    #     """
+    #     """
+    #     return NotImplementedError("meannext_event_prediction_mark_time_absolute_error_e() not implemented!")
 
     @abstractmethod
     def probability_time_next_2d(self, *args):

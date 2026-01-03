@@ -260,7 +260,7 @@ def llm_mtpp_classification_postprocess(all_evaluation_results, desc, opt):
 
 
 def nll_with_label_postprocess(all_evaluation_results, desc, opt):
-    nll_per_seq, labels = all_evaluation_results
+    nll_per_seq, labels, texts, post_time_seqs, mask = all_evaluation_results
 
     categorized_nll = {}
     for nll, label in zip(nll_per_seq, labels):
@@ -270,7 +270,15 @@ def nll_with_label_postprocess(all_evaluation_results, desc, opt):
             categorized_nll[label].append(nll)
 
     nll_results_file = opt.store_dir / f"{desc}_nll.pkl"
-    dump_to_pkl(categorized_nll, nll_results_file, compression="bz2")
+    dump_to_pkl(
+        {
+            "categorized_nll": categorized_nll,
+            "nll_per_seq": nll_per_seq,
+            "labels": labels,
+            "texts": texts,
+            "post_time_seqs": post_time_seqs,
+            "mask": mask
+        }, nll_results_file, compression="bz2")
 
     string_list = [f"For dataset {desc}:\n"]
     for label, nll in categorized_nll.items():

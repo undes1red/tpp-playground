@@ -26,7 +26,8 @@ base = [
     "termcolor",
     "submitit",
     "accelerate",
-    "ipykernel"
+    "ipykernel",
+    "ipywidgets"
 ]
 
 optional = [
@@ -48,13 +49,13 @@ no-build-isolation-package = ["gptqmodel"]
 
 # Install pytorch from the official pytorch repo.
 [tool.uv.sources]
-torch = { index = "pytorch-cu130" }
-torchvision = { index = "pytorch-cu130" }
-torchaudio = { index = "pytorch-cu130" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 # ruff settings.

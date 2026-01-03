@@ -4,6 +4,7 @@ from typing import Any, Self
 
 import pandas as pd
 import torch
+import torch._dynamo
 from tqdm import tqdm
 
 from src.toolbox.dataloader import prepare_dataloaders
@@ -224,6 +225,8 @@ class Trainer:
 
         # Start training.
         self.evaluation_report(0)
+        # Avoid crash.
+        torch._dynamo.reset()
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training_iter)
 

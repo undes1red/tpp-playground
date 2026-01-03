@@ -70,6 +70,7 @@ class CTLSTM(nn.Module):
 
         # Mark embedding layer.
         self.marks_embedding = nn.Embedding(num_marks + 1, d_mark_embedding, padding_idx=num_marks, device=device)
+
         # Time embedding layer
         self.position_emb = BiasedPositionalEmbedding(d_mark_embedding, max_len=4096, device=self.device)
 
@@ -153,6 +154,7 @@ class CTLSTM(nn.Module):
         """
         seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
+
         time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 

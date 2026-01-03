@@ -172,9 +172,6 @@ class SAHPWrapper(
             "probability": self.figure_probability,
             "debug": self.figure_debug,
             # deprecated.
-            # For CPPOD, should be used with the od_generic dataloader.
-            "cppod_evaluation": self.cppod_evaluation,
-            "cppod_commission_evaluation": self.cppod_commission_evaluation,
             # Functions for the EHD task.
             "ehd_perplexity": self.ehd_perplexity,
             "ehd_mark_emb": self.get_mark_embedding,
@@ -808,12 +805,12 @@ class SAHPWrapper(
             Returns:
                 tuple[Any]: The extracted data from the minibatch.
             """
-            input_time, input_marks, _, mask, input_intensity, input_seq_label = minibatch[0]
+            input_time, input_marks, _, mask, texts, post_time_seqs, input_seq_label = minibatch[0]
             mean, std = minibatch[1]
 
-            return input_time, input_marks, input_intensity, mask, input_seq_label, mean, std
+            return input_time, input_marks, texts, post_time_seqs, mask, input_seq_label, mean, std
 
-        input_time, input_marks, input_intensity, mask, input_seq_label, mean, std = extract_plot_data(input_data)
+        input_time, input_marks, texts, post_time_seqs, mask, input_seq_label, mean, std = extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len] * 2
         marks_history, marks_next = self.divide_history_and_next(input_marks)  # [batch_size, seq_len] * 2
@@ -832,7 +829,7 @@ class SAHPWrapper(
 
         nll = (nll * mask_next).sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
 
-        return nll.tolist(), input_seq_label.tolist()
+        return nll.tolist(), input_seq_label.tolist(), texts.tolist(), post_time_seqs.tolist(), mask.tolist()
 
     def get_mark_embedding(self, input_marks):
         return self.model.get_mark_embedding(input_marks)  # [batch_size, seq_len, d_history]
