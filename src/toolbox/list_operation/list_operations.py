@@ -1,3 +1,4 @@
+import math
 from functools import reduce
 from operator import add, mul, sub, truediv
 
@@ -5,7 +6,12 @@ from src.toolbox.list_operation.framework import apply_ops_on_list1
 
 
 def list_mean(lst):
-    return reduce(add, lst)/len(lst)
+    return reduce(add, lst) / len(lst)
+
+
+def list_std(lst):
+    x2 = [x * x for x in lst]
+    return math.sqrt(list_mean(x2) - list_mean(lst) ** 2)
 
 
 def list_add(list1, second_input):

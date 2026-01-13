@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 
+from src.toolbox.dict_operation import dict_merge
 from src.toolbox.misc import dump_to_pkl, get_logger, mkdir_if_not_exist, write_to_txt, write_yaml
 
 logger = get_logger(name=__file__)
@@ -45,7 +46,12 @@ def mae_and_f1_postprocess(all_evaluation_results, desc, opt):
     dump_to_pkl(data, mae_dist_file, compression="bz2")
 
     result_file = opt.store_dir / f"{desc}_mae_and_macro-f1.txt"
-    strings = f"For the {desc} of {opt.dataset_name}, the average MAE is {mean_mae}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}."
+    strings = [
+        f"For the {desc} of {opt.dataset_name}, the average MAE is {mean_mae}.",
+        f"The average acc is {acc}.",
+        f"The average macro-F1 is {macro_f1}.",
+        f"The average micro-F1 is {micro_f1}.",
+    ]
     write_to_txt(strings, result_file)
     result_dist_file = opt.store_dir / f"{desc}_mae_and_f1_result.pkl"
     dump_to_pkl(
@@ -80,7 +86,12 @@ def mae_e_and_f1_postprocess(all_evaluation_results, desc, opt):
 
     # Report the average of mae-e and f1.
     result_file = opt.store_dir / f"{desc}_mae_e_and_macro-f1.txt"
-    strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}."
+    strings = [
+        f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mean_mae_e}.",
+        f"The average acc is {acc}.",
+        f"The average macro-F1 is {macro_f1}.",
+        f"The average micro-F1 is {micro_f1}.",
+    ]
     write_to_txt(strings, result_file)
     result_dist_file = opt.store_dir / f"{desc}_mae_e_and_f1_result.pkl"
     dump_to_pkl(
@@ -102,7 +113,12 @@ def which_mark_occurs_first_postprocess(all_evaluation_results, desc, opt):
     Report the average of mae-e and f1.
     """
     result_file = opt.store_dir / f"{desc}_which_event_first.txt"
-    strings = f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mae}.\nThe average acc is {acc}.\nThe average macro-F1 is {macro_f1}.\nThe average micro-F1 is {micro_f1}."
+    strings = [
+        f"For the {desc} of {opt.dataset_name}, we announce that the average MAE-E is {mae}.",
+        f"The average acc is {acc}.",
+        f"The average macro-F1 is {macro_f1}.",
+        f"The average micro-F1 is {micro_f1}.",
+    ]
     write_to_txt(strings, result_file)
     result_dist_file = opt.store_dir / f"{desc}_which_mark_occurs_first_result.pkl"
     dump_to_pkl(
@@ -260,7 +276,13 @@ def llm_mtpp_classification_postprocess(all_evaluation_results, desc, opt):
 
 
 def nll_with_label_postprocess(all_evaluation_results, desc, opt):
-    nll_per_seq, labels, texts, post_time_seqs, mask = all_evaluation_results
+    nll_per_seq, labels, mask, passenger_data = all_evaluation_results
+
+    # process the passenger.
+    batched_passenger_data = {key: [] for key in passenger_data[0]}
+    for item in passenger_data:
+        for key in batched_passenger_data:
+            batched_passenger_data[key].extend(item.get(key, None))
 
     categorized_nll = {}
     for nll, label in zip(nll_per_seq, labels):
@@ -275,18 +297,23 @@ def nll_with_label_postprocess(all_evaluation_results, desc, opt):
             "categorized_nll": categorized_nll,
             "nll_per_seq": nll_per_seq,
             "labels": labels,
-            "texts": texts,
-            "post_time_seqs": post_time_seqs,
-            "mask": mask
-        }, nll_results_file, compression="bz2")
+            "mask": mask,
+            **batched_passenger_data,
+        },
+        nll_results_file,
+        compression="bz2",
+    )
 
     string_list = [f"For dataset {desc}:\n"]
     for label, nll in categorized_nll.items():
-        string_list.append(f'There are {len(nll)} sequences with label {label}.\n')
-        string_list.append(f'Sequences with label {label} has mean NLL value as {np.mean(nll)}. Standard deviation is {np.std(nll)}. \n')
+        string_list.append(f"There are {len(nll)} sequences with label {label}.")
+        string_list.append(
+            f"Sequences with label {label} has mean NLL value as {np.mean(nll)}. Standard deviation is {np.std(nll)}."
+        )
 
     result_file = opt.store_dir / f"{desc}_nll.txt"
     write_to_txt(string_list, result_file)
+
 
 desc_funcs = {
     "spearman_and_l1": {"desc_string": "Spearman and L1 for {0}", "postprocess_func": spearman_and_l1_postprocess},
@@ -300,7 +327,7 @@ desc_funcs = {
         "desc_string": "Samples of {0} for each mark",
         "postprocess_func": balanced_sampling_from_distribution_postprocess,
     },
-    "nll_with_label":{
+    "nll_with_label": {
         "desc_string": "Measure and group NLL based on labels for {0}",
         "postprocess_func": nll_with_label_postprocess,
     },

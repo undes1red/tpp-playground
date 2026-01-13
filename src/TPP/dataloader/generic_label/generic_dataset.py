@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.utils as utils
 
+from src.toolbox.dict_operation import dict_merge
 from src.toolbox.misc import load_from_pkl
 
 
@@ -92,8 +93,27 @@ class GenericDatasetWithSeqLabel(utils.data.Dataset):
         # compatible with old names.
         self.marks = data["event"]
         self.label = data["label"]
-        self.text = data["text"]
-        self.post_time = data["post_time"]
+
+        self.passenger_keys = [
+            "text",
+            "post_time",
+            "account_profile_description",
+            "follower_count",
+            "following_count",
+            "account_creation_date",
+            "reply_post",
+            "reply_post_time",
+            "reply_account_profile_description",
+            "reply_follower_count",
+            "reply_following_count",
+            "reply_account_creation_date",
+            "repost_post_time",
+            "repost_account_profile_description",
+            "repost_follower_count",
+            "repost_following_count",
+            "repost_account_creation_date",
+        ]
+        self.passenger = {key: data[key] for key in self.passenger_keys}
 
         self.dataset_size = len(self.time_seq)
         if len(self.time_seq) != len(self.label):
@@ -133,7 +153,6 @@ class GenericDatasetWithSeqLabel(utils.data.Dataset):
         self.score = [np.array(seq, dtype=np.float32) for seq in self.score]
         self.marks = [np.array(seq, dtype=np.int64) for seq in self.marks]
         self.label = np.array(self.label, dtype=np.int64)
-        self.post_time = [[str(item) for item in seq] for seq in self.post_time]
 
         # Caveat: self.time_seq and self.marks have dummy mark while self.score and self.intensity do not.
         self.max_seq_len = max([len(item) for item in self.time_seq])
@@ -159,10 +178,8 @@ class GenericDatasetWithSeqLabel(utils.data.Dataset):
             self.time_seq[index],
             self.marks[index],
             self.score[index],
-            self.text[index],
-            self.post_time[index],
             self.label[index],
-        )
+        ), {key: value[index] for key, value in self.passenger.items()}
 
     def __len__(self: Self):
         """return the length of the dataset.
@@ -184,75 +201,45 @@ class GenericDatasetWithSeqLabel(utils.data.Dataset):
         """
         mask = []
         padded_data = []
-
-        padded_texts = []
-        padded_post_time_seqs = []
+        passenger_data = []
 
         for item in data:
-            pad_length = self.max_seq_len - item[0].size
-            mask = np.array([1] * item[0].size + [0] * pad_length, dtype=np.bool)
-            padded_time_seq = np.pad(item[0], (0, pad_length), mode="constant", constant_values=0)
+            batched_data, passenger = item
+
+            pad_length = self.max_seq_len - batched_data[0].size
+            mask = np.array([1] * batched_data[0].size + [0] * pad_length, dtype=np.bool)
+            padded_time_seq = np.pad(batched_data[0], (0, pad_length), mode="constant", constant_values=0)
             padded_event = np.pad(
-                item[1],
+                batched_data[1],
                 (0, pad_length),
                 mode="constant",
                 constant_values=self.number_of_mark,
             )
-            padded_score = np.pad(item[2], (0, pad_length), mode="constant", constant_values=0)
-            padded_text = item[3] + ["" for _ in range(pad_length)]
-            padded_post_time = item[4] + [None for _ in range(pad_length)]
-            label_of_the_seq = item[5].item()
+            padded_score = np.pad(batched_data[2], (0, pad_length), mode="constant", constant_values=0)
+            label_of_the_seq = batched_data[3].item()
 
             padded_item = [padded_time_seq, padded_event, padded_score, mask, label_of_the_seq]
-            padded_texts.append(padded_text)
-            padded_post_time_seqs.append(padded_post_time)
-
             padded_data.append(tuple(padded_item))
+            passenger_data.append(passenger)
 
         from torch.utils.data._utils.collate import default_collate
-
         padded_data = default_collate(padded_data)
-        padded_data = [item.to(self.float_dtype) if torch.is_floating_point(item) else item for item in padded_data]
+
+        # process the passenger.
+        batched_passenger_data = dict_merge(passenger_data)
 
         padded_time_seq, padded_event, padded_score, padded_mask, label_of_the_seq = padded_data
-        padded_texts = np.stack(padded_texts, axis=0)
-        padded_post_time_seqs = np.stack(padded_post_time_seqs, axis=0)
 
-        return (padded_time_seq, padded_event, padded_score, padded_mask, padded_texts, padded_post_time_seqs, label_of_the_seq), (
+        return (
+            padded_time_seq,
+            padded_event,
+            padded_score,
+            padded_mask,
+            label_of_the_seq,
+        ), (
             self.mean,
             self.std,
-        )
-
-
-def flexible_collate(batch):
-    """
-    Custom collate function that handles strings and pandas Timestamps
-    while using default_collate for tensors, numbers, and dicts.
-    """
-    elem = batch[0]
-
-    # 2. Handle Strings explicitly (Standard default_collate handles them,
-    # but this ensures they are always returned as a list of strings)
-    if isinstance(elem, str):
-        return batch
-
-    # 3. Handle Dictionaries (Recursively apply flexible_collate to values)
-    if isinstance(elem, dict):
-        return {key: flexible_collate([d[key] for d in batch]) for key in elem}
-
-    # 4. Handle Tuples/Lists (Recursively apply flexible_collate)
-    if isinstance(elem, (list, tuple)):
-        transposed = zip(*batch)
-        return [flexible_collate(samples) for samples in transposed]
-
-    # 5. Fallback to default_collate for everything else (Tensors, ints, floats)
-    try:
-        from torch.utils.data._utils.collate import default_collate
-
-        return default_collate(batch)
-    except TypeError:
-        # Final catch-all: return as a list if PyTorch still can't handle it
-        return batch
+        ), batched_passenger_data
 
 
 def read_data(path: str, file_name: str) -> dict:

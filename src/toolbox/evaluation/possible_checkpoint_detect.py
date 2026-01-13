@@ -21,7 +21,7 @@ def possible_checkpoint_detect(opt, idx):
     valid_dir_indexes = []
 
     for possible_valid_dir_name in possible_valid_dir_names:
-        possible_checkpoint = tmp_path / str(possible_valid_dir_name) / opt.training_dataset_name if opt.training_dataset_name is not None else opt.dataset_name / folder_name / 'checkpoint.chkpt'
+        possible_checkpoint = tmp_path / str(possible_valid_dir_name) / (opt.training_dataset_name if opt.training_dataset_name is not None else opt.dataset_name) / folder_name / 'checkpoint.chkpt'
         # possible_checkpoint_log = os.path.join(tmp_path, str(possible_valid_dir_name), opt.dataset_name, folder_name, 'checkpoint.csv')
         if possible_checkpoint.exists():
             valid_dir_indexes.append(possible_valid_dir_name)

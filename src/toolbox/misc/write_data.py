@@ -43,6 +43,7 @@ def write_to_txt(strings, filepath):
     f = Path(filepath).open("w")
 
     if isinstance(strings, list):
+        strings = [item + '\n' for item in strings]
         f.writelines(strings)
     else:
         f.write(strings)

@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
-from sklearn.metrics import roc_auc_score
 
 from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import evaluate_on_one_batch
@@ -13,7 +12,6 @@ from src.toolbox.misc import (
     argument_check,
     check_tensor,
     compile_model,
-    move_from_tensor_to_ndarray,
     pack_one_value_to_dict,
 )
 from src.TPP.model.basic_tpp_model import BasicModel, memory_ceiling
@@ -805,12 +803,13 @@ class SAHPWrapper(
             Returns:
                 tuple[Any]: The extracted data from the minibatch.
             """
-            input_time, input_marks, _, mask, texts, post_time_seqs, input_seq_label = minibatch[0]
+            input_time, input_marks, _, mask, input_seq_label = minibatch[0]
             mean, std = minibatch[1]
+            passenger_data = minibatch[2]
 
-            return input_time, input_marks, texts, post_time_seqs, mask, input_seq_label, mean, std
+            return input_time, input_marks, mask, input_seq_label, mean, std, passenger_data
 
-        input_time, input_marks, texts, post_time_seqs, mask, input_seq_label, mean, std = extract_plot_data(input_data)
+        input_time, input_marks, mask, input_seq_label, mean, std, passenger_data = extract_plot_data(input_data)
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len] * 2
         marks_history, marks_next = self.divide_history_and_next(input_marks)  # [batch_size, seq_len] * 2
@@ -829,7 +828,7 @@ class SAHPWrapper(
 
         nll = (nll * mask_next).sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
 
-        return nll.tolist(), input_seq_label.tolist(), texts.tolist(), post_time_seqs.tolist(), mask.tolist()
+        return nll.tolist(), input_seq_label.tolist(), mask.tolist(), passenger_data
 
     def get_mark_embedding(self, input_marks):
         return self.model.get_mark_embedding(input_marks)  # [batch_size, seq_len, d_history]

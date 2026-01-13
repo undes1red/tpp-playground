@@ -12,7 +12,7 @@ def compile_model(model, use_compile, backend=None, *args, **kwargs):
         )
 
         return torch.compile(
-            model, *args, backend=backend, dynamic=False, fullgraph=True, mode='max-autotune', disable=not use_compile, **kwargs
+            model, *args, backend=backend, dynamic=False, fullgraph=True, mode='max-autotune-no-cudagraphs', disable=not use_compile, **kwargs
         )
     return model
 

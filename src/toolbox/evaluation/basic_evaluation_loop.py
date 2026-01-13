@@ -34,7 +34,7 @@ def basic_evaluation_loop(model, dataset, desc, opt, early_offload = True, desc_
 
     mkdir_if_not_exist(opt.store_dir)
     result_file = Path(opt.store_dir, f'{desc}_{task_name}_misc.txt')
-    strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.\n']
+    strings = [f'Evaluation speed: {elapsed_time/data_size}s per sequence.']
     write_to_txt(strings, result_file)
 
     logger.info(f'Entering {postprocess_func.__name__} for result postprocess...')

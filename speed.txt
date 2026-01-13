@@ -1,0 +1,5 @@
+LLM scoring:
+LLM: llama3.3 8B
+vllm 0.13.0 + pytorch 2.9.0 cu128
+gh200: around 607 items/s
+rtx 3090: around 50 items/s
