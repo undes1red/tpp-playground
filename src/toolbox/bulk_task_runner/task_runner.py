@@ -20,7 +20,7 @@ default_slurm_kwargs = {
 }
 
 monitor_frequency = 10
-wait_after_task_finished = 10
+wait_after_task_finished = 3
 
 
 def monitor_and_automaticly_run_tasks(

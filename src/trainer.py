@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 from typing import Any, Self
 
@@ -55,19 +56,16 @@ class Trainer:
         self.opt = opt
 
         # Insert the model index if needed.
-        self.continue_running, replace_index = (
-            (True, "")
-            if self.opt.replace
-            else replace_check(
+        continue_running, replace_index = \
+            replace_check(
                 self.opt,
-                self.opt.model_identifier,
-                log="training_record.csv",
+                log=["checkpoint_record.csv", "evaluation_record.csv", "test_record.csv", "training_record.csv"],
                 model="model_card.yml",
-            )
         )
 
-        if not self.continue_running:
-            logger.warning(f"We already have {opt.maximum_retrain} checkpoints! No training is needed. Exiting now.")
+        if not continue_running:
+            logger.warning("The files are already here! No training is needed. Exiting now.")
+            os._exit(0)
 
         self.opt.log = Path(
             self.opt.root_path,
@@ -93,9 +91,6 @@ class Trainer:
         self.output_checkpoint_folder = "model_" + self.opt.model_identifier
         self.log_folder = "log_" + self.opt.model_identifier
         self.checkpoint_saved_steps = 0
-
-        mkdir_if_not_exist(self.opt.save_model / self.output_checkpoint_folder)
-        mkdir_if_not_exist(self.opt.log / self.log_folder)
 
     def get_procedure_monitor_dict(self: Self, additional_info: dict[str, dict] = {}) -> dict[str, dict]:
         """Pack all metric values into a dict for reporting.
@@ -138,6 +133,8 @@ class Trainer:
         # This is undesired.
         if not self.opt.log and not self.opt.save_model:
             logger.exception("No model or log save path. Usually this shouldn't happen. Please check you environment.")
+        mkdir_if_not_exist(self.opt.save_model / self.output_checkpoint_folder)
+        mkdir_if_not_exist(self.opt.log / self.log_folder)
 
         logger.warning("Loading Dataset...")
         if self.opt.data_path:

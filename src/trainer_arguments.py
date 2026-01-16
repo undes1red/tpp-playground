@@ -40,15 +40,15 @@ class BasicTrainerArguments:
             help="True: Replace existing everything, such as logs, model checkpoints, and results with the new one.\n False: Do not replace.",
         )
         self.parser.add_argument(
+            "--model_index",
+            type=int,
+            default=None,
+            help="Needed when replace=False. The log, model checkpoints, and results will be placed in <log/model/results>/model_index/. This value will be ignored when replace=True.",
+        )
+        self.parser.add_argument(
             "--compile",
             action="store_true",
             help="True: Use torch.compile() to compile models or functions to speed up training and evaluation.\n False: disable torch.compile().",
-        )
-        self.parser.add_argument(
-            "--maximum_retrain",
-            type=int,
-            default=5,
-            help="How many times should we retrain a model at most to enture model stability? Useful when the training script exited unexpectedly.",
         )
         self.parser.add_argument(
             "--dtype",

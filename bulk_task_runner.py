@@ -109,7 +109,7 @@ time.sleep(opt.sleep)
 
 # Is dry_run open?
 if opt.dry_run:
-    logger.warning('We are in dry run mode!')
+    logger.warning("We are in dry run mode!")
 
 # Get GPU devices.
 use_gpu = False
@@ -119,7 +119,9 @@ if opt.GPU is not None:
         gpu_pool = [int(gpu_id) for gpu_id in opt.GPU]
         if len([gpu_id for gpu_id in gpu_pool if gpu_id < 0]) == 0:
             if opt.num_task_parallel > len(gpu_pool):
-                raise ValueError(f'You are trying to run {opt.num_task_parallel} tasks simultaneously but we only have {len(gpu_pool)} GPUs.')
+                raise ValueError(
+                    f"You are trying to run {opt.num_task_parallel} tasks simultaneously but we only have {len(gpu_pool)} GPUs."
+                )
             use_gpu = True
             if opt.num_task_parallel == -1:
                 opt.num_task_parallel = len(gpu_pool)
@@ -156,6 +158,13 @@ def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int
         ]
 
     generated_commands = parameter_parser(hyperparameter_list)
+
+    # attach index.
+    generated_commands = [
+        commands + ["--model_index", str(index)]
+        for index in range(opt.start_from_this_index+1, hyperparameter_list.get("repeat", 1)+1)
+        for commands in generated_commands
+    ]
 
     logger.info(f"We have planned {len(generated_commands)} tasks!")
     return generated_commands, len(generated_commands)
