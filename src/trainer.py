@@ -223,7 +223,7 @@ class Trainer:
         # Start training.
         self.evaluation_report(0)
         # Avoid crash.
-        torch._dynamo.reset()
+        # torch._dynamo.reset()
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training_iter)
 

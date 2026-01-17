@@ -91,7 +91,7 @@ parser.add_argument(
 parser.add_argument(
     "--start_from_this_index",
     type=int,
-    default=0,
+    default=1,
     help="This argument directs the script to start from the work with the given index. Useful during debug.",
 )
 parser.add_argument(
@@ -162,7 +162,7 @@ def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int
     # attach index.
     generated_commands = [
         commands + ["--model_index", str(index)]
-        for index in range(opt.start_from_this_index+1, hyperparameter_list.get("repeat", 1)+1)
+        for index in range(opt.start_from_this_index, hyperparameter_list.get("repeat", 1)+1)
         for commands in generated_commands
     ]
 
