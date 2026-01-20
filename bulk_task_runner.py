@@ -7,7 +7,7 @@ from time import localtime, strftime
 from typing import Any
 
 from src.toolbox.bulk_task_runner import monitor_and_automaticly_run_tasks, parameter_parser
-from src.toolbox.misc import get_logger, mkdir_if_not_exist, read_yaml
+from src.toolbox.misc import convert_module_to_path, get_logger, mkdir_if_not_exist, read_yaml
 
 # Get logger.
 logger = get_logger(__name__)
@@ -32,7 +32,6 @@ parser.add_argument(
 parser.add_argument(
     "--procedure_name",
     type=str,
-    choices=["TPP", "NTPP", "LH", "OD", "MDI"],
     help="You need this argument to select the proper parameter set.",
 )
 parser.add_argument(
@@ -96,8 +95,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--dry_run",
-    type=bool,
-    default=False,
+    action="store_true",
     help="When true, we jump over the task running process. Useful when you want to check if the task parsing is correct.",
 )
 
@@ -139,7 +137,8 @@ if not use_gpu:
 
 # stdout dir
 # where we store logs of tasks.
-stdout_dir = root_path / "stdout" / opt.procedure_name / opt.script_type / opt.model
+opt.procedure_name_path = convert_module_to_path(opt.procedure_name)
+stdout_dir = root_path / "stdout" / opt.procedure_name_path / opt.script_type / opt.model
 
 
 def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int]:
@@ -168,7 +167,6 @@ def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int
 
     logger.info(f"We have planned {len(generated_commands)} tasks!")
     return generated_commands, len(generated_commands)
-
 
 if opt.script_type == "previous_failed_tasks":
     logger.info(
@@ -233,9 +231,8 @@ if opt.script_type == "previous_failed_tasks":
     f_previous_failed_tasks.writelines(failed_commands)
     f_previous_failed_tasks.close()
 else:
-    parameter_lib = importlib.import_module(f".{opt.procedure_name}", package="parameter_set")
-    parameter_retriver = getattr(parameter_lib, "parameter_retriver")
-    full_job_list = parameter_retriver(opt)
+    parameter_lib = importlib.import_module(f".{opt.procedure_name}.{opt.model}", package="parameter_set")
+    full_job_list = getattr(parameter_lib, "hyperparameter_list")
 
     if opt.job_name is None:
         logger.warning("No job selected! Exiting...")
@@ -256,17 +253,33 @@ else:
             job_content = [
                 job_content,
             ]
-        logger.info(f"Current executing the job: {job}. It has {len(job_content)} subjobs.")
+
+        logger.warning("")
+        logger.warning("")
+        logger.warning("===================================================================")
+        logger.warning(f"Current executing the job: {job}. It has {len(job_content)} subjobs.")
+        logger.warning("===================================================================")
+        logger.warning("")
+        logger.warning("")
+
 
         # Extract the list and run the tasks one by one.
         for idx, sub_job in enumerate(job_content):
             logger.warning(f"============ subjob No. {idx + 1} started ============")
-            stdout_dir_for_this_subjob = stdout_dir / current_local_time / job / f"subjob_{idx + 1}"
-            mkdir_if_not_exist(stdout_dir_for_this_subjob)
             generated_tasks, the_number_of_task = task_generator(sub_job)
 
+            if opt.dry_run:
+                number_of_tasks = len(generated_tasks)
+                for idx, task in enumerate(generated_tasks):
+                    logger.warning(f"----> Task No.{idx+1}/{number_of_tasks} started. <----")
+                    logger.info(f"Command of task {idx+1}/{number_of_tasks}: {' '.join(task)}")
+                    logger.warning(f"----> Task No.{idx+1}/{number_of_tasks} ends. <----")
+
+                continue
+
+            stdout_dir_for_this_subjob = stdout_dir / current_local_time / job / f"subjob_{idx + 1}"
+            mkdir_if_not_exist(stdout_dir_for_this_subjob)
             failed_tasks = monitor_and_automaticly_run_tasks(
-                opt.dry_run,
                 generated_tasks,
                 use_gpu,
                 gpu_pool,

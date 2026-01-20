@@ -4,6 +4,7 @@ from src.toolbox.misc.check_tensor import check_number, check_tensor
 from src.toolbox.misc.clamp_preserve_gradients import clamp_preserve_gradients, round_preserve_gradients
 from src.toolbox.misc.compile_model import compile_model, conditional_compile_func
 from src.toolbox.misc.conditional_decorator import conditional_decorator
+from src.toolbox.misc.convert_module_to_path import convert_module_to_path
 from src.toolbox.misc.cycle_dataloader import cycle
 from src.toolbox.misc.easy_model_load import easy_model_load
 from src.toolbox.misc.flatten_nested_nparray import flatten
@@ -31,6 +32,7 @@ __all__ = [
     "check_number",
     "check_tensor",
     "clamp_preserve_gradients",
+    "convert_module_to_path",
     "round_preserve_gradients",
     "compile_model",
     "conditional_compile_func",

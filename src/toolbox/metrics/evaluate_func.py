@@ -42,7 +42,7 @@ def l1(input_data, target, timestamp, **kwargs):
     return L1_distance_between_two_funcs(input_data, target, timestamp)
 
 
-def spearman(input_data, target, **kwargs):
+def spearman(input_data, target, *args, **kwargs):
     from scipy.stats import spearmanr
 
     return spearmanr(input_data.flatten(), target.flatten())[0]

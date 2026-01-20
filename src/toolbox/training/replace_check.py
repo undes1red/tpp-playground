@@ -1,3 +1,6 @@
+from src.toolbox.misc import convert_module_to_path
+
+
 def replace_check(opt, **subdirs_and_marker):
     """
     This function must ensure we use the same index in all subdirs.
@@ -13,12 +16,24 @@ def replace_check(opt, **subdirs_and_marker):
         if isinstance(marker_file, list):
             for item in marker_file:
                 tmp_path = (
-                    opt.root_path / subdir / opt.procedure / str(opt.model_index) / opt.dataset_name / leaf_dir_name / item
+                    opt.root_path
+                    / subdir
+                    / convert_module_to_path(opt.procedure)
+                    / str(opt.model_index)
+                    / opt.dataset_name
+                    / leaf_dir_name
+                    / item
                 )
                 marker_files_exist_or_not.append(tmp_path.exists())
         else:
             tmp_path = (
-                opt.root_path / subdir / opt.procedure / str(opt.model_index) / opt.dataset_name / leaf_dir_name / marker_file
+                opt.root_path
+                / subdir
+                / convert_module_to_path(opt.procedure)
+                / str(opt.model_index)
+                / opt.dataset_name
+                / leaf_dir_name
+                / marker_file
             )
             marker_files_exist_or_not.append(tmp_path.exists())
 

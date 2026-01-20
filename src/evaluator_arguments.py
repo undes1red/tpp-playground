@@ -73,12 +73,6 @@ class BasicEvaluatorArguments:
 
         # Input data
         self.parser.add_argument(
-            "--training_dataset_name",
-            type=str,
-            default=None,
-            help="Name of the used dataset where we train the model on. All datasets should be placed in {root}/data/input. By default, training_dataset_name is dataset_name if training_dataset_name is not provided.",
-        )
-        self.parser.add_argument(
             "--dataset_name",
             type=str,
             default=None,

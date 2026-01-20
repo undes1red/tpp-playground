@@ -5,11 +5,10 @@ from typing import Any, Self
 
 import pandas as pd
 import torch
-import torch._dynamo
+from torch.profiler import ProfilerActivity, profile, schedule
 from tqdm import tqdm
 
 from src.toolbox.dataloader import prepare_dataloaders
-from src.toolbox.evaluation import get_evaluation_results
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
 from src.toolbox.misc import (
@@ -51,16 +50,16 @@ class Trainer:
             "test": None,
             "checkpoint": None,
         }
+        self.use_profiler = False
 
         # Store required initial information.
         self.opt = opt
 
         # Insert the model index if needed.
-        continue_running, replace_index = \
-            replace_check(
-                self.opt,
-                log=["checkpoint_record.csv", "evaluation_record.csv", "test_record.csv", "training_record.csv"],
-                model="model_card.yml",
+        continue_running, replace_index = replace_check(
+            self.opt,
+            log=["checkpoint_record.csv", "evaluation_record.csv", "test_record.csv", "training_record.csv"],
+            model="model_card.yml",
         )
 
         if not continue_running:
@@ -70,27 +69,21 @@ class Trainer:
         self.opt.log = Path(
             self.opt.root_path,
             "log",
-            self.opt.procedure,
+            self.opt.procedure_path,
             replace_index,
-            self.opt.dataset_name,
+            self.opt.dataset_name_path,
         )
         self.opt.save_model = Path(
             self.opt.root_path,
             "model",
-            self.opt.procedure,
+            self.opt.procedure_path,
             replace_index,
-            self.opt.dataset_name,
+            self.opt.dataset_name_path,
         )
 
         # Load the entry of the model and dataloader.
         self.get_model = getattr(procedure, "get_model")
         self.get_dataloader = getattr(procedure, "get_dataloader")
-
-        # Directory preparation.
-        # Create log and model-saving dirs if they are not present.
-        self.output_checkpoint_folder = "model_" + self.opt.model_identifier
-        self.log_folder = "log_" + self.opt.model_identifier
-        self.checkpoint_saved_steps = 0
 
     def get_procedure_monitor_dict(self: Self, additional_info: dict[str, dict] = {}) -> dict[str, dict]:
         """Pack all metric values into a dict for reporting.
@@ -133,6 +126,11 @@ class Trainer:
         # This is undesired.
         if not self.opt.log and not self.opt.save_model:
             logger.exception("No model or log save path. Usually this shouldn't happen. Please check you environment.")
+        # Directory preparation.
+        # Create log and model-saving dirs if they are not present.
+        self.output_checkpoint_folder = "model_" + self.opt.model_identifier
+        self.log_folder = "log_" + self.opt.model_identifier
+        self.checkpoint_saved_steps = 0
         mkdir_if_not_exist(self.opt.save_model / self.output_checkpoint_folder)
         mkdir_if_not_exist(self.opt.log / self.log_folder)
 
@@ -147,22 +145,25 @@ class Trainer:
         procedure_param = read_yaml(self.opt.abs_procedure_config) if self.opt.abs_procedure_config else {}
         self.opt.procedure_param = procedure_param
         logger.info(f"The hyperparameters for all tasks under procedure {self.opt.procedure} are {procedure_param}")
+        self.opt.__dict__.update(procedure_param)
 
         model_param = read_yaml(self.opt.abs_model_config) if self.opt.abs_model_config else {}
         self.opt.model_params = model_param
         logger.info(f"The input model hyperparameters are {model_param}")
+        self.opt.__dict__.update(model_param)
 
         # We load the required model by get_model()
         self.model_class = self.get_model(self.opt)
-        self.model = self.model_class(training=True, device=self.opt.device, opt=self.opt, **model_param, **procedure_param)
-        self.opt.__dict__.update(model_param)
-        self.opt.__dict__.update(procedure_param)
+        self.model = self.model_class(
+            training=True, device=self.opt.device, opt=self.opt, **model_param, **procedure_param
+        )
 
         # Metric checker for choosing the best model during training.
         self.metric_checker = Metric(
             self.model.metric_number,
             getattr(self.model, "smaller_is_better", None),
         )
+
         self.format_dict_length = self.model.format_dict_length
         self.report_sum = [0] * self.format_dict_length
 
@@ -179,7 +180,9 @@ class Trainer:
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
-        self.step_and_update_lr = conditional_compile_func(step_and_update_lr, self.opt.compile, self.opt.compile_backend, fullgraph=False)
+        self.step_and_update_lr = conditional_compile_func(
+            step_and_update_lr, self.opt.compile, self.opt.compile_backend, fullgraph=False, mode='max-autotune'
+        )
 
         self.task()
 
@@ -220,6 +223,19 @@ class Trainer:
         training_iter = cycle(self.raw_data["training"])
         zero_grad(self.optimizer)
 
+        if self.use_profiler:
+            def trace_handler(p):
+                p.export_chrome_trace(str(self.opt.log / self.log_folder / "profiler" / f"train_{p.step_num}.json"))
+
+            profiler_schedule = schedule(skip_first=50, wait=int(self.opt.n_evaluation_steps * 0.4), warmup=3, active=1)
+            (self.opt.log / self.log_folder / "profiler").mkdir(exist_ok=True)
+            profiler = profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                with_flops=True,
+                schedule=profiler_schedule,
+                on_trace_ready=trace_handler,
+            )
+
         # Start training.
         self.evaluation_report(0)
         # Avoid crash.
@@ -227,7 +243,15 @@ class Trainer:
         for current_step in tqdm(step_range, desc=desc, leave=False):
             data = next(training_iter)
 
+            if self.use_profiler:
+                profiler.start()
+
             step_result = self.model.train_step(data)
+
+            if self.use_profiler:
+                profiler.step()
+                profiler.stop()
+
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
@@ -323,14 +347,42 @@ class Trainer:
         Returns:
             dict[str, Any]: The evaluation results.
         """
-        evaluation_results = get_evaluation_results(
-            self.raw_data[dataset_name],
-            self.model,
-            output_length=self.format_dict_length,
-            desc=f"  - ({dataset_name})   ",
-        )
+        dataset_size = len(self.raw_data[dataset_name])
+
+        if self.use_profiler:
+            def trace_handler(p):
+                p.export_chrome_trace(
+                    str(self.opt.log / self.log_folder / "profiler" / f"evaluate_{dataset_name}_{current_step}.json")
+                )
+
+            (self.opt.log / self.log_folder / "profiler").mkdir(exist_ok=True)
+            profiler_schedule = schedule(skip_first=0, wait=int(dataset_size * 0.4), warmup=3, active=1)
+            profiler = profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                with_flops=True,
+                schedule=profiler_schedule,
+                on_trace_ready=trace_handler,
+            )
+            profiler.start()
+
+        sum_ = [0] * self.format_dict_length
+
+        for minibatch in tqdm(self.raw_data[dataset_name], f"  - ({dataset_name})   "):
+            if self.use_profiler:
+                profiler.start()
+
+            batch_sum = self.model.evaluation_step(minibatch)
+
+            if self.use_profiler:
+                profiler.step()
+                profiler.stop()
+
+            sum_ = list_add(sum_, batch_sum)
+
+        sum_ = list_div(sum_, dataset_size)
+
         # dict_flops = {'FLOPS': {'data': evaluation_results['flops'] / 1000**4, 'num_format': '8.5f', 'suffix': 'TFlops'}}
-        report = self.model.postprocess(evaluation_results["results"], procedure=dataset_name)
+        report = self.model.postprocess(sum_, procedure=dataset_name)
 
         log_print_format_dict = self.model.log_print_format(report, procedure=dataset_name)
         procedure_monitor_dict = self.get_procedure_monitor_dict()

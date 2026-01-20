@@ -5,8 +5,8 @@ root_path = Path(__file__).parent.resolve()
 
 main_procedure_translator = {
     # Temporal Point Process
-    "TPP_train": "TPP",
-    "TPP_evaluate": "TPP",
+    "tpp.tpp_models_train": "tpp.tpp_models",
+    "tpp.tpp_models_evaluate": "tpp.tpp_models",
     # Noted Temporal Point Process
     "NTPP_train": "NTPP",
     "NTPP_evaluate": "NTPP",
@@ -28,8 +28,8 @@ main_procedure_translator = {
 
 sub_procedure_translator = {
     # Temporal Point Process
-    "TPP_train": "Trainer",
-    "TPP_evaluate": "Evaluator",
+    "tpp.tpp_models_train": "Trainer",
+    "tpp.tpp_models_evaluate": "Evaluator",
     # Noted Temporal Point Process
     "NTPP_train": "Trainer",
     "NTPP_evaluate": "Evaluator",
@@ -86,23 +86,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     procedure_names = [
         # Temporal point process
-        ["TPP_train", "Train a (marked) temporal point process model."],
-        ["TPP_evaluate", "Evaluate (marked) temporal point process models."],
-        # Noted Temporal point process
-        ["NTPP_train", ""],
-        ["NTPP_evaluate", ""],
-        # Explanation for MTPP
-        ["ehd_train", ""],
-        ["ehd_evaluate", ""],
-        # Long-horizon Temporal point process
-        ["LH_train", ""],
-        ["LH_evaluate", ""],
-        # Missing Data Imputation with Temporal Point Process
-        ["MDI_train", ""],
-        ["MDI_evaluate", ""],
-        # Outlier Detection with Temporal Point Process
-        ["OD_train", ""],
-        ["OD_evaluate", ""],
+        ("tpp.tpp_models_train", "Train a (marked) temporal point process model."),
+        ("tpp.tpp_models_evaluate", "Evaluate (marked) temporal point process models."),
+        # # Noted Temporal point process
+        # ("NTPP_train", ""),
+        # ("NTPP_evaluate", ""),
+        # # Explanation for MTPP
+        # ("ehd_train", ""),
+        # ("ehd_evaluate", ""),
+        # # Long-horizon Temporal point process
+        # ("LH_train", ""),
+        # ("LH_evaluate", ""),
+        # # Missing Data Imputation with Temporal Point Process
+        # ("MDI_train", ""),
+        # ("MDI_evaluate", ""),
+        # # Outlier Detection with Temporal Point Process
+        # ("OD_train", ""),
+        # ("OD_evaluate", ""),
     ]
 
     subparsers = parser.add_subparsers()

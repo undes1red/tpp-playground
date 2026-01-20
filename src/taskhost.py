@@ -175,7 +175,7 @@ class TaskHost:
         Args:
             self (Self): The TaskHost.
         """
-        logger.debug(f"Root path: {self.opt.root_path}.")
+        logger.info(f"Root path: {self.opt.root_path}.")
         logger.warning(
             f"Main procedure name: {self.opt.displayed_procedure_name}. Sub-procedure name: {self.opt.displayed_task_category}."
         )

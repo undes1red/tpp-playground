@@ -72,16 +72,16 @@ class Evaluator:
         for index in self.opt.replace_index:
             # locate where checkpoints are stored.
             self.opt.checkpoint_folder = Path(
-                self.opt.checkpoint_of_this_procedure,
+                self.opt.model_dir,
                 str(index),
-                self.opt.training_dataset_name if self.opt.training_dataset_name is not None else self.opt.dataset_name,
+                self.opt.dataset_name_path,
                 self.checkpoint_folder,
             )
             # where figures, records are stored.
             self.opt.store_dir = Path(
-                self.opt.results_of_this_procedure,
+                self.opt.result_dir,
                 str(index),
-                self.opt.dataset_name,
+                self.opt.dataset_name_path,
                 self.results_folder,
                 self.opt.task_name,
                 self.opt.task_identifier,

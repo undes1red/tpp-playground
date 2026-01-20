@@ -16,13 +16,16 @@ def bisection_torch(
     """
     left = l_val * torch.ones_like(threshold)
     right = r_val * torch.ones_like(threshold)
+    check_after_how_many_steps = max_step // 5
 
-    for _ in range(max_step):
+    for idx in range(max_step):
         center = (left + right) / 2
         val = bisect_func(center, threshold, *args, **kwargs)
         left = torch.where(val < 0, center, left)
         right = torch.where(val > 0, center, right)
-        if torch.allclose(right, left, atol=bisect_early_stop_threshold, rtol=0):
+        if (idx + 1) % check_after_how_many_steps == 0 and torch.allclose(
+            right, left, atol=bisect_early_stop_threshold, rtol=0
+        ):
             break
 
     return (left + right) / 2

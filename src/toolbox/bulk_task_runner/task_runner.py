@@ -24,7 +24,6 @@ wait_after_task_finished = 3
 
 
 def monitor_and_automaticly_run_tasks(
-    dry_run: bool,
     tasks: list[list],
     use_gpu: bool,
     available_gpus: list,
@@ -52,7 +51,7 @@ def monitor_and_automaticly_run_tasks_on_cpu(
     def run_task(task: list, task_id: int) -> tuple[subprocess.Popen, TextIO]:
         # Replace this command with your actual task command
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
-        logger.info(f"Command of task {task_id}/{number_of_tasks}: {task}")
+        logger.info(f"Command of task {task_id}/{number_of_tasks}: {' '.join(task)}")
         f_log = Path(stdout_dir / f"stdout_log_{task_id}.txt").open("w")
         process = subprocess.Popen(task, stdout=f_log, stderr=f_log, universal_newlines=True)
 
@@ -192,7 +191,7 @@ def monitor_and_automaticly_run_tasks_on_slurm_cpu_node(
     def run_task(task: list, task_id: int) -> submitit.Job:
         # Replace this command with your actual task command
         logger.warning(f"----> Task No.{task_id}/{number_of_tasks} started. <----")
-        logger.info(f"Command of task {task_id}/{number_of_tasks}: {task}")
+        logger.info(f"Command of task {task_id}/{number_of_tasks}: {" ".join(task)}")
 
         executor = submitit.AutoExecutor(folder=str(stdout_dir / str(task_id)))
 
