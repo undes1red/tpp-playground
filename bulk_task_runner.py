@@ -159,11 +159,12 @@ def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int
     generated_commands = parameter_parser(hyperparameter_list)
 
     # attach index.
-    generated_commands = [
-        commands + ["--model_index", str(index)]
-        for index in range(opt.start_from_this_index, hyperparameter_list.get("repeat", 1)+1)
-        for commands in generated_commands
-    ]
+    if hyperparameter_list.get("repeat") is not None:
+        generated_commands = [
+            commands + ["--model_index", str(index)]
+            for index in range(opt.start_from_this_index, hyperparameter_list.get("repeat")+1)
+            for commands in generated_commands
+        ]
 
     logger.info(f"We have planned {len(generated_commands)} tasks!")
     return generated_commands, len(generated_commands)

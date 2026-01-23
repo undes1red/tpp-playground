@@ -7,7 +7,7 @@ requires-python = "==3.13.*"
 
 [dependency-groups]
 base = [
-    "torch",
+    "torch==2.9.1",
     "torchvision",
     "torchaudio",
     "numpy",
@@ -36,7 +36,7 @@ optional = [
 
 llm = [
     "openai",
-    "vllm==0.13.0",
+    "vllm",
     "flashinfer-python",
     "ninja"
 ]
@@ -45,17 +45,17 @@ llm = [
 [tool.uv]
 # Something we need during development while not when release.
 default-groups = ["base", "optional", "llm"]
-no-build-isolation-package = ["gptqmodel"]
 
 # Install pytorch from the official pytorch repo.
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
-torchaudio = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+vllm = { git = "https://github.com/vllm-project/vllm", tag = "v0.14.0" }
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 # ruff settings.
