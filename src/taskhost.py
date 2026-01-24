@@ -26,18 +26,18 @@ class TaskHost:
         Returns:
             Self: The TaskHost
         """
-        self.opt = parser.parse_args()
-        self.opt.root_path = root_path
-        self.opt.compile_backend = None
+        opt = parser.parse_args()
+        opt.root_path = root_path
+        opt.compile_backend = None
 
         # Parsing and postprocessing the input arguments.
+        self.opt = opt.called_subparser.postprocess(opt)
         self.procedure = importlib.import_module("src." + self.opt.procedure)
-        self.opt = getattr(self.procedure, f"{self.opt.required_worker}_postprocess")(self.opt, root_path)
+        self.pytorch_warning_dict = getattr(self.procedure, "pytorch_version_warnings")
 
         if self.opt.sleep > 0:
             logger.info(f"Now, I will take a nap. See you {self.opt.sleep}s later.")
             time.sleep(self.opt.sleep)
-        self.pytorch_warning_dict = getattr(self.procedure, "pytorch_version_warnings")
 
     def pytorch_warning(self: Self, version: str) -> None:
         """Some pytorch releases have some known bugs that could affect this codebase.

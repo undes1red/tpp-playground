@@ -3,7 +3,7 @@ from einops import rearrange
 
 from src.toolbox.algorithms import approximate_integration, bisection
 from src.tpp.tpp_models.model.basic_tpp_model import its_lower_bound, its_upper_bound
-from src.tpp.tpp_models.utils import step_split, thinning_sampling
+from src.tpp.tpp_models.model.utils import step_split, thinning_sampling
 
 
 @torch.inference_mode()

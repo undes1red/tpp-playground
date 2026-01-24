@@ -138,7 +138,9 @@ if not use_gpu:
 # stdout dir
 # where we store logs of tasks.
 opt.procedure_name_path = convert_module_to_path(opt.procedure_name)
-stdout_dir = root_path / "stdout" / opt.procedure_name_path / opt.script_type / opt.model
+opt.model_path = convert_module_to_path(opt.model)
+
+stdout_dir = root_path / "stdout" / opt.procedure_name_path / opt.script_type / opt.model_path
 
 
 def task_generator(hyperparameter_list: dict[str, Any]) -> tuple[list[list], int]:
@@ -175,11 +177,11 @@ if opt.script_type == "previous_failed_tasks":
     )
     try:
         f_previous_failed_tasks = (
-            root_path / "parameter_set" / opt.procedure_name / f"{opt.model}_previous_failed_tasks.txt"
+            root_path / "parameter_set" / opt.procedure_name_path / opt.model_path / f"{opt.model}_previous_failed_tasks.txt"
         ).open("r")
     except FileNotFoundError:
         logger.exception(
-            f"File {str('parameter_set' / opt.procedure_name / f'{opt.model}_previous_failed_tasks.txt')} not found!"
+            f"File {str('parameter_set' / opt.procedure_name_path / opt.model_path / f'{opt.model}_previous_failed_tasks.txt')} not found!"
         )
     except Exception as e:
         raise e
@@ -226,7 +228,7 @@ if opt.script_type == "previous_failed_tasks":
     multiple times.
     """
     f_previous_failed_tasks = (
-        root_path / "parameter_set" / opt.procedure_name,
+        root_path / "parameter_set" / opt.procedure_name_path / opt.model_path /
         f"{opt.model}_previous_failed_tasks.txt",
     ).open("w")
     f_previous_failed_tasks.writelines(failed_commands)
@@ -310,7 +312,7 @@ else:
             # By this we can avoid missing failed tasks in the previous task sets if the execution script calls
             # bulk_task_runner.py multiple times.
             f_previous_failed_tasks = (
-                root_path / "parameter_set" / opt.procedure_name / f"{opt.model}_previous_failed_tasks.txt"
+                root_path / "parameter_set" / opt.procedure_name_path / opt.model_path / f"{opt.model}_previous_failed_tasks.txt"
             ).open("a")
             f_previous_failed_tasks.writelines(failed_commands)
             f_previous_failed_tasks.close()

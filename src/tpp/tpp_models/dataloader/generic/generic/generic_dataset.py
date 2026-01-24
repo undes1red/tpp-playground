@@ -177,32 +177,36 @@ class GenericDataset(utils.data.Dataset):
             (time_seq, event, score, mask, intensity if self.evaluate else it doesn't exist at all.)
         ], (mean, var)
         """
-        mask = []
-        padded_data = []
-        for item in data:
-            pad_length = self.max_seq_len - item[0].size
-            mask = np.array([1] * item[0].size + [0] * pad_length, dtype=np.bool)
-            padded_time_seq = np.pad(item[0], (0, pad_length), mode="constant", constant_values=0)
-            padded_event = np.pad(
-                item[1],
-                (0, pad_length),
-                mode="constant",
-                constant_values=self.number_of_mark,
-            )
-            padded_score = np.pad(item[2], (0, pad_length), mode="constant", constant_values=0)
-            padded_item = [padded_time_seq, padded_event, padded_score, mask]
+        batch_size = len(data)
+
+        # Pre-allocate numpy arrays for the batch
+        padded_time_seq = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
+        padded_event = np.full((batch_size, self.max_seq_len), self.number_of_mark, dtype=np.int64)
+        padded_score = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
+        mask = np.zeros((batch_size, self.max_seq_len), dtype=bool)
+
+        if self.evaluate:
+            padded_intensity = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
+
+        for i, item in enumerate(data):
+            padded_time_seq[i, :item[0].size] = item[0]
+            padded_event[i, :item[1].size] = item[1]
+            padded_score[i, :item[2].size] = item[2]
+            mask[i, :item[0].size] = True
             if self.evaluate:
-                padded_intensity = np.pad(item[3], (0, pad_length), mode="constant", constant_values=0)
-                padded_item.append(padded_intensity)
+                padded_intensity[i, :item[3].size] = item[3]
 
-            padded_data.append(tuple(padded_item))
+        # Convert to tensors once
+        res = [
+            torch.from_numpy(padded_time_seq).to(self.float_dtype),
+            torch.from_numpy(padded_event),
+            torch.from_numpy(padded_score).to(self.float_dtype),
+            torch.from_numpy(mask),
+        ]
+        if self.evaluate:
+            res.append(torch.from_numpy(padded_intensity).to(self.float_dtype))
 
-        from torch.utils.data._utils.collate import default_collate
-
-        padded_data = default_collate(padded_data)
-        padded_data = [item.to(self.float_dtype) if torch.is_floating_point(item) else item for item in padded_data]
-
-        return padded_data, (self.mean, self.std)
+        return res, (self.mean, self.std)
 
 
 def read_data(path: str, file_name: str) -> dict:

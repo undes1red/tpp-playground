@@ -92,6 +92,7 @@ def prepare_dataloaders(opt: argparse.ArgumentParser, find_dataset: Callable) ->
                 worker_init_fn=seed_worker,
                 generator=g,
                 pin_memory=True,
+                persistent_workers=True
             ),
             device=opt.device,
         )
@@ -111,6 +112,7 @@ def prepare_dataloaders(opt: argparse.ArgumentParser, find_dataset: Callable) ->
                 worker_init_fn=seed_worker,
                 generator=g,
                 pin_memory=True,
+                persistent_workers=True
             ),
             device=opt.device,
         )
@@ -130,6 +132,7 @@ def prepare_dataloaders(opt: argparse.ArgumentParser, find_dataset: Callable) ->
                 worker_init_fn=seed_worker,
                 generator=g,
                 pin_memory=True,
+                persistent_workers=True
             ),
             device=opt.device,
         )

@@ -36,7 +36,7 @@ OPTIMIZATION FEATURES:
 
 from collections.abc import Callable
 from itertools import product
-from multiprocessing import Pool, cpu_count
+import multiprocessing as mp
 
 import numpy as np
 import torch
@@ -260,7 +260,7 @@ def evaluate_on_batch_unified(
     if use_mp:
         # Determine number of workers
         if num_workers is None:
-            num_workers = cpu_count()
+            num_workers = mp.cpu_count()
         # Further optimize: don't use more workers than total jobs
         num_workers = min(num_workers, total_jobs)
 
@@ -283,7 +283,9 @@ def evaluate_on_batch_unified(
         ]
 
         # Use context manager to ensure pool is properly closed
-        with Pool(num_workers) as pool:
+        # change processing creation method to spawn so cuda is happy.
+        ctx = mp.get_context('spawn')
+        with ctx.Pool(num_workers) as pool:
             results_with_indices = pool.starmap(job_with_metric_and_seq, job_args, chunksize=chunksize)
 
         # Organize results by metric

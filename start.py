@@ -118,7 +118,7 @@ if __name__ == "__main__":
         tmp_parser_hook = subparsers.add_parser(procedure_name, help=f"{help_info}")
         procedure = importlib.import_module("src." + main_procedure)
         argument_class_name = sub_procedure_argument_prefix + "Arguments"
-        getattr(procedure, argument_class_name)(tmp_parser_hook, root_path)
+        getattr(procedure, argument_class_name)(tmp_parser_hook)
 
     # Call TaskHost to start the task.
     agent = TaskHost(parser=parser, root_path=root_path)
