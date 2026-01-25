@@ -299,11 +299,18 @@ class RMTPP(
             mae_step=self.mae_step,
         )
 
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"], multiprocessing=True, num_workers=4)
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
@@ -543,7 +550,9 @@ class RMTPP(
             expanded_integral_all_marks_to_inf,
             expanded_intensity_all_marks_to_inf,
             timestamp,
-        ) = self.model.integral_intensity_time_next_2d(time_history, time_next_inf, marks_history, resolution_inf, mean, std)
+        ) = self.model.integral_intensity_time_next_2d(
+            time_history, time_next_inf, marks_history, resolution_inf, mean, std
+        )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
             torch.exp(-expanded_integral_all_marks_to_inf.sum(dim=-1, keepdim=True))
@@ -558,12 +567,7 @@ class RMTPP(
         self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history,
-            time_next,
-            marks_history,
-            integration_sample_rate,
-            mean,
-            std
+            time_history, time_next, marks_history, integration_sample_rate, mean, std
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 

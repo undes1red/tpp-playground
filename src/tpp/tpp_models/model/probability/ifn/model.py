@@ -11,8 +11,8 @@ from src.toolbox.misc import (
     move_from_tensor_to_ndarray,
     pack_one_value_to_dict,
 )
-from src.tpp.tpp_models.basic_tpp_model import BasicModel
-from src.tpp.tpp_models.utils import (
+from src.tpp.tpp_models.model.basic_tpp_model import BasicModel
+from src.tpp.tpp_models.model.utils import (
     BalancedSamplingFromDistributionMixin,
     GetWhichEventFirstMixin,
     NextEventPredictionMarkTimeMixin,
@@ -313,11 +313,18 @@ class IFNModel(
             sample_rate=self.sample_rate,
             mae_step=self.mae_step,
         )  # 2 * [batch_size, seq_len]
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * the_number_of_marks  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_distribution.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()

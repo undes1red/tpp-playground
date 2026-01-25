@@ -1,6 +1,6 @@
-from src.toolbox.modules.transformer import FFN, TransformerLayer, get_subsequent_mask
+from src.toolbox.modules.transformer import TransformerLayer, get_subsequent_mask
 
 __all__ = [
     # Transformers
-    "TransformerLayer", "FFN", "get_subsequent_mask"
+    "TransformerLayer", "get_subsequent_mask"
 ]

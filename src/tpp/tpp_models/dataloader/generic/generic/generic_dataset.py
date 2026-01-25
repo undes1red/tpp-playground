@@ -191,7 +191,7 @@ class GenericDataset(utils.data.Dataset):
         for i, item in enumerate(data):
             padded_time_seq[i, :item[0].size] = item[0]
             padded_event[i, :item[1].size] = item[1]
-            padded_score[i, :item[2].size] = item[2]
+            padded_score[i, 1:item[2].size+1] = item[2]
             mask[i, :item[0].size] = True
             if self.evaluate:
                 padded_intensity[i, :item[3].size] = item[3]

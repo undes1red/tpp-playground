@@ -34,9 +34,9 @@ OPTIMIZATION FEATURES:
 6. Unified parallelization over (metric, sequence) pairs using itertools.product
 """
 
+import multiprocessing as mp
 from collections.abc import Callable
 from itertools import product
-import multiprocessing as mp
 
 import numpy as np
 import torch
@@ -284,8 +284,7 @@ def evaluate_on_batch_unified(
 
         # Use context manager to ensure pool is properly closed
         # change processing creation method to spawn so cuda is happy.
-        ctx = mp.get_context('spawn')
-        with ctx.Pool(num_workers) as pool:
+        with mp.Pool(num_workers) as pool:
             results_with_indices = pool.starmap(job_with_metric_and_seq, job_args, chunksize=chunksize)
 
         # Organize results by metric

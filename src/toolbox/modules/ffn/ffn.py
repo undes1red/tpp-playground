@@ -30,3 +30,7 @@ class FFN(nn.Module):
         x = self.dropout(self.w_2(x))                                          # [..., d_input]
         x += residual
         return self.norm(x)                                                    # [..., d_input]
+
+
+if __name__ == "__main__":
+    pass

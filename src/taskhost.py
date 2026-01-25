@@ -32,6 +32,7 @@ class TaskHost:
 
         # Parsing and postprocessing the input arguments.
         self.opt = opt.called_subparser.postprocess(opt)
+        delattr(self.opt, 'called_subparser')
         self.procedure = importlib.import_module("src." + self.opt.procedure)
         self.pytorch_warning_dict = getattr(self.procedure, "pytorch_version_warnings")
 

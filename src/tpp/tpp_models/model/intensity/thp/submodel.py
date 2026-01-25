@@ -10,21 +10,20 @@ from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.modules import softplus_ext
 
-from .transformers import TransformerTPP
+from .his_coder.f_transformers import TransformerTPP
 
 
 class THP(nn.Module):
     def __init__(
         self,
+        training,
         device,
         num_marks,
         d_input,
-        d_rnn,
         d_hidden,
         n_layers,
         n_head,
-        d_qk,
-        d_v,
+        d_qkv,
         dropout,
         integration_sample_rate,
         history_time_offset,
@@ -41,7 +40,7 @@ class THP(nn.Module):
               The number of self attention + FFN layers in the Transformer.
             * ```int``` n_head
               The number of head in self attention.
-            * ```int``` d_qk
+            * ```int``` d_qkv
               The dimension of matrices Q and K.
             * ```int``` d_v
               The dimension of metrix V.
@@ -62,6 +61,7 @@ class THP(nn.Module):
         super().__init__()
         self.device = device
         self.num_marks = num_marks
+        self.training = training
         self.integration_sample_rate = integration_sample_rate
         self.history_time_offset = history_time_offset
 
@@ -78,15 +78,14 @@ class THP(nn.Module):
 
         # the history encoder
         self.history_encoder = TransformerTPP(
+            self.training,
             num_marks,
             device=self.device,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
         )
 

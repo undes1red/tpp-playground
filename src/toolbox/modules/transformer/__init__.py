@@ -1,5 +1,10 @@
-from src.toolbox.modules.transformer.ffn import FFN
-from src.toolbox.modules.transformer.subsequent_mask import get_subsequent_mask
-from src.toolbox.modules.transformer.transformer_layer import TransformerLayer
+from .fa.f_self_attn import FMHSA
+from .plain.selfattn import SelfAttn
+from .plain.subsequent_mask import get_subsequent_mask
+from .plain.transformer_layer import TransformerLayer
 
-__all__ = ["TransformerLayer", "FFN", "get_subsequent_mask"]
+__all__ = [
+    # flash_attn-backed self attention layer.
+    "FMHSA", \
+    # Generic Transformer layer.
+    "TransformerLayer", "get_subsequent_mask", "SelfAttn"]

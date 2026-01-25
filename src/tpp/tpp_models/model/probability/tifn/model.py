@@ -6,8 +6,8 @@ from einops import rearrange
 
 from src.toolbox.metrics import evaluate_on_one_batch
 from src.toolbox.misc import argument_check, pack_one_value_to_dict
-from src.tpp.tpp_models.basic_tpp_model import BasicModel
-from src.tpp.tpp_models.utils import (
+from src.tpp.tpp_models.model.basic_tpp_model import BasicModel
+from src.tpp.tpp_models.model.utils import (
     BalancedSamplingFromDistributionMixin,
     GetWhichEventFirstMixin,
     NextEventPredictionMarkTimeMixin,
@@ -323,11 +323,18 @@ class TIFNModel(
             sample_rate=self.sample_rate,
             mae_step=self.mae_step,
         )  # 2 * [batch_size, seq_len]
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_distribution.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
@@ -715,7 +722,9 @@ class TIFNModel(
             marks_history_for_sampling_mark_time
         )
         # 2 * [batch_size, seq_len]
-        sampled_mask_history_mark_time, sampled_mask_next_mark_time = self.divide_history_and_next(sampled_mask_mark_time)
+        sampled_mask_history_mark_time, sampled_mask_next_mark_time = self.divide_history_and_next(
+            sampled_mask_mark_time
+        )
         # 2 * [batch_size, seq_len]
 
         sampled_data_mark_time, sampled_timestamp_mark_time = self.model.model_probe_function(
@@ -751,7 +760,9 @@ class TIFNModel(
             marks_history_for_sampling_time_mark
         )
         # 2 * [batch_size, seq_len]
-        sampled_mask_history_mark_time, sampled_mask_next_time_mark = self.divide_history_and_next(sampled_mask_time_mark)
+        sampled_mask_history_mark_time, sampled_mask_next_time_mark = self.divide_history_and_next(
+            sampled_mask_time_mark
+        )
         # 2 * [batch_size, seq_len]
 
         sampled_data_time_mark, sampled_timestamp_time_mark = self.model.model_probe_function(

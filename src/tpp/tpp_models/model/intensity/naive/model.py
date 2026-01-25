@@ -287,11 +287,18 @@ class NaiveMTPPWrapper(
             mae_step=self.mae_step,
         )
 
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"], multiprocessing=True, num_workers=4)
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()

@@ -50,12 +50,10 @@ class THPWrapper(
         opt,
         device,
         d_input=64,
-        d_rnn=64,
         d_hidden=256,
         n_layers=3,
         n_head=3,
-        d_qk=64,
-        d_v=64,
+        d_qkv=64,
         dropout=0.1,
         sample_rate=32,
         integration_sample_rate=100,
@@ -77,14 +75,10 @@ class THPWrapper(
               The number of self attention + FFN layers in the Transformer.
             * ```int``` n_head
               The number of head in self attention.
-            * ```int``` d_qk
+            * ```int``` d_qkv
               The dimension of matrices Q and K.
-            * ```int``` d_v
-              The dimension of metrix V.
             * ```float``` dropout
               Dropout rate for the history encoder.
-            * ```int``` d_rnn
-              The dimension of RNN's hidden state.
             * ```float``` history_time_offset
               THP scales the input time by dividing it with the time interval from start to the latest mark in history.
               This can cause issues when there is no mark in history-the input time will be divided by 0.
@@ -125,14 +119,13 @@ class THPWrapper(
         self.max_step = 50
 
         self.model = THP(
+            training=training,
             num_marks=self.num_marks,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
             integration_sample_rate=integration_sample_rate,
             device=device,
@@ -324,11 +317,20 @@ class THPWrapper(
             mae_step=self.mae_step,
         )
 
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_mark
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"], multiprocessing=True, num_workers=4)
+
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
+
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
@@ -595,11 +597,7 @@ class THPWrapper(
         self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history,
-            time_next,
-            marks_history,
-            mask_history,
-            integration_sample_rate
+            time_history, time_next, marks_history, mask_history, integration_sample_rate
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 

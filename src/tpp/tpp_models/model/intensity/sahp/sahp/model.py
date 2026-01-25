@@ -52,12 +52,10 @@ class SAHPWrapper(
         opt: argparse.Namespace,
         device: torch.device,
         d_input: int = 64,
-        d_rnn: int = 64,
         d_hidden: int = 256,
         n_layers: int = 3,
         n_head: int = 3,
-        d_qk: int = 64,
-        d_v: int = 64,
+        d_qkv: int = 64,
         dropout: int = 0.1,
         epsilon: float = 1e-20,
         sample_rate: int = 32,
@@ -95,19 +93,18 @@ class SAHPWrapper(
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-8
+        self.bisect_early_stop_threshold = 1e-4
         self.max_step = 50
         self.used_models_name = "model"
 
         self.model = SAHP(
+            training=training,
             num_marks=self.num_marks,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
             device=device,
             integration_sample_rate=integration_sample_rate,
@@ -279,11 +276,18 @@ class SAHPWrapper(
             mae_step=self.mae_step,
         )
 
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"], multiprocessing=True, num_workers=4)
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
@@ -468,9 +472,7 @@ class SAHPWrapper(
         inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
             time_history, memory_ceiling, self.num_marks, mean, std
         )
-        mark_distribution = self.get_pm_next_event(
-            time_history, marks_history, mask_history, inf_val, resolution_inf
-        )
+        mark_distribution = self.get_pm_next_event(time_history, marks_history, mask_history, inf_val, resolution_inf)
         # [batch_size, seq_len, num_marks]
 
         tau_sampled_all_mark = self.sample_time(
@@ -509,7 +511,7 @@ class SAHPWrapper(
         marks_history: torch.Tensor,
         mask_history: torch.Tensor,
         inf_val: int,
-        resolution_inf: int
+        resolution_inf: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next mark prediction from the SAHP by MAE and F1.
         This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
@@ -549,11 +551,7 @@ class SAHPWrapper(
         self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history,
-            time_next,
-            marks_history,
-            mask_history,
-            integration_sample_rate
+            time_history, time_next, marks_history, mask_history, integration_sample_rate
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 

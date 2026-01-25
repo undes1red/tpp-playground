@@ -206,7 +206,9 @@ class SAHPWrapper(
         text_emb_history, _ = self.divide_history_and_next(text_emb)  # [batch_size, seq_len, d_emb] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len] * 2
 
-        integral_all_marks, intensity_all_marks = self.model(time_history, time_next, marks_history, text_emb_history, mask_history)
+        integral_all_marks, intensity_all_marks = self.model(
+            time_history, time_next, marks_history, text_emb_history, mask_history
+        )
         # 2 * [batch_size, seq_len, num_marks]
 
         mask_next_without_dummy = self.remove_dummy_events_from_mask(mask_next)  # [batch_size, seq_len]
@@ -286,11 +288,18 @@ class SAHPWrapper(
             mae_step=self.mae_step,
         )
 
-        mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
+        mae = torch.abs(pred_time - time_next) * mask_next_without_dummy  # [batch_size, seq_len]
         mae = mae.sum().item() / the_number_of_marks
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"], multiprocessing=True, num_workers=4)
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next_without_dummy,
+            ["acc", "macro-f1", "micro-f1"],
+            multiprocessing=True,
+            num_workers=4,
+        )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
         micro_f1 = results["micro-f1"].mean()
@@ -477,9 +486,7 @@ class SAHPWrapper(
         inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
             time_history, memory_ceiling, self.num_marks, mean, std
         )
-        mark_distribution = self.get_pm_next_event(
-            time_history, marks_history, mask_history, inf_val, resolution_inf
-        )
+        mark_distribution = self.get_pm_next_event(time_history, marks_history, mask_history, inf_val, resolution_inf)
         # [batch_size, seq_len, num_marks]
 
         tau_sampled_all_mark = self.sample_time(
@@ -518,7 +525,7 @@ class SAHPWrapper(
         marks_history: torch.Tensor,
         mask_history: torch.Tensor,
         inf_val: int,
-        resolution_inf: int
+        resolution_inf: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next mark prediction from the SAHP by MAE and F1.
         This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
@@ -558,11 +565,7 @@ class SAHPWrapper(
         self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history,
-            time_next,
-            marks_history,
-            mask_history,
-            integration_sample_rate
+            time_history, time_next, marks_history, mask_history, integration_sample_rate
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 
@@ -818,14 +821,18 @@ class SAHPWrapper(
 
             return input_time, input_marks, text_emb, mask, input_seq_label, mean, std, passenger_data
 
-        input_time, input_marks, text_emb, mask, input_seq_label, mean, std, passenger_data = extract_plot_data(input_data)
+        input_time, input_marks, text_emb, mask, input_seq_label, mean, std, passenger_data = extract_plot_data(
+            input_data
+        )
 
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len] * 2
         marks_history, marks_next = self.divide_history_and_next(input_marks)  # [batch_size, seq_len] * 2
         text_emb_history, _ = self.divide_history_and_next(text_emb)  # [batch_size, seq_len, text_emb] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len] * 2
 
-        integral_all_marks, intensity_all_marks = self.model(time_history, time_next, marks_history, text_emb_history, mask_history)
+        integral_all_marks, intensity_all_marks = self.model(
+            time_history, time_next, marks_history, text_emb_history, mask_history
+        )
         # 2 * [batch_size, seq_len, num_marks]
 
         mark_next_without_dummy = (mask_next * marks_next).long()
