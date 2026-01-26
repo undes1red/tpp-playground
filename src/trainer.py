@@ -12,7 +12,7 @@ from src.toolbox.dataloader import prepare_dataloaders
 from src.toolbox.list_operation import list_add, list_div
 from src.toolbox.metrics import Metric
 from src.toolbox.misc import (
-    conditional_compile_func,
+    compile_func,
     cycle,
     get_logger,
     mkdir_if_not_exist,
@@ -180,9 +180,9 @@ class Trainer:
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
-        self.step_and_update_lr = conditional_compile_func(
-            step_and_update_lr, self.opt.compile, self.opt.compile_backend, fullgraph=False, mode='max-autotune'
-        )
+        self.step_and_update_lr = compile_func(
+            self.opt.compile, self.opt.compile_backend, fullgraph=False, mode='max-autotune'
+        )(step_and_update_lr)
 
         self.task()
 

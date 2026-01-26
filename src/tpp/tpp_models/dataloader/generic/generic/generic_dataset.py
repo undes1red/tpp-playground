@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.utils as utils
 
-from src.toolbox.misc import load_from_pkl
+from src.toolbox.misc import load_from_parquet, load_from_pkl
 
 
 def prepend(array: np.array, number: float) -> np.array:
@@ -53,10 +53,9 @@ def diff(per_line: np.array, prepend: float = np._NoValue, append: float = np._N
 class GenericDataset(utils.data.Dataset):
     def __init__(
         self: Self,
-        data: dict[str, Any],
+        data: dict[str, Any] | Any,
         device: torch.device,
         property_dict: dict[str, Any],
-        relative_time: bool = True,
         evaluate: bool = False,
         shift: bool = False,
         input_norm_data: bool = False,
@@ -65,7 +64,7 @@ class GenericDataset(utils.data.Dataset):
 
         Args:
             self (Self): the dataset item,
-            data (dict[str, Any]): the raw data
+            data (dict[str, Any] | Any): the raw data
             device (torch.device): the batched data will be moved to this device.
             property_dict (dict[str, Any]): the property of the dataset.
             evaluate (bool, optional): enable or disable the evaluate mode. Defaults to False.
@@ -76,6 +75,8 @@ class GenericDataset(utils.data.Dataset):
             Self: the dataset item.
         """
         super().__init__()
+        if not isinstance(data, dict):
+            data = data.to_pydict()
         self.device = device
         self.float_dtype = torch.get_default_dtype()
         self.evaluate = evaluate
@@ -96,32 +97,19 @@ class GenericDataset(utils.data.Dataset):
 
         # Data preprocessing
         # we remove the end dummy event from the sequence when evaluate = True
-        if relative_time:
-            if self.evaluate:
-                self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
-            else:
-                # Use T
-                # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
-                # Do not use T
-                self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
-                self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
-                self.marks = [append(seq, self.number_of_mark) for seq in self.marks]
-
-            self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
-            self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
-            self.marks = [prepend(seq, self.number_of_mark) for seq in self.marks]
+        if self.evaluate:
+            self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
         else:
-            if self.evaluate:
-                self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
-            else:
-                # Use T
-                # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
-                # Do not use T
-                self.time_seq = [prepend(seq, self.start_time) for seq in self.time_seq]
-                self.time_seq = [append(seq, seq[-1] + 0.1) for seq in self.time_seq]
-                self.marks = [append(seq, self.number_of_mark) for seq in self.marks]
+            # Use T
+            # self.data.time_seq = self.data.time_seq.apply(diff, prepend = self.start_time, append = self.end_time)
+            # Do not use T
+            self.time_seq = [np.diff(seq, prepend=self.start_time) for seq in self.time_seq]
+            self.time_seq = [append(seq, 0.1) for seq in self.time_seq]
+            self.marks = [append(seq, self.number_of_mark) for seq in self.marks]
 
-            self.marks = [prepend(seq, self.number_of_mark) for seq in self.marks]
+        self.time_seq = [seq + (1e-30 if shift else 0) for seq in self.time_seq]
+        self.time_seq = [prepend(seq, 0) for seq in self.time_seq]
+        self.marks = [prepend(seq, self.number_of_mark) for seq in self.marks]
 
         # Fix datatype
         self.time_seq = [np.array(seq, dtype=np.float32) for seq in self.time_seq]
@@ -219,7 +207,10 @@ def read_data(path: str, file_name: str) -> dict:
     Returns:
         dict: the loaded data.
     """
-    return load_from_pkl(Path(path, file_name))
+    file_path = Path(path, file_name)
+    if file_path.suffix == '.parquet':
+        return load_from_parquet(Path(path, file_name))
+    return load_from_pkl(file_path)
 
 
 def generic_dataloader() -> tuple[utils.data.Dataset, Callable]:

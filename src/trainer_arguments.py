@@ -84,7 +84,7 @@ class BasicTrainerArguments:
         self.parser.add_argument(
             "--dataset_type",
             type=str,
-            default="pkl.lzma",
+            default="parquet",
             help="The format of the required dataset.",
         )
         self.parser.add_argument(

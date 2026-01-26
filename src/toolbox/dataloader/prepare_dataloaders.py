@@ -5,9 +5,10 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from src.toolbox.dataloader.prefetch_loader import PrefetchLoader
-from src.toolbox.dataloader.utils import check_exist, seed_worker
 from src.toolbox.misc import get_logger, read_yaml
+
+from .prefetch_loader import PrefetchLoader
+from .utils import check_exist, seed_worker
 
 logger = get_logger(__name__)
 

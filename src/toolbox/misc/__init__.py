@@ -2,7 +2,7 @@ from .argument_check import argument_check
 from .break_batched_inputs_into_seqs import break_batched_inputs_into_seqs
 from .check_tensor import check_number, check_tensor
 from .clamp_preserve_gradients import clamp_preserve_gradients, round_preserve_gradients
-from .compile_model import compile_model, conditional_compile_func
+from .compile_model import compile_func, compile_model
 from .conditional_decorator import conditional_decorator
 from .convert_module_to_path import convert_module_to_path
 from .cycle_dataloader import cycle
@@ -11,7 +11,7 @@ from .flatten_nested_nparray import flatten
 from .free_model_from_gpu import free_model_from_gpu
 from .get_logger import get_logger
 from .list_to_string import list_to_string
-from .load_data import load_from_pkl
+from .load_data import load_from_parquet, load_from_pkl
 from .merge_dict import merge_list_of_dicts
 from .mkdir_if_not_exist import mkdir_if_not_exist
 from .pack_unpack_value import only_keep_data, pack_one_value_to_dict
@@ -36,7 +36,7 @@ __all__ = [
     "convert_module_to_path",
     "round_preserve_gradients",
     "compile_model",
-    "conditional_compile_func",
+    "compile_func",
     "conditional_decorator",
     "cycle",
     "easy_model_load",
@@ -62,5 +62,6 @@ __all__ = [
     "write_to_txt",
     "read_yaml",
     "write_yaml",
-    "suffix"
+    "suffix",
+    "load_from_parquet"
 ]

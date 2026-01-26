@@ -1,7 +1,7 @@
-from src.toolbox.evaluation.basic_evaluation import basic_evaluation
-from src.toolbox.evaluation.basic_evaluation_loop import basic_evaluation_loop
-from src.toolbox.evaluation.load_checkpoint import load_checkpoint
-from src.toolbox.evaluation.possible_checkpoint_detect import possible_checkpoint_detect
+from .basic_evaluation import basic_evaluation
+from .basic_evaluation_loop import basic_evaluation_loop
+from .load_checkpoint import load_checkpoint
+from .possible_checkpoint_detect import possible_checkpoint_detect
 
 __all__ = [
     "basic_evaluation_loop",

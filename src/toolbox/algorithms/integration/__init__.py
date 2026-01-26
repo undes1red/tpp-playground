@@ -1,7 +1,7 @@
 import torch
 
-from src.toolbox.algorithms.integration.integration_numpy import approximate_integration_numpy
-from src.toolbox.algorithms.integration.integration_torch import approximate_integration_torch
+from .integration_numpy import approximate_integration_numpy
+from .integration_torch import approximate_integration_torch
 
 
 def approximate_integration(expanded_func_value, expanded_x, dim, only_integral = False, func_val_x_having_same_shape = False):

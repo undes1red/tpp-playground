@@ -26,6 +26,11 @@ def load_from_pkl(filepath, compression = None):
 
     return data
 
+def load_from_parquet(filepath):
+    import pyarrow.parquet as pq
+
+    # parquet guesses the used compression algorithm so we do not need one.
+    return pq.read_table(filepath)
 
 def load_from_npz(filepath, **kwargs):
     import numpy as np

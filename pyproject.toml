@@ -9,6 +9,7 @@ requires-python = "==3.13.*"
 base = [
     "torch==2.9.1",
     "torchvision",
+    "pyarrow",
     "flash_attn",
     "numpy",
     "einops",
@@ -25,7 +26,8 @@ base = [
     "submitit",
     "accelerate",
     "ipykernel",
-    "ipywidgets"
+    "ipywidgets",
+    "pandas"
 ]
 
 optional = [

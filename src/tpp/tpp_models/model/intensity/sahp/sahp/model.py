@@ -10,6 +10,7 @@ from src.toolbox.metrics import evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     check_tensor,
+    compile_func,
     compile_model,
     pack_one_value_to_dict,
 )
@@ -84,6 +85,8 @@ class SAHPWrapper(
         """
         super().__init__()
         self.device = device
+        self.use_compile = opt.compile
+        self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -110,8 +113,9 @@ class SAHPWrapper(
             integration_sample_rate=integration_sample_rate,
         )
 
-        self.model = compile_model(self.model, opt.compile, opt.compile_backend)
+        self.model = compile_model(self.model, self.use_compile, self.compile_backend)
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self: Self, input_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract the history and prediction sequences from the input sequence.
 
@@ -125,6 +129,7 @@ class SAHPWrapper(
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy events by altering the mask.
 
@@ -324,6 +329,7 @@ class SAHPWrapper(
             the_number_of_marks,
         )
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(
         self: Self,
         integral_all_marks: torch.Tensor,

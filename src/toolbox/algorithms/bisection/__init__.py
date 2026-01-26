@@ -1,7 +1,7 @@
 import torch
 
-from src.toolbox.algorithms.bisection.bisection_numpy import bisection_numpy
-from src.toolbox.algorithms.bisection.bisection_torch import bisection_torch
+from .bisection_numpy import bisection_numpy
+from .bisection_torch import bisection_torch
 
 
 def bisection(max_step, bisect_early_stop_threshold, bisect_func, threshold, *args, **kwargs):
