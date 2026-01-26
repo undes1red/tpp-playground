@@ -10,6 +10,7 @@ from src.toolbox.metrics import evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     check_tensor,
+    compile_func,
     compile_model,
     pack_one_value_to_dict,
 )
@@ -52,12 +53,10 @@ class SAHPWrapper(
         opt: argparse.Namespace,
         device: torch.device,
         d_input: int = 64,
-        d_rnn: int = 64,
         d_hidden: int = 256,
         n_layers: int = 3,
         n_head: int = 3,
-        d_qk: int = 64,
-        d_v: int = 64,
+        d_qkv: int = 64,
         dropout: int = 0.1,
         epsilon: float = 1e-20,
         sample_rate: int = 32,
@@ -86,6 +85,8 @@ class SAHPWrapper(
         """
         super().__init__()
         self.device = device
+        self.use_compile = opt.compile
+        self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -101,22 +102,22 @@ class SAHPWrapper(
         self.used_models_name = "model"
 
         self.model = SAHP(
+            training=training,
             num_marks=self.num_marks,
             d_text_emb=self.text_emb,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
             device=device,
             integration_sample_rate=integration_sample_rate,
         )
 
-        self.model = compile_model(self.model, opt.compile, opt.compile_backend)
+        self.model = compile_model(self.model, opt.use_compile, opt.compile_backend)
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self: Self, input_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract the history and prediction sequences from the input sequence.
 
@@ -130,6 +131,7 @@ class SAHPWrapper(
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy events by altering the mask.
 
@@ -336,6 +338,7 @@ class SAHPWrapper(
             the_number_of_marks,
         )
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(
         self: Self,
         integral_all_marks: torch.Tensor,

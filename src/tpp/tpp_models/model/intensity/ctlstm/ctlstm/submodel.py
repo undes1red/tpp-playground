@@ -62,6 +62,7 @@ class CTLSTM(nn.Module):
         self.decay_layer = nn.Sequential(
             nn.Linear(d_input, d_input, bias=True, device=self.device), nn.Softplus(beta=10.0)
         )
+        self.output_gate_layer = nn.Sequential(nn.Linear(d_input, d_input, bias=True, device=self.device), nn.Sigmoid())
 
         # This layer translates decayed hidden states into intensity function values.
         self.intensity_layer = nn.Sequential(
@@ -85,47 +86,47 @@ class CTLSTM(nn.Module):
         )
         self.history_mapper = nn.Linear(d_hidden, d_input, device=self.device)
 
-    def state_decay(self, mu, eta, gamma, duration_t, num_dimension_prior_batch):
+    def state_decay(self, c_bar, c, delta, duration_t, num_dimension_prior_batch):
         """
         This function decays the hidden state using a Hawkes-like rule by time.
 
         ### Args:
-          * ```torch.tensor``` mu
+          * ```torch.tensor``` c_bar
             shape: ```[..., batch_size, seq_len, d_hidden]```
-          * ```torch.tensor``` eta
+          * ```torch.tensor``` c
             shape: ```[..., batch_size, seq_len, d_hidden]```
-          * ```torch.tensor``` gamma
+          * ```torch.tensor``` delta
             shape: ```[..., batch_size, seq_len, d_hidden]```
-            mu, eta, and gamma for state decay.
+            c_bar, c, and delta for state decay.
           * ```torch.tensor``` duration_t
             shape: ```[batch_size, seq_len, (integration_sample_rate, num_marks)]```
             Decay by how much time?
           * ```int``` num_dimension_prior_batch
-            How many dimensions does the input mu, eta, and gamma have before the batch_size dim?
+            How many dimensions does the input c_bar, c, and delta have before the batch_size dim?
         """
         if len(duration_t.shape) - 2 - num_dimension_prior_batch < 0:
             raise ValueError("Too few dimensions in duration_t!")
 
-        # add additional dimension to mu, eta, and gamma.
-        mu = rearrange(
-            mu,
+        # add additional dimension to c_bar, c, and delta.
+        c_bar = rearrange(
+            c_bar,
             f"... d_i -> {'() ' * num_dimension_prior_batch}... {'() ' * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i",
         )
         # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
-        eta = rearrange(
-            eta,
+        c = rearrange(
+            c,
             f"... d_i -> {'() ' * num_dimension_prior_batch}... {'() ' * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i",
         )
         # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
-        gamma = rearrange(
-            gamma,
+        delta = rearrange(
+            delta,
             f"... d_i -> {'() ' * num_dimension_prior_batch}... {'() ' * (len(duration_t.shape) - 2 - num_dimension_prior_batch)}d_i",
         )
         # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
 
         duration_t = duration_t.unsqueeze(dim=-1)  # [..., batch_size, seq_len, (integration_sample_rate, num_marks), 1]
         return F.tanh(
-            mu + (eta - mu) * torch.exp(-gamma * duration_t)
+            c_bar + (c - c_bar) * torch.exp(-delta * duration_t)
         )  # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
 
     def forward(self, time_history, time_next, marks_history, num_dimension_prior_batch=0):
@@ -143,7 +144,7 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len]```
               Guessed or real time when the next mark will happen.
             * ```int``` num_dimension_prior_batch
-              How many dimensions does the input mu, eta, and gamma have before the batch_size dim?
+              How many dimensions does the input c_bar, c, and delta have before the batch_size dim?
         ### Outputs
             * ```torch.tensor``` integral_all_marks
               shape: ```[..., batch_size, seq_len, num_marks]```
@@ -161,14 +162,18 @@ class CTLSTM(nn.Module):
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)  # [batch_size, seq_len, d_input]
 
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
-
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
         hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=time_next, num_dimension_prior_batch=num_dimension_prior_batch
+            c_bar=c_bar, c=c, delta=delta, duration_t=time_next, num_dimension_prior_batch=num_dimension_prior_batch
         )
         # [..., batch_size, seq_len, d_input]
+        num_leading_ones = len(hidden_state_at_t.shape) - 3
+        hidden_state_at_t = hidden_state_at_t * rearrange(o, f"... -> {'() ' * num_leading_ones} ...")
+        # [..., batch_size, seq_len, d_input]
+
         # calculate the intensity.
         intensity_all_marks = self.intensity_layer(hidden_state_at_t)  # [..., batch_size, seq_len, num_marks]
         # calculate the integral
@@ -177,8 +182,11 @@ class CTLSTM(nn.Module):
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [..., batch_size, seq_len, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
         )
+        # [..., batch_size, seq_len, integration_sample_rate, d_input]
+        num_leading_ones = len(expanded_hidden_state_at_t.shape) - 4
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * rearrange(o, f"b s d -> {"() " * num_leading_ones} b s () d")
         # [..., batch_size, seq_len, integration_sample_rate, d_input]
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
@@ -199,18 +207,22 @@ class CTLSTM(nn.Module):
         return self.history_mapper(history)  # [batch_size, seq_len, d_input]
 
     def nhps_get_decayed_state(self, history, time_next, num_dimension_prior_batch=0):
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
 
         hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=time_next, num_dimension_prior_batch=num_dimension_prior_batch
+            c_bar=c_bar, c=c, delta=delta, duration_t=time_next, num_dimension_prior_batch=num_dimension_prior_batch
         )
+        # [..., batch_size, seq_len, d_input]
+        num_leading_ones = len(hidden_state_at_t.shape) - 3
+        hidden_state_at_t = hidden_state_at_t * rearrange(o, f"... -> {'() ' * num_leading_ones} ...")
         # [..., batch_size, seq_len, d_input]
         """
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device = self.device)
         expanded_time = time_next.unsqueeze(dim = -1) * time_multiplier        # [..., batch_size, seq_len, integration_sample_rate]
-        expanded_hidden_state_at_t = self.state_decay(mu = mu, eta = eta, gamma = gamma, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
+        expanded_hidden_state_at_t = self.state_decay(c_bar = c_bar, c = c, delta = delta, duration_t = expanded_time, num_dimension_prior_batch = num_dimension_prior_batch)
                                                                                # [..., batch_size, seq_len, integration_sample_rate, d_input]
         """
         return hidden_state_at_t
@@ -218,20 +230,24 @@ class CTLSTM(nn.Module):
     def nhps_get_decayed_state_of_a_interval(
         self, history, time_interval_start, time_interval_length, num_dimension_prior_batch=0
     ):
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device=self.device)
         expanded_time = time_interval_length.unsqueeze(dim=-1) * time_multiplier + time_interval_start.unsqueeze(dim=-1)
         # [..., batch_size, seq_len, integration_sample_rate]
         expanded_hidden_states = self.state_decay(
-            mu=mu,
-            eta=eta,
-            gamma=gamma,
+            c_bar=c_bar,
+            c=c,
+            delta=delta,
             duration_t=expanded_time.float(),
             num_dimension_prior_batch=num_dimension_prior_batch,
         )
+        # [..., batch_size, seq_len, integration_sample_rate, d_input]
+        num_leading_ones = len(expanded_hidden_states.shape) - 4
+        expanded_hidden_states = expanded_hidden_states * rearrange(o, f"b s d -> {"() " * num_leading_ones} b s 1 d")
         # [..., batch_size, seq_len, integration_sample_rate, d_input]
 
         return expanded_hidden_states, expanded_time
@@ -284,14 +300,17 @@ class CTLSTM(nn.Module):
             # [number_of_sampled_sequences, 1, d_history]
         history = self.history_mapper(sampled_history_embedding)  # [number_of_sampled_sequences, 1, d_input]
 
-        eta = self.start_layer(history)  # [number_of_sampled_sequences, 1, d_input]
-        mu = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
-        gamma = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        c = self.start_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        c_bar = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        delta = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        o = self.output_gate_layer(history)  # [number_of_sampled_sequences, 1, d_input]
 
         hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=time_next.unsqueeze(dim=-1), num_dimension_prior_batch=0
+            c_bar=c_bar, c=c, delta=delta, duration_t=time_next.unsqueeze(dim=-1), num_dimension_prior_batch=0
         )
         # [number_of_sampled_sequences, 1, d_input]
+        hidden_state_at_t = hidden_state_at_t * o
+
         # calculate the intensity.
         intensity_all_marks = self.intensity_layer(hidden_state_at_t)  # [number_of_sampled_sequences, 1, num_marks]
         intensity_all_marks = intensity_all_marks.squeeze(dim=-2)  # [number_of_sampled_sequences, num_marks]
@@ -301,9 +320,11 @@ class CTLSTM(nn.Module):
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [number_of_sampled_sequences, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=0
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=0
         )
-        # [number_of_sampled_sequences, integration_sample_rate, d_input]
+        # [number_of_sampled_sequences, 1, d_input]
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * o
+        # [number_of_sampled_sequences, 1, d_input]
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)
         # [number_of_sampled_sequences, integration_sample_rate, num_marks]
         integral_all_marks = approximate_integration(
@@ -357,9 +378,10 @@ class CTLSTM(nn.Module):
         # [number_of_sampled_sequences, 1, d_history]
         history = self.history_mapper(sampled_history_embedding)  # [number_of_sampled_sequences, 1, d_input]
 
-        eta = self.start_layer(history)  # [number_of_sampled_sequences, 1, d_input]
-        mu = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
-        gamma = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        c = self.start_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        c_bar = self.converge_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        delta = self.decay_layer(history)  # [number_of_sampled_sequences, 1, d_input]
+        o = self.output_gate_layer(history)  # [number_of_sampled_sequences, 1, d_input]
 
         # calculate the integral
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
@@ -367,9 +389,12 @@ class CTLSTM(nn.Module):
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [number_of_sampled_sequences, num_marks, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=0
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=0
         )
         # [number_of_sampled_sequences, num_marks, integration_sample_rate, d_input]
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * o.unsqueeze(dim=-2)
+        # [number_of_sampled_sequences, num_marks, integration_sample_rate, d_input]
+
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)
         # [number_of_sampled_sequences, num_marks, integration_sample_rate, num_marks]
         expanded_integral_all_marks = approximate_integration(expanded_intensity_all_marks, expanded_time, dim=-2)
@@ -406,7 +431,7 @@ class CTLSTM(nn.Module):
               The number of interpolated points in a time interval between two adjoint marks for integration estimation.
               The number of interpolated points counts the start and end point of the interval.
             * ```int``` num_dimension_prior_batch
-              How many dimensions does the input mu, eta, and gamma have before the batch_size dim?
+              How many dimensions does the input c_bar, c, and delta have before the batch_size dim?
             * ```torch,tensor``` time_next_start
               shape: ```[..., batch_size, seq_len]``` if not None
               When given, this function computes the integral between [time_next_start, t_i]. time_next_start are expected to be non-negative.
@@ -433,9 +458,10 @@ class CTLSTM(nn.Module):
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)  # [batch_size, seq_len, d_input]
 
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         expanded_time = (time_next - time_next_start).unsqueeze(dim=-1) * time_multiplier + time_next_start.unsqueeze(
@@ -443,7 +469,12 @@ class CTLSTM(nn.Module):
         )
         # [..., batch_size, seq_len, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
+        )
+        # [..., batch_size, seq_len, integration_sample_rate, d_input]
+        n_dim = len(expanded_hidden_state_at_t.shape) - 4
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * rearrange(o,
+            f"b s d -> {'() ' * n_dim} b s () d"
         )
         # [..., batch_size, seq_len, integration_sample_rate, d_input]
 
@@ -476,7 +507,7 @@ class CTLSTM(nn.Module):
               The number of interpolated points in a time interval between two adjoint marks for integration estimation.
               The number of interpolated points counts the start and end point of the interval.
             * ```int``` num_dimension_prior_batch
-              How many dimensions does the input mu, eta, and gamma have before the batch_size dim?
+              How many dimensions does the input c_bar, c, and delta have before the batch_size dim?
         ### Outputs
             * ```torch.tensor``` expanded_integral_all_marks
               shape: ```[..., batch_size, seq_len, resolution, num_marks]```
@@ -496,16 +527,22 @@ class CTLSTM(nn.Module):
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)  # [batch_size, seq_len, d_input]
 
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         expanded_time = (
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
+        )
+        # [..., batch_size, seq_len, num_marks, integration_sample_rate, d_input]
+        n_dim = len(expanded_hidden_state_at_t.shape) - 5
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * rearrange(o,
+            f"b s d -> {'() ' * n_dim} b s () () d"
         )
         # [..., batch_size, seq_len, num_marks, integration_sample_rate, d_input]
 
@@ -553,15 +590,18 @@ class CTLSTM(nn.Module):
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
         history = self.history_mapper(history)
         # [batch_size, seq_len, d_input]
-        eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
-        mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
-        gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        c = self.start_layer(history)  # [batch_size, seq_len, d_input]
+        c_bar = self.converge_layer(history)  # [batch_size, seq_len, d_input]
+        delta = self.decay_layer(history)  # [batch_size, seq_len, d_input]
+        o = self.output_gate_layer(history)  # [batch_size, seq_len, d_input]
 
         time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
         expanded_time = time_next.unsqueeze(dim=-1) * time_multiplier  # [batch_size, seq_len, integration_sample_rate]
         expanded_hidden_state_at_t = self.state_decay(
-            mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=0
+            c_bar=c_bar, c=c, delta=delta, duration_t=expanded_time, num_dimension_prior_batch=0
         )
+        # [batch_size, seq_len, integration_sample_rate, d_input]
+        expanded_hidden_state_at_t = expanded_hidden_state_at_t * o.unsqueeze(dim=-2)
         # [batch_size, seq_len, integration_sample_rate, d_input]
 
         expanded_intensity_all_marks = self.intensity_layer(expanded_hidden_state_at_t)

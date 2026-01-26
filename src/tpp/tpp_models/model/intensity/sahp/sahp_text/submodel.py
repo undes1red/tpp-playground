@@ -8,22 +8,21 @@ from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import move_from_tensor_to_ndarray
 
-from .transformers import TransformerEncoder
+from .his_coder.f_transformers import TransformerTPP
 
 
 class SAHP(nn.Module):
     def __init__(
         self,
         device,
+        training,
         num_marks,
         d_text_emb,
         d_input,
-        d_rnn,
         d_hidden,
         n_layers,
         n_head,
-        d_qk,
-        d_v,
+        d_qkv,
         dropout,
         integration_sample_rate,
     ):
@@ -78,17 +77,16 @@ class SAHP(nn.Module):
         )
 
         # History encoder. SAHP employs a plain transformer to encode marked temporal history
-        self.history_encoder = TransformerEncoder(
+        self.history_encoder = TransformerTPP(
+            training,
             num_marks,
             device=self.device,
             d_text_emb=d_text_emb,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
         )
 
