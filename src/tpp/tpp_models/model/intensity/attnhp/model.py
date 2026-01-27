@@ -1,4 +1,3 @@
-import argparse
 from typing import Self
 
 import torch
@@ -7,7 +6,13 @@ from einops import pack, rearrange, reduce, repeat
 from sklearn.metrics import f1_score
 
 from src.toolbox.algorithms import approximate_integration
-from src.toolbox.misc import check_tensor, conditional_decorator, move_from_tensor_to_ndarray, pack_one_value_to_dict
+from src.toolbox.misc import (
+    check_tensor,
+    compile_func,
+    compile_model,
+    move_from_tensor_to_ndarray,
+    pack_one_value_to_dict,
+)
 from src.tpp.tpp_models.model.basic_tpp_model import (
     BasicModel,
     memory_ceiling,
@@ -22,14 +27,13 @@ class AttNHPWrapper(BasicModel):
     def __init__(
         self,
         opt,
+        training,
         device,
         d_input=64,
-        d_rnn=64,
         d_hidden=256,
         n_layers=3,
         n_head=3,
-        d_qk=64,
-        d_v=64,
+        d_qkv=64,
         dropout=0.1,
         epsilon=1e-20,
         sample_rate=32,
@@ -40,7 +44,9 @@ class AttNHPWrapper(BasicModel):
     ) -> Self:
         super().__init__()
         self.device = device
-        self.compile_or_not = opt.compile
+        self.training = training
+        self.use_compile = opt.compile
+        self.compile_backend = opt.compile_backend
         self.num_events = opt.info_dict["num_events"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
@@ -54,19 +60,21 @@ class AttNHPWrapper(BasicModel):
         self.max_step = 50
 
         self.model = AttNHP(
+            training=training,
             num_events=self.num_events,
             d_input=d_input,
-            d_rnn=d_rnn,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
             device=device,
             integration_sample_rate=integration_sample_rate,
         )
 
+        self.model = compile_model(self.model, opt.compile, opt.compile_backend)
+
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self, input_data):
         """
         What divide_history_and_next should do?
@@ -82,6 +90,7 @@ class AttNHPWrapper(BasicModel):
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy events by altering the mask.
 
@@ -254,7 +263,7 @@ class AttNHPWrapper(BasicModel):
     """
     Loss functions
     """
-
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(self, integral_all_events, intensity_all_events, events_next, mask_next):
         """Log-likelihood of sequence."""
         type_mask = F.one_hot(events_next, num_classes=self.num_events)  # [batch_size, seq_len, num_events]

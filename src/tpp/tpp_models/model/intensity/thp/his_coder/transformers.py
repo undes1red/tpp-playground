@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from src.toolbox.modules import BiasedPositionalEmbedding, TransformerLayer, get_subsequent_mask
+from src.toolbox.modules import PositionalEmbedding, THPTimeEmbedding, TransformerLayer, get_subsequent_mask
 
 
 class Encoder(nn.Module):
@@ -36,7 +36,8 @@ class Encoder(nn.Module):
         self.num_marks = num_marks
 
         # position vector, used for temporal encoding
-        self.position_emb = BiasedPositionalEmbedding(d_input, max_len=4096, device=self.device)
+        self.position_emb = PositionalEmbedding(d_input, max_len=4096, device=self.device)
+        self.time_emb = THPTimeEmbedding(d_input, device=self.device)
 
         # event type embedding
         self.event_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
@@ -84,14 +85,16 @@ class Encoder(nn.Module):
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq  # [batch_size, seq_len, seq_len]
 
         # Time Embedding
-        time_emb = self.position_emb(seq_len, event_time)  # [batch_size, seq_len, d_input]
+        # Time Embedding
+        pos_emb = self.position_emb(event_time)  # [batch_size, seq_len, d_input]
+        time_emb = self.time_emb(event_time)  # [batch_size, seq_len, d_input]
 
         if event_type is not None:
             mark_emb = self.event_emb(event_type)  # [batch_size, seq_len, d_input]
         else:
             mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = time_emb + mark_emb  # [batch_size, seq_len, d_input]
+        output = pos_emb + time_emb + mark_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
             output, _ = enc_layer(
                 output, non_pad_mask=non_pad_mask, self_attn_mask=self_attn_mask

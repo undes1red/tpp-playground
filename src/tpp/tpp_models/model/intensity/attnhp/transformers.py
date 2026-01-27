@@ -2,78 +2,96 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
-from src.toolbox.modules.position_embedding import BiasedPositionalEmbedding, TransformerLayer, get_subsequent_mask
+from src.toolbox.modules import FMHSA, BiasedPositionalEmbedding
 
 
-class TransformerEncoder(nn.Module):
+class TransformerTPP(nn.Module):
     """A sequence to sequence model with attention mechanism."""
 
     def __init__(
-        self, num_types, device, d_input, d_rnn, d_hidden, n_layers, n_head, d_qk, d_v, dropout, integration_sample_rate
+        self,
+        training,
+        num_marks,
+        device,
+        d_input,
+        d_hidden,
+        n_layers,
+        n_head,
+        d_qkv,
+        dropout,
     ):
         super().__init__()
         self.device = device
-        self.num_types = num_types if num_types > 0 else 1
-        self.integration_sample_rate = integration_sample_rate
+        self.training = training
+        self.num_marks = num_marks if num_marks > 0 else 1
 
         self.encoder = Encoder(
-            num_types=self.num_types,
+            training=training,
+            num_marks=self.num_marks,
             d_input=d_input,
             d_hidden=d_hidden,
             n_layers=n_layers,
             n_head=n_head,
-            d_qk=d_qk,
-            d_v=d_v,
+            d_qkv=d_qkv,
             dropout=dropout,
-            integration_sample_rate=integration_sample_rate,
             device=self.device,
         )
 
-    def forward(self, time_history, sample_time, events_history, non_pad_mask, custom_events_history=False):
+    def forward(
+        self, time_history, time_next, marks_history, non_pad_mask, custom_marks_history, integration_sample_rate
+    ):
         """
-        Return intensity functions' values for all events and time and events, if possible, predictions.
+        Return intensity functions' values for all marks and time and marks, if possible, predictions.
         Args:
-        1. event_time: the length of all time intervals between two adjacent events. shape: [batch_size, seq_len]
-        2. event_type: vectors containing the information about each event. shape: [batch_size, seq_len]
-        3. non_pad_mask: padding mask. 1 refers to the existence of an event, while 0 means a dummy event. shape: [batch_size, seq_len]
+        1. mark_time: the length of all time intervals between two adjacent marks. shape: [batch_size, seq_len]
+        2. mark_type: vectors containing the information about each mark. shape: [batch_size, seq_len]
+        3. non_pad_mask: padding mask. 1 refers to the existence of an mark, while 0 means a dummy mark. shape: [batch_size, seq_len]
         """
 
-        enc_output = self.encoder(time_history, sample_time, events_history, non_pad_mask, custom_events_history)
+        return self.encoder(
+            time_history, time_next, marks_history, non_pad_mask, custom_marks_history, integration_sample_rate
+        )
         # [batch_size, seq_len, d_input]
 
-        return enc_output
-
-    def get_event_embedding(self, input_event):
-        return self.encoder.get_event_embedding(input_event)  # [batch_size, seq_len, d_input]
+    def get_mark_embedding(self, input_mark):
+        return self.encoder.get_mark_embedding(input_mark)  # [batch_size, seq_len, d_input]
 
 
 class Encoder(nn.Module):
     """A encoder model with self attention mechanism."""
 
     def __init__(
-        self, num_types, d_input, d_hidden, integration_sample_rate, n_layers, n_head, d_qk, d_v, dropout, device
+        self,
+        training,
+        num_marks,
+        d_input,
+        d_hidden,
+        n_layers,
+        n_head,
+        d_qkv,
+        dropout,
+        device,
     ):
         super().__init__()
         self.device = device
         self.d_input = d_input
-        self.num_types = num_types
-        self.integration_sample_rate = integration_sample_rate
+        self.num_marks = num_marks
 
         # position vector, used for temporal encoding
         # FIXME: set max_len during runtime, current max_len = 4096
         self.position_emb = BiasedPositionalEmbedding(d_input, max_len=4096, device=self.device)
 
-        # event type embedding
-        self.event_emb = nn.Embedding(num_types + 1, d_input, padding_idx=num_types, device=self.device)
+        # mark type embedding
+        self.mark_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
 
         self.layer_stack = nn.ModuleList(
             [
-                TransformerLayer(
-                    d_input=d_input,
-                    d_hidden=d_hidden,
+                FMHSA(
+                    training=training,
                     n_head=n_head,
-                    d_qk=d_qk,
-                    d_v=d_v,
+                    d_input=d_input,
+                    d_qkv=d_qkv,
+                    d_hidden=d_hidden,
                     dropout=dropout,
                     device=self.device,
                 )
@@ -81,27 +99,35 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, time_history, sample_time, events_history, non_pad_mask, custom_events_history):
+    def forward(
+        self, time_history, time_next, marks_history, non_pad_mask, custom_marks_history, integration_sample_rate
+    ):
         """
-        Encode event sequences via masked self-attention.
+        Encode mark sequences via masked self-attention.
         Args:
         1. time_history: input time intervals. shape: [batch_size, seq_len]
         2. sample_time: shape: [..., batch_size, seq_len, sample_rate]
-        3. events_history: shape: [batch_size, seq_len]
+        3. marks_history: shape: [batch_size, seq_len]
         4. non_pad_mask: pad mask tensor. shape: [batch_size, seq_len]
         """
-        batch_size, seq_len = events_history.shape
+        batch_size, seq_len = marks_history.shape
+
+        # calculate the integral
+        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device=self.device)
+        expanded_time = (
+            time_next.unsqueeze(dim=-1) * time_multiplier
+        )  # [..., batch_size, seq_len, integration_sample_rate]
 
         sample_time = rearrange(
-            sample_time, "... b s sr -> ... sr () b s"
-        )  # [..., sample_rate, num_event, batch_size, seq_len]
+            time_next, "... b s sr -> ... sr () b s"
+        )  # [..., sample_rate, num_mark, batch_size, seq_len]
 
-        sample_event = torch.arange(self.num_types, device=self.device)  # [num_event]
-        sample_event = repeat(sample_event, "ne -> sr ne b s", sr=self.integration_sample_rate, b=batch_size, s=seq_len)
-        # [sample_rate, num_event, batch_size, seq_len]
+        sample_mark = torch.arange(self.num_marks, device=self.device)  # [num_mark]
+        sample_mark = repeat(sample_mark, "ne -> sr ne b s", sr=integration_sample_rate, b=batch_size, s=seq_len)
+        # [sample_rate, num_mark, batch_size, seq_len]
 
-        time_history = repeat(time_history, "b s -> sr () b s", sr=self.integration_sample_rate)
-        # [sample_rate, num_event, batch_size, seq_len]
+        time_history = repeat(time_history, "b s -> sr () b s", sr=integration_sample_rate)
+        # [sample_rate, num_mark, batch_size, seq_len]
         if len(sample_time.shape) > 4:
             einop = "... -> "
             parameter_dict = {}
@@ -112,20 +138,20 @@ class Encoder(nn.Module):
             einop += "..."
             time_history = repeat(
                 time_history, einop, **parameter_dict
-            )  # [..., sample_rate, num_event, batch_size, seq_len]
+            )  # [..., sample_rate, num_mark, batch_size, seq_len]
 
-        events_history = repeat(events_history, "b s -> sr ne b s", sr=self.integration_sample_rate, ne=self.num_types)
-        # [sample_rate, num_event, batch_size, seq_len]
+        marks_history = repeat(marks_history, "b s -> sr ne b s", sr=self.integration_sample_rate, ne=self.num_marks)
+        # [sample_rate, num_mark, batch_size, seq_len]
 
         # Connect history with samples, further we perform masked attention on this sequence.
-        connected_event_seq = torch.cat((events_history, sample_event), dim=-1)
-        # [sample_rate, num_event, batch_size, 2 * seq_len]
+        connected_mark_seq = torch.cat((marks_history, sample_mark), dim=-1)
+        # [sample_rate, num_mark, batch_size, 2 * seq_len]
         """
         Prepare attention masks
         AttNHP's attention mask should be carefully handled. It should ensure:
-        1. each sample_event only sees itself and history events it should see.
-        2. each event in history only sees eariler events. It should not know the existence of sample_event.
-        3. padding events and EOS are invisible to history_events and sample_events.
+        1. each sample_mark only sees itself and history marks it should see.
+        2. each mark in history only sees eariler marks. It should not know the existence of sample_mark.
+        3. padding marks and EOS are invisible to history_marks and sample_marks.
         """
         self_attn_mask_from_history_to_history = get_subsequent_mask(seq_len, device=self.device)
         # [batch_size, seq_len, seq_len]
@@ -156,37 +182,37 @@ class Encoder(nn.Module):
         # Time Embedding
         time_history_emb = self.position_emb(
             seq_len, time_history
-        )  # [..., sample_rate, num_events, batch_size, seq_len, d_input]
+        )  # [..., sample_rate, num_marks, batch_size, seq_len, d_input]
         sample_time_emb = self.position_emb(seq_len, sample_time, position_start_index=1)
-        # [..., sample_rate, num_events, batch_size, seq_len, d_input]
+        # [..., sample_rate, num_marks, batch_size, seq_len, d_input]
         time_emb = torch.cat(
             (time_history_emb, sample_time_emb), dim=-2
-        )  # [..., sample_rate, num_events, batch_size, seq_len * 2, d_input]
+        )  # [..., sample_rate, num_marks, batch_size, seq_len * 2, d_input]
 
-        # Event Embedding
-        if events_history != None:
-            if custom_events_history:
-                events_emb = events_history
+        # mark Embedding
+        if marks_history != None:
+            if custom_marks_history:
+                marks_emb = marks_history
             else:
-                events_emb = self.event_emb(
-                    connected_event_seq
-                )  # [sample_rate, num_event, batch_size, seq_len * 2, d_input]
+                marks_emb = self.mark_emb(
+                    connected_mark_seq
+                )  # [sample_rate, num_mark, batch_size, seq_len * 2, d_input]
                 einop = f"... -> {'() ' * (len(time_emb.shape) - 5)}..."
-                events_emb = rearrange(
-                    events_emb, einop
-                )  # [..., sample_rate, num_event, batch_size, seq_len * 2, d_input]
+                marks_emb = rearrange(
+                    marks_emb, einop
+                )  # [..., sample_rate, num_mark, batch_size, seq_len * 2, d_input]
         else:
-            events_emb = torch.zeros_like(
+            marks_emb = torch.zeros_like(
                 time_emb, device=self.device
-            )  # [..., sample_rate, num_event, batch_size, seq_len * 2, d_input]
+            )  # [..., sample_rate, num_mark, batch_size, seq_len * 2, d_input]
 
-        mingled_emb = time_emb + events_emb  # [..., sample_rate, num_event, batch_size, seq_len * 2, d_input]
+        mingled_emb = time_emb + marks_emb  # [..., sample_rate, num_mark, batch_size, seq_len * 2, d_input]
 
         for enc_layer in self.layer_stack:
             mingled_emb, _ = enc_layer(mingled_emb, non_pad_mask=non_pad_mask, self_attn_mask=self_attn_mask)
-            # [..., sample_rate, num_event, batch_size, seq_len * 2, d_input]
+            # [..., sample_rate, num_mark, batch_size, seq_len * 2, d_input]
 
         return mingled_emb
 
-    def get_event_embedding(self, input_event):
-        return self.event_emb(input_event)  # [batch_size, seq_len, d_input]
+    def get_mark_embedding(self, input_mark):
+        return self.mark_emb(input_mark)  # [batch_size, seq_len, d_input]

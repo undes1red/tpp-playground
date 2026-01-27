@@ -1,3 +1,4 @@
-from .position import BiasedPositionalEmbedding, PositionalEmbedding
+from .position import PositionalEmbedding
+from .time import THPTimeEmbedding, SAHPTimeEmbedding
 
-__all__ = ["PositionalEmbedding", "BiasedPositionalEmbedding"]
+__all__ = ["PositionalEmbedding", "THPTimeEmbedding", "SAHPTimeEmbedding"]

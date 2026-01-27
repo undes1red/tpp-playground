@@ -1,4 +1,4 @@
-from src.tpp.tpp_models.model.intensity.attnhp.model import AttNHPWrapper
+from .model import AttNHPWrapper
 
 
 def get_model():

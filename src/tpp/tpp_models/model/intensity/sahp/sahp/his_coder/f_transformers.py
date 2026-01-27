@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.toolbox.modules import FMHSA, BiasedPositionalEmbedding
+from src.toolbox.modules import FMHSA, PositionalEmbedding, SAHPTimeEmbedding
 
 
 class Encoder(nn.Module):
@@ -35,7 +35,8 @@ class Encoder(nn.Module):
         self.num_marks = num_marks
 
         # position vector, used for temporal encoding
-        self.position_emb = BiasedPositionalEmbedding(d_input, max_len=4096, device=self.device)
+        self.position_emb = PositionalEmbedding(d_input, max_len=4096, device=self.device)
+        self.time_emb = SAHPTimeEmbedding(d_input, device=self.device)
 
         # event type embedding
         self.event_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
@@ -74,10 +75,10 @@ class Encoder(nn.Module):
               shape: ```[batch_size, seq_len, d_input]```
               The representation of the original input.
         """
-        seq_len = event_type.shape[-1]
 
         # Time Embedding
-        time_emb = self.position_emb(seq_len, event_time)  # [batch_size, seq_len, d_input]
+        pos_emb = self.position_emb(event_time)  # [batch_size, seq_len, d_input]
+        time_emb = self.time_emb(event_time)  # [batch_size, seq_len, d_input]
 
         if event_type is not None:
             mark_emb = event_type if custom_mark_history else self.event_emb(event_type)
@@ -85,7 +86,7 @@ class Encoder(nn.Module):
         else:
             mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = time_emb + mark_emb  # [batch_size, seq_len, d_input]
+        output = pos_emb + time_emb + mark_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
             output = enc_layer(
                 output, non_pad_mask=non_pad_mask

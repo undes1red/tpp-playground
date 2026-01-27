@@ -8,7 +8,7 @@ from scipy.stats import spearmanr
 from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import move_from_tensor_to_ndarray
-from src.toolbox.modules import BiasedPositionalEmbedding
+from src.toolbox.modules import THPTimeEmbedding
 
 
 class CTLSTM(nn.Module):
@@ -73,7 +73,7 @@ class CTLSTM(nn.Module):
         self.marks_embedding = nn.Embedding(num_marks + 1, d_mark_embedding, padding_idx=num_marks, device=device)
 
         # Time embedding layer
-        self.position_emb = BiasedPositionalEmbedding(d_mark_embedding, max_len=4096, device=self.device)
+        self.time_emb = THPTimeEmbedding(d_mark_embedding, device=self.device)
 
         # History encoder.
         self.history_encoder = getattr(nn, history_module_name)(
@@ -153,10 +153,9 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len, num_marks]```
               The value of \\lambda^*(m, t) on at t_i.
         """
-        seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
 
-        time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.time_emb(time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
@@ -198,9 +197,8 @@ class CTLSTM(nn.Module):
         return integral_all_marks, intensity_all_marks
 
     def nhps_get_history_state(self, time_history, marks_history):
-        seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.time_emb(time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
@@ -279,7 +277,6 @@ class CTLSTM(nn.Module):
               shape: ```[number_of_sampled_sequences, num_marks]```
               The value of \\lambda^*(m, t) on at t_i.
         """
-        seq_len = marks_history.shape[-1]
         integration_sample_rate = (
             self.integration_sample_rate if integration_sample_rate is None else integration_sample_rate
         )
@@ -289,8 +286,8 @@ class CTLSTM(nn.Module):
         marks_embeddings = self.marks_embedding(
             marks_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(
-            seq_len, time_history
+        time_embeddings = self.time_emb(
+            time_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
 
@@ -361,15 +358,14 @@ class CTLSTM(nn.Module):
               shape: ```[number_of_sampled_sequences, num_marks]```
               The value of \\lambda^*(m, t) on at t_i.
         """
-        seq_len = marks_history.shape[-1]
         integration_sample_rate = (
             self.integration_sample_rate if integration_sample_rate is None else integration_sample_rate
         )
         marks_embeddings = self.marks_embedding(
             marks_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(
-            seq_len, time_history
+        time_embeddings = self.time_emb(
+            time_history
         )  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [number_of_sampled_sequences, seq_len, d_mark_embedding]
 
@@ -450,9 +446,8 @@ class CTLSTM(nn.Module):
         if time_next_start is None:
             time_next_start = torch.zeros_like(time_next)  # [batch_size, seq_len]
 
-        seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.time_emb(time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
@@ -519,9 +514,8 @@ class CTLSTM(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         """
-        seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.time_emb(time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
@@ -582,9 +576,8 @@ class CTLSTM(nn.Module):
               shape: ```[batch_size, seq_len, resolution]```
               The value of sampled times.
         """
-        seq_len = marks_history.shape[-1]
         marks_embeddings = self.marks_embedding(marks_history)  # [batch_size, seq_len, d_mark_embedding]
-        time_embeddings = self.position_emb(seq_len, time_history)  # [batch_size, seq_len, d_mark_embedding]
+        time_embeddings = self.time_emb(time_history)  # [batch_size, seq_len, d_mark_embedding]
         history = marks_embeddings + time_embeddings  # [batch_size, seq_len, d_mark_embedding]
 
         history, (_, _) = self.history_encoder(history)  # [batch_size, seq_len, d_hidden]
