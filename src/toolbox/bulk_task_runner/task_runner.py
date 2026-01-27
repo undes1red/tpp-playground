@@ -5,7 +5,7 @@ from typing import TextIO
 
 from termcolor import colored
 
-from src.taskhost import get_logger
+from src.toolbox.misc import get_logger
 
 logger = get_logger(__name__)
 
