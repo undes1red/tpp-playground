@@ -240,7 +240,7 @@ class Trainer:
         self.evaluation_report(0)
         # Avoid crash.
         # torch._dynamo.reset()
-        for current_step in tqdm(step_range, desc=desc, leave=False):
+        for current_step in tqdm(step_range, desc=desc, position=0):
             data = next(training_iter)
 
             if self.use_profiler:
@@ -367,7 +367,7 @@ class Trainer:
 
         sum_ = [0] * self.format_dict_length
 
-        for minibatch in tqdm(self.raw_data[dataset_name], f"  - ({dataset_name})   "):
+        for minibatch in tqdm(self.raw_data[dataset_name], f"  - ({dataset_name})   ", leave=False, position=1):
             if self.use_profiler:
                 profiler.start()
 
