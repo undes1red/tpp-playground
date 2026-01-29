@@ -68,12 +68,12 @@ class SAHP(nn.Module):
         self.converge_layer = nn.Sequential(nn.Linear(d_input, d_input, bias=True, device=self.device), self.gelu)
 
         self.decay_layer = nn.Sequential(
-            nn.Linear(d_input, d_input, bias=True, device=self.device), nn.Softplus(beta=10.0).to(torch.bfloat16)
+            nn.Linear(d_input, d_input, bias=True, device=self.device), nn.Softplus(beta=10.0)
         )
 
         # This layer translates decayed hidden states into intensity function values.
         self.intensity_layer = nn.Sequential(
-            nn.Linear(d_input, self.num_marks, bias=True, device=self.device), nn.Softplus(beta=1.0).to(torch.bfloat16)
+            nn.Linear(d_input, self.num_marks, bias=True, device=self.device), nn.Softplus(beta=1.0)
         )
 
         # History encoder. SAHP employs a plain transformer to encode marked temporal history

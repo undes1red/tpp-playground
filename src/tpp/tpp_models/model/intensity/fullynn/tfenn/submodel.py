@@ -8,18 +8,18 @@ from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 from src.toolbox.modules import NonNegLinear
 
-from .transformers import TransEncoder
+from .his_coder.f_transformers import TransformerTPP
 
 
 class TFENN(nn.Module):
     def __init__(
-        self, d_history, d_intensity, num_marks, dropout, d_hidden, n_layers, n_head, d_qk, d_v, mlp_layers, device
+        self, training, d_intensity, num_marks, dropout, d_hidden, n_layers, n_head, d_qkv, mlp_layers, device
     ):
         """
         This function creates a TFENN model.
 
         ### Args
-            * ```int``` d_history
+            * ```int``` d_intensity
               The dimension of the history representation.
             * ```int``` d_hidden
               The dimension of the FFN module in the Transformer.
@@ -43,9 +43,10 @@ class TFENN(nn.Module):
         super().__init__()
         self.device = device
         self.num_marks = num_marks
+        self.training = training
 
-        self.his_encoder = TransEncoder(
-            num_marks, d_history, d_hidden, n_layers, n_head, d_qk, d_v, dropout, device=self.device
+        self.his_encoder = TransformerTPP(
+            training, num_marks, device, d_intensity, d_hidden, n_layers, n_head, d_qkv, dropout
         )
 
         # Map the time number into a vector.
@@ -55,7 +56,7 @@ class TFENN(nn.Module):
         nn.init.xavier_uniform_(self.weight_for_t)
 
         # Map history and time embeddings into the same hidden space.
-        self.history_mapper = nn.Linear(d_history, d_intensity, bias=True, device=device)
+        self.history_mapper = nn.Linear(d_intensity, d_intensity, bias=True, device=device)
         self.time_mapper = NonNegLinear(d_intensity, d_intensity, device=self.device)
 
         # IEM module featuring non-negative fully connected layers.
@@ -65,6 +66,27 @@ class TFENN(nn.Module):
         self.layer_activation = nn.Tanh()
         self.aggregate = NonNegLinear(d_intensity, 1, bias=True, device=device)
         self.nonneg_activation = nn.Softplus()
+
+    def time_history_seq_encoding(self, time_history, marks_history, mean, std):
+        time_history = (time_history - mean) / std  # [batch_size, seq_len]
+
+        time_history = repeat(time_history, "... -> ... ne", ne=self.num_marks)  # [batch_size, seq_len, num_marks]
+        time_history_emb = time_history.unsqueeze(dim=-1) * self.nonneg_activation(self.weight_for_t)
+        # [batch_size, seq_len, num_marks, d_intensity]
+        time_history_emb = (
+            time_history_emb[..., 1:, :, :]
+            * nn.functional.one_hot(marks_history[..., 1:], num_classes=self.num_marks).unsqueeze(dim=-1)
+        ).sum(dim=-2)
+        # [batch_size, seq_len-1, d_intensity]
+        time_history_emb = torch.cat(
+            (
+                torch.zeros(*time_history_emb.shape[:-2], 1, time_history_emb.shape[-1], device=self.device),
+                time_history_emb,
+            ),
+            dim=-2,
+        )
+        # [batch_size, seq_len, d_intensity]
+        return time_history_emb  # [batch_size, seq_len, d_intensity]
 
     def forward(self, time_history, time_next, marks_history, mask_history, mean, std, training=False):
         """
@@ -90,14 +112,15 @@ class TFENN(nn.Module):
               shape: ```[..., batch_size, seq_len, num_marks]```
               The value of \\Lambda^*(m, t) on [t_{i-1}, t_i).
         """
-        time_history = (time_history - mean) / std  # [batch_size, seq_len]
+        time_history_embedding = self.time_history_seq_encoding(time_history, marks_history, mean, std)
+        # [batch_size, seq_len, d_intensity]
 
         # Reshape hidden output for full connection layers.
-        hidden_history = self.his_encoder(time_history, marks_history, mask_history)
-        # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(time_history_embedding, marks_history, mask_history)
+        # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, "b s dh -> b s ne dh", ne=self.num_marks)
-        # [batch_size, seq_len, num_marks, d_history]
+        # [batch_size, seq_len, num_marks, d_intensity]
 
         time_next = repeat(time_next, "... -> ... ne", ne=self.num_marks)  # [..., batch_size, seq_len, num_marks]
         time_next.requires_grad = True
@@ -175,11 +198,12 @@ class TFENN(nn.Module):
         """
 
         # Prepare the history embedding.
-        time_history = (time_history - mean) / std  # [batch_size, seq_len]
+        time_history_embedding = self.time_history_seq_encoding(time_history, marks_history, mean, std)
+        # [batch_size, seq_len, d_intensity]
 
         # Reshape hidden output for full connection layers.
-        hidden_history = self.his_encoder(time_history, marks_history, mask_history)
-        # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(time_history_embedding, marks_history, mask_history)
+        # [batch_size, seq_len, d_intensity]
         hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
         hidden_history = repeat(hidden_history, "b s di -> b s r ne di", r=resolution, ne=self.num_marks)
         # [batch_size, seq_len, resolution, num_marks, d_intensity]
@@ -263,10 +287,11 @@ class TFENN(nn.Module):
         """
 
         # Prepare the history embedding.
-        time_history = (time_history - mean) / std  # [batch_size, seq_len]
+        time_history_embedding = self.time_history_seq_encoding(time_history, marks_history, mean, std)
+        # [batch_size, seq_len, d_intensity]
 
-        hidden_history = self.his_encoder(time_history, marks_history, mask_history)
-        # [batch_size, seq_len, d_history]
+        hidden_history = self.his_encoder(time_history_embedding, marks_history, mask_history)
+        # [batch_size, seq_len, d_intensity]
         hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(
@@ -359,12 +384,14 @@ class TFENN(nn.Module):
               shape: ```[batch_size, seq_len, resolution]```
               The value of sampled times.
         """
-
         # Prepare the history embedding.
-        time_history = (time_history - mean) / std  # [batch_size, seq_len]
-        hidden_history = self.his_encoder(time_history, marks_history, mask_history)
-        # [batch_size, seq_len, d_history]
-        hidden_history = self.history_mapper(hidden_history)  # [batch_size, seq_len, d_intensity]
+        time_history_embedding = self.time_history_seq_encoding(time_history, marks_history, mean, std)
+        # [batch_size, seq_len, d_intensity]
+        hidden_history = self.his_encoder(time_history_embedding, marks_history, mask_history)
+        # [batch_size, seq_len, d_intensity]
+
+        hidden_history = self.history_mapper(hidden_history)
+        # [batch_size, seq_len, d_intensity]
 
         hidden_history = repeat(hidden_history, "b s di -> b s r ne di", r=resolution, ne=self.num_marks)
         # [batch_size, seq_len, resolution, num_marks, d_intensity]

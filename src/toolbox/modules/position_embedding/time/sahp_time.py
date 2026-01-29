@@ -5,7 +5,7 @@ import torch.nn as nn
 class SAHPTimeEmbedding(nn.Module):
     """Time embedding method posted in the SAHP paper.
 
-    pe^k_{(v_i, t_i)} = cos(t_j/10000^{\\frac{i-1}{M}}) if i is odd else sin(t_j/10000^{\\frac{i}{M}})
+    pe^k_{(v_i, t_i)} = cos(\\omega_k * i + w_k * t_i) if i is odd else sin(\\omega_k * i + w_k * t_i)
     """
 
     def __init__(self, d_input, device):

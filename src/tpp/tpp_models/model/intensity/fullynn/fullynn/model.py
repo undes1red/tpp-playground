@@ -47,7 +47,6 @@ class FullyNNModel(
     def __init__(
         self,
         training,
-        d_history,
         d_intensity,
         dropout,
         history_module_layers,
@@ -107,7 +106,6 @@ class FullyNNModel(
         self.max_step = 50
 
         self.model = FullyNN(
-            d_history=d_history,
             d_intensity=d_intensity,
             num_marks=self.num_marks,
             dropout=dropout,

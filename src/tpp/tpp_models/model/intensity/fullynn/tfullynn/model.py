@@ -42,7 +42,6 @@ class TFullyNNModel(
     def __init__(
         self,
         training,
-        d_history,
         d_intensity,
         dropout,
         mlp_layers,
@@ -51,8 +50,7 @@ class TFullyNNModel(
         d_hidden,
         n_layers,
         n_head,
-        d_qk,
-        d_v,
+        d_qkv,
         sample_rate=32,
         mae_step=32,
         mae_e_step=32,
@@ -105,7 +103,7 @@ class TFullyNNModel(
         self.max_step = 50
 
         self.model = TFullyNN(
-            d_history, d_intensity, self.num_marks, dropout, d_hidden, n_layers, n_head, d_qk, d_v, mlp_layers, device
+            training, d_intensity, self.num_marks, dropout, d_hidden, n_layers, n_head, d_qkv, mlp_layers, device
         )
 
         self.model = compile_model(self.model, opt.compile, opt.compile_backend, fullgraph=False)

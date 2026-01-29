@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
-from src.toolbox.modules import FMHSA, BiasedPositionalEmbedding
+from src.toolbox.modules import FMHSA, AttNHPTimeEmbedding, PositionalEmbedding
 
 
 class TransformerTPP(nn.Module):
@@ -11,6 +11,8 @@ class TransformerTPP(nn.Module):
     def __init__(
         self,
         training,
+        m,
+        M,
         num_marks,
         device,
         d_input,
@@ -79,8 +81,8 @@ class Encoder(nn.Module):
 
         # position vector, used for temporal encoding
         # FIXME: set max_len during runtime, current max_len = 4096
-        self.position_emb = BiasedPositionalEmbedding(d_input, max_len=4096, device=self.device)
-
+        self.position_emb = PositionalEmbedding(d_input, max_len=4096, device=self.device)
+        self.time_emb = AttNHPTimeEmbedding(d_input, device=self.device)
         # mark type embedding
         self.mark_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
 

@@ -47,15 +47,13 @@ class TFENNModel(
     def __init__(
         self,
         training,
-        d_history,
         d_intensity,
         dropout,
         mlp_layers,
         d_hidden,
         n_layers,
         n_head,
-        d_qk,
-        d_v,
+        d_qkv,
         opt,
         device,
         survival_loss_during_training=True,
@@ -116,7 +114,7 @@ class TFENNModel(
         self.max_step = 50
 
         self.model = TFENN(
-            d_history, d_intensity, self.num_marks, dropout, d_hidden, n_layers, n_head, d_qk, d_v, mlp_layers, device
+            training, d_intensity, self.num_marks, dropout, d_hidden, n_layers, n_head, d_qkv, mlp_layers, device
         )
 
         self.model = compile_model(self.model, opt.compile, opt.compile_backend, fullgraph=False)

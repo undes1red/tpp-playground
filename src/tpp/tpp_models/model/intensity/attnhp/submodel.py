@@ -39,8 +39,8 @@ class AttNHP(nn.Module):
 
         # History encoder. AttNHP employs a plain transformer to encode every marks.
         self.attn_model = TransformerTPP(
-            training,
-            num_marks,
+            training=training,
+            num_marks=num_marks,
             device=self.device,
             d_input=d_input,
             d_hidden=d_hidden,

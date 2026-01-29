@@ -1,4 +1,4 @@
 from .position import PositionalEmbedding
-from .time import THPTimeEmbedding, SAHPTimeEmbedding
+from .time import AttNHPTimeEmbedding, SAHPTimeEmbedding, THPTimeEmbedding
 
-__all__ = ["PositionalEmbedding", "THPTimeEmbedding", "SAHPTimeEmbedding"]
+__all__ = ["PositionalEmbedding", "THPTimeEmbedding", "SAHPTimeEmbedding", "AttNHPTimeEmbedding"]

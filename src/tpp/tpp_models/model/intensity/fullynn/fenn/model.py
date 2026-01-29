@@ -58,7 +58,6 @@ class FENNModel(
         training,
         opt,
         device,
-        d_history,
         d_intensity,
         dropout,
         history_module_layers,
@@ -76,8 +75,6 @@ class FENNModel(
         ### Args
             * ```str``` history_module
               Which RNN model do we use to encode the history? Default is LSTM. We don't recommend to change it to something else.
-            * ```int``` d_history
-              The dimension of the history representation.
             * ```float``` dropout
               Dropout rate for the history encoder. Only works when history_module_layers > 1.
             * ```int``` history_module_layers
@@ -116,7 +113,6 @@ class FENNModel(
         self.max_step = 50
 
         self.model = FENN(
-            d_history=d_history,
             d_intensity=d_intensity,
             num_marks=self.num_marks,
             dropout=dropout,
