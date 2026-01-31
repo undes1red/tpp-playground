@@ -180,6 +180,7 @@ class Trainer:
         # Due to the complexity of learning rate scheduler, the scheduler is fixed.
         # If you want to use another learning rate scheduler, plz modify it in src.optim.
         self.optimizer, self.scheduler = generate_optimizer_scheduler(self.opt, self.model)
+        self.scaler = torch.GradScaler()
         self.step_and_update_lr = compile_func(
             self.opt.compile, self.opt.compile_backend, fullgraph=False, mode='max-autotune'
         )(step_and_update_lr)
@@ -246,7 +247,7 @@ class Trainer:
             if self.use_profiler:
                 profiler.start()
 
-            step_result = self.model.train_step(data)
+            step_result = self.model.train_step(data, self.scaler)
 
             if self.use_profiler:
                 profiler.step()
@@ -254,8 +255,11 @@ class Trainer:
 
             if current_step % self.opt.agg_update_step == 0:
                 if self.opt.grad_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.opt.grad_clip)
                 self.step_and_update_lr(self.optimizer, self.scheduler)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
                 zero_grad(self.optimizer)
 
             self.report_sum = list_add(self.report_sum, step_result)

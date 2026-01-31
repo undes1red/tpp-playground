@@ -85,6 +85,8 @@ class SAHPWrapper(
         """
         super().__init__()
         self.device = device
+        self.device_type = 'cuda' if opt.cuda else 'cpu'
+        self.model_dtype = opt.dtype
         self.use_compile = opt.compile
         self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
@@ -329,7 +331,6 @@ class SAHPWrapper(
             the_number_of_marks,
         )
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(
         self: Self,
         integral_all_marks: torch.Tensor,
@@ -419,6 +420,7 @@ class SAHPWrapper(
             time_history=time_history,
             marks_history=marks_history,
             mask_history=mask_history,
+            resolution=self.integration_sample_rate,
             number_of_total_samples=sample_rate,
             step=mae_step,
             mean=mean,
@@ -892,7 +894,7 @@ class SAHPWrapper(
 
         return log_perplexity
 
-    def train_step(self, minibatch):
+    def train_step(self, minibatch, scaler):
         """
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -921,10 +923,12 @@ class SAHPWrapper(
         time, marks, score, mask = minibatch[0]  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         mean, std = minibatch[1]
 
-        loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
-            "train", time, marks, mask, mean, std
-        )
-        loss.backward()
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
+                "train", time, marks, mask, mean, std
+            )
+
+        scaler.scale(loss).backward()
 
         time_loss_without_dummy = time_loss_without_dummy.item()
         marks_loss = marks_loss.item()
@@ -966,16 +970,17 @@ class SAHPWrapper(
         time, marks, score, mask = minibatch[0]  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         mean, std = minibatch[1]
 
-        (
-            time_loss,
-            loss_survival,
-            marks_loss,
-            mae,
-            acc,
-            macro_f1,
-            micro_f1,
-            the_number_of_marks,
-        ) = self.forward("evaluate", time, marks, mask, mean, std)
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            (
+                time_loss,
+                loss_survival,
+                marks_loss,
+                mae,
+                acc,
+                macro_f1,
+                micro_f1,
+                the_number_of_marks,
+            ) = self.forward("evaluate", time, marks, mask, mean, std)
 
         time_loss = time_loss.item()
         loss_survival = loss_survival.item()

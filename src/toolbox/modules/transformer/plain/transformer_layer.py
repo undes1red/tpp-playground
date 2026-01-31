@@ -75,9 +75,9 @@ class MultiheadAttention(nn.Module):
         self.dropout = nn.Dropout(self.dropout)
 
         # layer normalization
-        self.layer_norm_for_q = nn.RMSNorm(self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype())
+        self.layer_norm_for_q = nn.RMSNorm(self.d_input, eps=1e-6, device=self.device)
         self.layer_norm_for_output = nn.RMSNorm(
-            self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype()
+            self.d_input, eps=1e-6, device=self.device
         )
 
     def forward(self, q, k, v, mask=None):

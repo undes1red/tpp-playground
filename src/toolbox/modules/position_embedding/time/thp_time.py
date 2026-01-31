@@ -25,13 +25,16 @@ class THPTimeEmbedding(nn.Module):
             torch.tensor([item - 1 if item % 2 else item for item in range(0, d_input)], device=self.device)
             * -(torch.log(torch.tensor(10000.0, device=self.device)) / d_input)
         ).exp()
+        self.offset = torch.tensor([torch.pi/2 if idx % 2 == 1 else 0 for idx in range(d_input)], device=self.device, requires_grad=False)
 
         self.register_buffer("div_term", div_term)
 
     def forward(self, interval):
         # interval shape: [batch_size, seq_len]
         scaled_interval = interval.unsqueeze(dim=-1) * self.div_term
-        scaled_interval[..., 0::2] = torch.sin(scaled_interval[..., 0::2])
-        scaled_interval[..., 1::2] = torch.cos(scaled_interval[..., 1::2])
+        return torch.sin(scaled_interval + self.offset)
 
-        return scaled_interval
+if __name__ == "__main__":
+    time_encoder = THPTimeEmbedding(16, 'cpu')
+    time = torch.ones(16, 64) * 1
+    time_emb = time_encoder(time)

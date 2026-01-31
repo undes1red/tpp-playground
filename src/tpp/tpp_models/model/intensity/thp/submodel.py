@@ -10,7 +10,7 @@ from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import move_from_tensor_to_ndarray
 from src.toolbox.modules import softplus_ext
 
-from .his_coder.f_transformers import TransformerTPP
+from .his_coder.transformers import TransformerTPP
 
 
 class THP(nn.Module):

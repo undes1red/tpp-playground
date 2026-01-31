@@ -170,16 +170,16 @@ class GenericDataset(utils.data.Dataset):
         # Pre-allocate numpy arrays for the batch
         padded_time_seq = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
         padded_event = np.full((batch_size, self.max_seq_len), self.number_of_mark, dtype=np.int64)
-        padded_score = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
+        padded_score = np.zeros((batch_size, self.max_seq_len-(1 if self.evaluate else 2)), dtype=np.float32)
         mask = np.zeros((batch_size, self.max_seq_len), dtype=bool)
 
         if self.evaluate:
-            padded_intensity = np.zeros((batch_size, self.max_seq_len), dtype=np.float32)
+            padded_intensity = np.zeros((batch_size, self.max_seq_len-1), dtype=np.float32)
 
         for i, item in enumerate(data):
             padded_time_seq[i, :item[0].size] = item[0]
             padded_event[i, :item[1].size] = item[1]
-            padded_score[i, 1:item[2].size+1] = item[2]
+            padded_score[i, :item[2].size] = item[2]
             mask[i, :item[0].size] = True
             if self.evaluate:
                 padded_intensity[i, :item[3].size] = item[3]

@@ -3,11 +3,11 @@ from .ffn import FFN
 from .llms.vllm_api import CustomOpenAIforVLLM
 from .nonneg_mlp import NonNegLinear
 from .position_embedding import AttNHPTimeEmbedding, PositionalEmbedding, SAHPTimeEmbedding, THPTimeEmbedding
-from .transformer import FMHSA, SelfAttn, TransformerLayer, get_subsequent_mask
+from .transformer import FMHCA, FMHSA, SelfAttn, TransformerLayer, get_subsequent_mask
 
 __all__ = [
     # Transformers
-    "FFN", "TransformerLayer", "get_subsequent_mask", "SelfAttn", "FMHSA",
+    "FFN", "TransformerLayer", "get_subsequent_mask", "SelfAttn", "FMHSA", "FMHCA", 
     # positional embedding
     "PositionalEmbedding",
     # Time embedding

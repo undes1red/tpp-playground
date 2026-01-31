@@ -221,7 +221,8 @@ class SAHP(nn.Module):
         mask_history,
         integration_sample_rate,
         num_dimension_prior_batch=0,
-        time_next_start=None
+        time_next_start=None,
+        time_next_with_resolution_dim=False
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -269,11 +270,16 @@ class SAHP(nn.Module):
         mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
 
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        expanded_time = (time_next - time_next_start).unsqueeze(dim=-1) * time_multiplier + time_next_start.unsqueeze(
-            dim=-1
-        )
-        # [..., batch_size, seq_len, integration_sample_rate]
+        if time_next_with_resolution_dim:
+            expanded_time = time_next
+            # [..., batch_size, seq_len, integration_sample_rate]
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            expanded_time = (time_next - time_next_start).unsqueeze(dim=-1) * time_multiplier + time_next_start.unsqueeze(
+                dim=-1
+            )
+            # [..., batch_size, seq_len, integration_sample_rate]
+
         expanded_hidden_state_at_t = self.state_decay(
             mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
         )
@@ -294,6 +300,7 @@ class SAHP(nn.Module):
         mask_history,
         integration_sample_rate,
         num_dimension_prior_batch=0,
+        time_next_with_resolution_dim=False
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -335,11 +342,16 @@ class SAHP(nn.Module):
         mu = self.converge_layer(history)  # [batch_size, seq_len, d_input]
         gamma = self.decay_layer(history)  # [batch_size, seq_len, d_input]
 
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        # [integration_sample_rate]
-        expanded_time = (
-            time_next.unsqueeze(dim=-1) * time_multiplier
-        )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        if time_next_with_resolution_dim:
+            expanded_time = time_next
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            # [integration_sample_rate]
+            expanded_time = (
+                time_next.unsqueeze(dim=-1) * time_multiplier
+            )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+
         expanded_hidden_state_at_t = self.state_decay(
             mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
         )

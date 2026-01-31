@@ -8,7 +8,7 @@ from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import check_tensor, move_from_tensor_to_ndarray
 from src.toolbox.modules import NonNegLinear
 
-from .his_coder.f_transformers import TransformerTPP
+from .his_coder.transformers import TransformerTPP
 
 
 class TFullyNN(nn.Module):

@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import einsum
@@ -33,7 +34,7 @@ class SelfAttn(nn.Module):
         attn = einsum(q, k, '... slq nh dqk, ... slk nh dqk -> ... nh slq slk')# [batch_size, n_head, seq_len_q, seq_len_k]
 
         if mask is not None:
-            attn = attn.masked_fill(mask.unsqueeze(-3) == 0, -1e9)             # [batch_size, n_head, seq_len_q, seq_len_k]
+            attn = attn.masked_fill(mask.unsqueeze(-3) == 0, -torch.inf)             # [batch_size, n_head, seq_len_q, seq_len_k]
 
         # F.softmax() uses float32 by default.
         # This means it will upcast the input to float32 and the output is also float32.

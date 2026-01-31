@@ -6,18 +6,18 @@ from flash_attn import flash_attn_qkvpacked_func
 from src.toolbox.modules.ffn import FFN
 
 
-class FMHSA(nn.Module):
+class FMHCA(nn.Module):
     def __init__(self, training, n_head, d_input, d_qkv, device, d_hidden, dropout=0.1):
         super().__init__()
         self.training = training
         self.device = device
 
-        self.attn = FMHSALayer(
+        self.attn = FMHCALayer(
             training=training, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=self.device, dropout=dropout
         )
         self.ffn = FFN(d_input=d_input, d_hidden=d_hidden, device=self.device, dropout=dropout)
 
-    def forward(self, x, non_pad_mask=None):
+    def forward(self, q, k, v, non_pad_mask=None):
         """
         Args:
         1. x: input tensor. shape: [batch_size, seq_len, d_input]
@@ -25,7 +25,7 @@ class FMHSA(nn.Module):
         Outputs:
         1. output: results of transformer layer. shape: [batch_size, seq_len, d_input]
         """
-        output = self.attn(x, mask=non_pad_mask)
+        output = self.attn(q, k, v, mask=non_pad_mask)
         # [..., batch_size, seq_len, d_input]
 
         output = self.ffn(output)  # [..., batch_size, seq_len, d_input]
@@ -36,7 +36,7 @@ class FMHSA(nn.Module):
         return output
 
 
-class FMHSALayer(nn.Module):
+class FMHCALayer(nn.Module):
     def __init__(self, training, n_head, d_input, d_qkv, device, dropout=0.1):
         super().__init__()
         self.training = training
@@ -50,7 +50,9 @@ class FMHSALayer(nn.Module):
         self.dropout = dropout if self.training else 0
 
         # Linear: d_input -> d_q, d_k, or d_v
-        self.w_qkv = nn.Linear(d_input, self.d_qkv * self.n_head * 3, bias=True, device=self.device)
+        self.w_q = nn.Linear(d_input, self.d_qkv * self.n_head, bias=True, device=self.device)
+        self.w_k = nn.Linear(d_input, self.d_qkv * self.n_head, bias=True, device=self.device)
+        self.w_v = nn.Linear(d_input, self.d_qkv * self.n_head, bias=True, device=self.device)
 
         # Linear: n_head * d_q, d_k, or d_v -> d_input
         self.fc_attn_output = nn.Linear(self.n_head * d_qkv, self.d_input, bias=True, device=self.device)
@@ -61,7 +63,10 @@ class FMHSALayer(nn.Module):
             self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype()
         )
 
-    def forward(self, x, mask=None):
+        if self.w_qkv.weight.dtype not in [torch.bfloat16, torch.float16]:
+            raise ValueError("Flash Attention only supports bfloat16 and float16.")
+
+    def forward(self, q, k, v, mask=None):
         """
         Args:
         1. x: input tensor. shape: [..., batch_size, seq_len, d_input]

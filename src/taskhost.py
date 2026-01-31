@@ -113,14 +113,15 @@ class TaskHost:
         # Model explicit casting.
         if self.opt.dtype != "float32":
             logger.warning(
-                f"Explicit casting enabled! We will train our model in {self.dict_torch_dtype[self.opt.dtype]}."
+                f"Automatic casting enabled! We will train our model in {self.dict_torch_dtype[self.opt.dtype]}."
             )
             logger.warning(
                 "Training MTPP models using lower precision may cause suboptimal results or even failed training. If your model is sensitive to precision, we recommend to stay on float32."
             )
-            torch.set_default_dtype(self.dict_torch_dtype[self.opt.dtype])
+            self.opt.dtype = self.dict_torch_dtype[self.opt.dtype]
+            # torch.set_default_dtype(self.dict_torch_dtype[self.opt.dtype])
 
-    dict_torch_dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16}
+    dict_torch_dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
 
     def cuda(self: Self) -> None:
         """Check cuda availability. We force using CPU if cuda is unavailable even the user wants to use cuda.

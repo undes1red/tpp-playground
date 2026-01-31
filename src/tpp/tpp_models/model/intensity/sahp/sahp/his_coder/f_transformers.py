@@ -135,7 +135,7 @@ class TransformerTPP(nn.Module):
             device=self.device,
         )
 
-    def forward(self, event_time, event_type, non_pad_mask, custom_marks_history):
+    def forward(self, event_time, event_type, non_pad_mask, custom_marks_history=False):
         """
         Encode the input continuous-time event stream using Transformer.
 
