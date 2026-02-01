@@ -9,6 +9,9 @@ def replace_check(opt, **subdirs_and_marker):
     if opt.replace:
         return True, "" if opt.model_index is None else str(opt.model_index)
 
+    if opt.model_index is None:
+        return True, ""
+
     marker_files_exist_or_not = []
 
     for subdir, marker_file in subdirs_and_marker.items():

@@ -224,7 +224,6 @@ def sampling_by_its_for_tm(
         # [batch_size, seq_len, sample_rate]
         probability_threshold = rearrange(probability_threshold, "b sl sr -> sr b sl")
         # [sample_rate, batch_size, seq_len]
-
         tau_pred.append(
             bisection(
                 self.max_step,

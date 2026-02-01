@@ -173,8 +173,8 @@ class THP(nn.Module):
         expanded_scaled_time = self.alpha * expanded_time.unsqueeze(dim=-1) / reshaped_aggregate_time
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
         intensity_all_mark_pre_softplus = self.linear(history)  # [..., batch_size, seq_len, num_marks]
-        intensity_all_mark_pre_softplus = repeat(
-            intensity_all_mark_pre_softplus, "... ne -> ... r ne", r=self.integration_sample_rate
+        intensity_all_mark_pre_softplus = rearrange(
+            intensity_all_mark_pre_softplus, "... ne -> ... () ne"
         )
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
         all_lambda = softplus_ext(intensity_all_mark_pre_softplus + expanded_scaled_time, F.softplus(self.beta))
@@ -191,7 +191,8 @@ class THP(nn.Module):
         marks_history,
         mask_history,
         integration_sample_rate,
-        time_next_start=None
+        time_next_start=None,
+        time_next_with_resolution_dim=False,
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -231,37 +232,73 @@ class THP(nn.Module):
         if time_next_start is None:
             time_next_start = torch.zeros_like(time_next)  # [..., batch_size, seq_len]
 
+        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+        if time_next_with_resolution_dim:
+            original_expanded_time = time_next
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            original_expanded_time = (time_next - time_next_start).unsqueeze(
+                dim=-1
+            ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
+            # [..., batch_size, seq_len, integration_sample_rate]
+
         history = self.history_encoder(time_history, marks_history, mask_history)
         # [batch_size, seq_len, d_input]
-        einop = f"b s di -> {'() ' * (len(time_next.shape) - 2)} b s () di"
+        einop = f"b s di -> {'() ' * (len(original_expanded_time.shape) - 3)} b s () di"
         history = rearrange(history, einop)  # [..., batch_size, seq_len, 1, d_input]
 
         aggregate_time = time_history.cumsum(dim=-1)  # [batch_size, seq_len]
         # Avoid zero denominator
         aggregate_time = aggregate_time + self.history_time_offset  # [batch_size, seq_len]
-        einop = f"b s -> {'() ' * (len(time_next.shape) - 2)} b s ()"
+        einop = f"b s -> {'() ' * (len(original_expanded_time.shape) - 3)} b s ()"
         aggregate_time = rearrange(aggregate_time, einop)  # [..., batch_size, seq_len, 1]
 
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        expanded_time = (time_next - time_next_start).unsqueeze(dim=-1) * time_multiplier + time_next_start.unsqueeze(
-            dim=-1
-        )
-        # [..., batch_size, seq_len, integration_sample_rate]
-
-        scaled_time = (expanded_time / aggregate_time).unsqueeze(
+        scaled_time = (original_expanded_time / aggregate_time).unsqueeze(
             dim=-1
         )  # [..., batch_size, seq_len, integration_sample_rate, 1]
         expanded_intensity_all_mark = softplus_ext(
             self.linear(history) + self.alpha * scaled_time, beta=F.softplus(self.beta)
         )
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
-        expanded_integral_all_mark = approximate_integration(expanded_intensity_all_mark, expanded_time, dim=-2)
+        expanded_integral_all_mark = approximate_integration(expanded_intensity_all_mark, original_expanded_time, dim=-2)
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
 
-        return expanded_integral_all_mark, expanded_intensity_all_mark, expanded_time
+        # integral offset
+        if original_expanded_time[..., 0].max() == 0:
+            integral_all_marks_from_zero_to_interval_start = torch.zeros_like(expanded_integral_all_mark)
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            zero_to_interval_start_time = (
+                original_expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
+            )  # [..., batch_size, seq_len, integration_sample_rate]
+
+            scaled_zero_to_interval_start_time = (zero_to_interval_start_time / aggregate_time).unsqueeze(
+                dim=-1
+            )  # [..., batch_size, seq_len, integration_sample_rate, 1]
+            intensity_all_marks_from_zero_to_interval_start = softplus_ext(
+                self.linear(history) + self.alpha * scaled_zero_to_interval_start_time, beta=F.softplus(self.beta)
+            )
+            # [..., batch_size, seq_len, integration_sample_rate, num_marks]
+            integral_all_marks_from_zero_to_interval_start = approximate_integration(
+                intensity_all_marks_from_zero_to_interval_start, zero_to_interval_start_time, dim=-2, only_integral=True
+            ).unsqueeze(dim=-2)
+            # [..., batch_size, seq_len, integration_sample_rate, num_marks]
+
+        return (
+            expanded_integral_all_mark + integral_all_marks_from_zero_to_interval_start,
+            expanded_intensity_all_mark,
+            original_expanded_time,
+        )
 
     def integral_intensity_time_next_3d(
-        self, time_history, time_next, marks_history, mask_history, integration_sample_rate
+        self,
+        time_history,
+        time_next,
+        marks_history,
+        mask_history,
+        integration_sample_rate,
+        time_next_start=None,
+        time_next_with_resolution_dim=False,
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -295,23 +332,30 @@ class THP(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         """
+        if time_next_start is None:
+            time_next_start = torch.zeros_like(time_next)  # [..., batch_size, seq_len]
+
         history = self.history_encoder(time_history, marks_history, mask_history)
         # [batch_size, seq_len, d_input]
 
-        # Intensity and integral estimation
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        # [integration_sample_rate]
-        original_expanded_time = time_next.unsqueeze(dim=-1) * time_multiplier
-        # [..., batch_size, seq_len, num_mark, integration_sample_rate]
+        if time_next_with_resolution_dim:
+            original_expanded_time = time_next
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            original_expanded_time = (time_next - time_next_start).unsqueeze(
+                dim=-1
+            ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
+            # [..., batch_size, seq_len, num_mark, integration_sample_rate]
+
         expanded_time = original_expanded_time.unsqueeze(
             dim=-1
         )  # [..., batch_size, seq_len, num_mark, integration_sample_rate, 1]
 
-        history = rearrange(history, f"... -> {'() ' * (len(time_next.shape) - len(time_history.shape) - 1)}...")
+        history = rearrange(history, f"... -> {'() ' * (len(original_expanded_time.shape) - 4)}...")
         # [..., batch_size, seq_len, d_input]
         aggregate_time = rearrange(
             torch.cumsum(time_history, dim=-1),
-            f"... -> {'() ' * (len(time_next.shape) - len(time_history.shape) - 1)}... () () ()",
+            f"... -> {'() ' * (len(original_expanded_time.shape) - 4)}... () () ()",
         )
         # [..., batch_size, seq_len, 1, 1, 1]
         aggregate_time = aggregate_time + self.history_time_offset  # [..., batch_size, seq_len, 1, 1, 1]
@@ -332,7 +376,32 @@ class THP(nn.Module):
         )
         # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
 
-        return expanded_integral_across_all_mark, expanded_intensity_across_all_mark, original_expanded_time
+        # integral offset
+        if original_expanded_time[..., 0].max() == 0:
+            integral_all_marks_from_zero_to_interval_start = torch.zeros_like(expanded_integral_across_all_mark)
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            zero_to_interval_start_time = (
+                original_expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
+            ).unsqueeze(dim=-1)
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
+
+            scaled_zero_to_interval_start_time = (zero_to_interval_start_time / aggregate_time)
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, 1]
+            intensity_all_marks_from_zero_to_interval_start = softplus_ext(
+                intensity_for_each_mark + self.alpha * scaled_zero_to_interval_start_time, beta=F.softplus(self.beta)
+            )
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
+            integral_all_marks_from_zero_to_interval_start = approximate_integration(
+                intensity_all_marks_from_zero_to_interval_start, zero_to_interval_start_time, dim=-2, only_integral=True, func_val_x_having_same_shape=True
+            ).unsqueeze(dim=-2)
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
+
+        return (
+            expanded_integral_across_all_mark + integral_all_marks_from_zero_to_interval_start,
+            expanded_intensity_across_all_mark,
+            original_expanded_time,
+        )
 
     def model_probe_function(
         self, time_history, time_next, marks_history, mask_history, mask_next, integration_sample_rate

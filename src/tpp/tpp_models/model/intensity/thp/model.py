@@ -105,6 +105,8 @@ class THPWrapper(
         """
         super().__init__()
         self.device = device
+        self.device_type = "cuda" if opt.cuda else "cpu"
+        self.model_dtype = opt.dtype
         self.use_compile = opt.compile
         self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
@@ -117,7 +119,7 @@ class THPWrapper(
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-8
+        self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
 
         self.model = THP(
@@ -433,8 +435,9 @@ class THPWrapper(
         std: float,
         sample_rate: int,
         mae_step: int,
-        evaluation: bool = True,
         get_time_sample: bool = False,
+        evaluation: bool = True,
+        resolution: int = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next mark prediction from the THP by MAE and F1.
         This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
@@ -458,14 +461,17 @@ class THPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
+        inf_val = mean + 10 * std
         pred_time = self.sample_time(
             sampling_approach="its",
             task="tm",
             time_history=time_history,
             marks_history=marks_history,
             mask_history=mask_history,
+            resolution=self.integration_sample_rate if resolution is None else resolution,
             number_of_total_samples=sample_rate,
             step=mae_step,
+            inf_val=inf_val,
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len]
@@ -520,8 +526,10 @@ class THPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        inf_val, resolution_inf, resolution_between_mark = decide_resolution_inf_and_resolution_between_events(
-            time_history, memory_ceiling, self.num_marks, mean, std
+        inf_val = mean + 10 * std
+        batch_size, seq_len = time_history.shape
+        resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
+            batch_size, seq_len, memory_ceiling, self.num_marks
         )
         mark_distribution = self.get_pm_next_mark(time_history, marks_history, mask_history, inf_val, resolution_inf)
         # [batch_size, seq_len, num_marks]
@@ -533,7 +541,7 @@ class THPWrapper(
             time_history=time_history,
             mask_history=mask_history,
             p_m=mark_distribution,
-            resolution=resolution_between_mark,
+            resolution=resolution_between_marks,
             number_of_total_samples=sample_rate,
             step=mae_e_step,
             inf_val=inf_val,
@@ -876,7 +884,7 @@ class THPWrapper(
 
         generate_debug_figure(data, opt)
 
-    def train_step(self, minibatch):
+    def train_step(self, minibatch, scaler):
         """
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -901,12 +909,16 @@ class THPWrapper(
               The training loss does not and should not include this value.
         """
         self.model.train()
-
         (time, mark, fact, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
         )
-        loss, neg_log_likeli_loss, marker_loss, the_number_of_mark = self.forward("train", time, mark, mask, mean, std)
-        loss.backward()
+
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            loss, neg_log_likeli_loss, marker_loss, the_number_of_mark = self.forward(
+                "train", time, mark, mask, mean, std
+            )
+
+        scaler.scale(loss).backward()
 
         tpp_loss, mark_loss = neg_log_likeli_loss.item(), marker_loss.item()
         fact = fact.sum() / the_number_of_mark
@@ -947,16 +959,17 @@ class THPWrapper(
         (time, mark, fact, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1] & 2 numbers
         )
-        (
-            time_loss,
-            loss_survival,
-            mark_loss,
-            mae,
-            acc,
-            macro_f1,
-            micro_f1,
-            the_number_of_mark,
-        ) = self.forward("evaluate", time, mark, mask, mean, std)
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            (
+                time_loss,
+                loss_survival,
+                mark_loss,
+                mae,
+                acc,
+                macro_f1,
+                micro_f1,
+                the_number_of_mark,
+            ) = self.forward("evaluate", time, mark, mask, mean, std)
 
         time_loss = time_loss.item()
         loss_survival = loss_survival.item()
