@@ -109,7 +109,13 @@ def sampling_by_its_for_mt(
         """
         expanded_integral_across_marks, expanded_intensity_across_marks, timestamp = (
             self.model.integral_intensity_time_next_3d(
-                time_history, taus, marks_history, mask_history, resolution, num_dimension_prior_batch=1, time_next_with_resolution_dim=True
+                time_history,
+                taus,
+                marks_history,
+                mask_history,
+                resolution,
+                num_dimension_prior_batch=1,
+                time_next_with_resolution_dim=True,
             )
         )
         # 2 * [sample_rate, batch_size, seq_len, num_marks, resolution, num_marks] + [sample_rate, batch_size, seq_len, num_marks, resolution]
@@ -125,10 +131,31 @@ def sampling_by_its_for_mt(
         # [sample_rate, batch_size, seq_len, num_marks, resolution]
         expanded_probability_per_mark = expanded_intensity_per_mark * torch.exp(-expanded_integral_sum_across_marks)
         # [sample_rate, batch_size, seq_len, num_marks, resolution]
-        return approximate_integration(
-            expanded_probability_per_mark, timestamp, dim=-1, func_val_x_having_same_shape=True
+        integral_in_picked_interval = approximate_integration(expanded_probability_per_mark, timestamp, dim=-1)
+        # [sample_rate, batch_size, seq_len, num_marks]
+
+        # probability distribution integration offset.
+        expanded_integral_across_marks, expanded_intensity_across_marks, timestamp = (
+            self.model.integral_intensity_time_next_3d(
+                time_history,
+                taus[..., 0],
+                marks_history,
+                mask_history,
+                resolution,
+                num_dimension_prior_batch=1,
+            )
         )
+        expanded_integral_sum_across_marks = expanded_integral_across_marks.sum(dim=-1)
         # [sample_rate, batch_size, seq_len, num_marks, resolution]
+        expanded_intensity_per_mark = (expanded_intensity_across_marks * intensity_mark_mask).sum(dim=-1)
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
+        expanded_probability_per_mark = expanded_intensity_per_mark * torch.exp(-expanded_integral_sum_across_marks)
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
+        integral_offset = approximate_integration(expanded_probability_per_mark, timestamp, dim=-1, only_integral=True)
+        # [sample_rate, batch_size, seq_len, num_marks]
+
+        return integral_in_picked_interval + integral_offset.unsqueeze(dim=-1)
+        # [sample_rate, batch_size, seq_len, num_marks]
 
     def bisect_target(taus, probability_threshold):
         p_mt = evaluate_all_mark(taus)  # [sample_rate, batch_size, seq_len, num_marks, resolution]
@@ -146,7 +173,12 @@ def sampling_by_its_for_mt(
         # [sample_rate, batch_size, seq_len, num_marks]
         tau_pred.append(
             bisection(
-                self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold, resolution=100, r_val=inf_val
+                self.max_step,
+                self.bisect_early_stop_threshold,
+                bisect_target,
+                probability_threshold,
+                resolution=resolution,
+                r_val=inf_val,
             )
         )
         # [sample_rate, batch_size, seq_len, num_marks]
@@ -154,7 +186,7 @@ def sampling_by_its_for_mt(
 
 
 def sampling_by_its_for_tm(
-    self, time_history, marks_history, mask_history, resolution, number_of_total_samples, step, mean, std
+    self, time_history, marks_history, mask_history, resolution, number_of_total_samples, step, inf_val, mean, std
 ):
     sample_rate_list = step_split(number_of_total_samples, step)
 
@@ -192,9 +224,15 @@ def sampling_by_its_for_tm(
         # [batch_size, seq_len, sample_rate]
         probability_threshold = rearrange(probability_threshold, "b sl sr -> sr b sl")
         # [sample_rate, batch_size, seq_len]
+
         tau_pred.append(
             bisection(
-                self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold, resolution=100
+                self.max_step,
+                self.bisect_early_stop_threshold,
+                bisect_target,
+                probability_threshold,
+                resolution=resolution,
+                r_val=inf_val,
             )
         )  # [sample_rate, batch_size, seq_len]
     return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len]

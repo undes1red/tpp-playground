@@ -85,7 +85,7 @@ class SAHPWrapper(
         """
         super().__init__()
         self.device = device
-        self.device_type = 'cuda' if opt.cuda else 'cpu'
+        self.device_type = "cuda" if opt.cuda else "cpu"
         self.model_dtype = opt.dtype
         self.use_compile = opt.compile
         self.compile_backend = opt.compile_backend
@@ -98,9 +98,8 @@ class SAHPWrapper(
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-4
+        self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
-        self.used_models_name = "model"
 
         self.model = SAHP(
             training=training,
@@ -331,6 +330,7 @@ class SAHPWrapper(
             the_number_of_marks,
         )
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(
         self: Self,
         integral_all_marks: torch.Tensor,
@@ -391,6 +391,7 @@ class SAHPWrapper(
         mae_step: int,
         get_time_sample: bool = False,
         evaluation: bool = True,
+        resolution: int = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next mark prediction from the SAHP by MAE and F1.
         This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
@@ -414,15 +415,17 @@ class SAHPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
+        inf_val = mean + 10 * std
         pred_time = self.sample_time(
             sampling_approach="its",
             task="tm",
             time_history=time_history,
             marks_history=marks_history,
             mask_history=mask_history,
-            resolution=self.integration_sample_rate,
+            resolution=self.integration_sample_rate if resolution is None else resolution,
             number_of_total_samples=sample_rate,
             step=mae_step,
+            inf_val=inf_val,
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len]
@@ -477,10 +480,14 @@ class SAHPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
-            time_history, memory_ceiling, self.num_marks, mean, std
+        inf_val = mean + 10 * std
+        batch_size, seq_len = time_history.shape
+        resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
+            batch_size, seq_len, memory_ceiling, self.num_marks
         )
-        mark_distribution = self.get_pm_next_event(time_history, marks_history, mask_history, inf_val, resolution_inf)
+        mark_distribution = self.get_pm_next_event(
+            time_history, marks_history, mask_history, inf_val, resolution_inf
+        )
         # [batch_size, seq_len, num_marks]
 
         tau_sampled_all_mark = self.sample_time(

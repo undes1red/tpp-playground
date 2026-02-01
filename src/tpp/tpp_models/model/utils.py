@@ -116,27 +116,11 @@ resolution_inf and resolution_between_marks.
 """
 
 
-def decide_resolution_inf_and_resolution_between_events(time, memory_ceiling, num_marks, mean, std):
-    # Suggested batch_size: 1
+def decide_resolution_inf_and_resolution_between_events(batch_size, seq_len, memory_ceiling, num_marks):
+    resolution_inf = int(memory_ceiling // (seq_len * num_marks * batch_size))
+    resolution_between_marks = int(memory_ceiling // (seq_len * num_marks * num_marks * batch_size))
 
-    max_ = time.mean() + 10 * time.std() if mean == 0 and std == 1 else mean + 10 * std
-
-    if mean == 0:
-        resolution_between_marks = max(min(int(time.mean().item() // 0.005), 500), 10)
-    else:
-        resolution_between_marks = max(min(int(mean // 0.005), 500), 10)
-
-    max_ = min(1e6, max_)
-    resolution_inf = max(int(max_ // 0.005), 100)
-
-    batch_size, seq_len = time.shape
-    if batch_size * seq_len * resolution_inf * num_marks > memory_ceiling:
-        resolution_inf = int(memory_ceiling // (seq_len * num_marks * batch_size))
-
-    if batch_size * seq_len * resolution_between_marks * num_marks * num_marks > memory_ceiling:
-        resolution_between_marks = int(memory_ceiling // (seq_len * num_marks * num_marks * batch_size))
-
-    return max_, resolution_inf, resolution_between_marks
+    return resolution_inf, resolution_between_marks
 
 
 """
@@ -523,7 +507,7 @@ class NextEventPredictionTimeMarkMixin:
               shape: ```[batch_size, seq_len]```
               Real marks of observed marks.
         """
-        argument_check(opt, **{"sample_rate": int, "mae_step": int})
+        argument_check(opt, **{"sample_rate": int, "mae_step": int, "resolution": int})
 
         input_time, input_marks, input_intensity, mask, mean, std = self.extract_plot_data(input_data)
         time_history, time_next = self.divide_history_and_next(input_time)  # [batch_size, seq_len]
@@ -539,6 +523,7 @@ class NextEventPredictionTimeMarkMixin:
             std=std,
             sample_rate=self.sample_rate,
             mae_step=opt.mae_step,
+            resolution=opt.resolution
         )
         # [batch_size, seq_len] + [batch_size, seq_len, num_marks]
         mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]

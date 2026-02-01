@@ -111,14 +111,14 @@ class TaskHost:
         torch._dynamo.config.cache_size_limit = 25
 
         # Model explicit casting.
-        if self.opt.dtype != "float32":
+        self.opt.dtype = self.dict_torch_dtype[self.opt.dtype]
+        if self.opt.dtype != torch.float32:
             logger.warning(
-                f"Automatic casting enabled! We will train our model in {self.dict_torch_dtype[self.opt.dtype]}."
+                f"Automatic casting enabled! We will train our model in {str(self.opt.dtype)}."
             )
             logger.warning(
                 "Training MTPP models using lower precision may cause suboptimal results or even failed training. If your model is sensitive to precision, we recommend to stay on float32."
             )
-            self.opt.dtype = self.dict_torch_dtype[self.opt.dtype]
             # torch.set_default_dtype(self.dict_torch_dtype[self.opt.dtype])
 
     dict_torch_dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}

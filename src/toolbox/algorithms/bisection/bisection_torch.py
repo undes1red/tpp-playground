@@ -1,5 +1,8 @@
 import torch
 
+from src.toolbox.misc import get_logger
+
+logger = get_logger(__name__)
 
 def bisection_torch(
     max_step,
@@ -8,7 +11,7 @@ def bisection_torch(
     bisect_func,
     threshold,
     *args,
-    l_val=0.0001,
+    l_val=0.0,
     r_val=1e6,
     **kwargs,
 ):
@@ -37,5 +40,7 @@ def bisection_torch(
         if (idx + 1) % check_after_how_many_steps == 0 and \
            torch.abs(right - left).max() < bisect_early_stop_threshold:
             break
+
+    logger.debug(f'{val.mean()}, {val.max()}, {val.min()}')
 
     return (left.squeeze(dim=-1) + right.squeeze(dim=-1)) / 2

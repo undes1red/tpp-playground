@@ -8,7 +8,7 @@ from src.toolbox.algorithms import approximate_integration
 from src.toolbox.metrics import L1_distance_across_marks
 from src.toolbox.misc import move_from_tensor_to_ndarray
 
-from .his_coder.f_transformers import TransformerTPP
+from .his_coder.transformers import TransformerTPP
 
 
 class SAHP(nn.Module):
@@ -135,9 +135,7 @@ class SAHP(nn.Module):
         )
         # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
 
-        duration_t = duration_t.unsqueeze(
-            dim=-1
-        )  # [..., batch_size, seq_len, (integration_sample_rate, num_marks), 1]
+        duration_t = duration_t.unsqueeze(dim=-1)  # [..., batch_size, seq_len, (integration_sample_rate, num_marks), 1]
         return get_cell_states(
             mu, eta, gamma, duration_t
         )  # [..., batch_size, seq_len, (integration_sample_rate, num_marks), d_input]
@@ -222,7 +220,7 @@ class SAHP(nn.Module):
         integration_sample_rate,
         num_dimension_prior_batch=0,
         time_next_start=None,
-        time_next_with_resolution_dim=False
+        time_next_with_resolution_dim=False,
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -275,9 +273,9 @@ class SAHP(nn.Module):
             # [..., batch_size, seq_len, integration_sample_rate]
         else:
             time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-            expanded_time = (time_next - time_next_start).unsqueeze(dim=-1) * time_multiplier + time_next_start.unsqueeze(
+            expanded_time = (time_next - time_next_start).unsqueeze(
                 dim=-1
-            )
+            ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
             # [..., batch_size, seq_len, integration_sample_rate]
 
         expanded_hidden_state_at_t = self.state_decay(
@@ -290,7 +288,39 @@ class SAHP(nn.Module):
         expanded_integral_all_marks = approximate_integration(expanded_intensity_all_marks, expanded_time, dim=-2)
         # [..., batch_size, seq_len, integration_sample_rate, num_marks]
 
-        return expanded_integral_all_marks, expanded_intensity_all_marks, expanded_time
+        # integral offset
+        if expanded_time[..., 0].max() == 0:
+            integral_all_marks_from_zero_to_interval_start = torch.zeros_like(expanded_integral_all_marks)
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            zero_to_interval_start_time = (
+                expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
+            )  # [..., batch_size, seq_len, integration_sample_rate]
+            expanded_hidden_state_at_from_zero_to_interval_start = self.state_decay(
+                mu=mu,
+                eta=eta,
+                gamma=gamma,
+                duration_t=zero_to_interval_start_time,
+                num_dimension_prior_batch=num_dimension_prior_batch,
+            )
+            # [..., batch_size, seq_len, integration_sample_rate, d_input]
+            expanded_intensity_from_zero_to_interval_start = self.intensity_layer(
+                expanded_hidden_state_at_from_zero_to_interval_start
+            )
+            # [..., batch_size, seq_len, integration_sample_rate, num_marks]
+
+            integral_all_marks_from_zero_to_interval_start = approximate_integration(
+                expanded_intensity_from_zero_to_interval_start, zero_to_interval_start_time, dim=-2, only_integral=True
+            )
+            # [..., batch_size, seq_len, num_marks]
+            integral_all_marks_from_zero_to_interval_start = integral_all_marks_from_zero_to_interval_start.unsqueeze(dim=-2)
+            # [..., batch_size, seq_len, integration_sample_rate, num_marks]
+
+        return (
+            expanded_integral_all_marks + integral_all_marks_from_zero_to_interval_start,
+            expanded_intensity_all_marks,
+            expanded_time,
+        )
 
     def integral_intensity_time_next_3d(
         self,
@@ -300,7 +330,8 @@ class SAHP(nn.Module):
         mask_history,
         integration_sample_rate,
         num_dimension_prior_batch=0,
-        time_next_with_resolution_dim=False
+        time_next_start=None,
+        time_next_with_resolution_dim=False,
     ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
@@ -336,6 +367,9 @@ class SAHP(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         """
+        if time_next_start is None:
+            time_next_start = torch.zeros_like(time_next)  # [..., batch_size, seq_len]
+
         history = self.history_encoder(time_history, marks_history, mask_history)
         # [batch_size, seq_len, d_input]
         eta = self.start_layer(history)  # [batch_size, seq_len, d_input]
@@ -348,9 +382,10 @@ class SAHP(nn.Module):
         else:
             time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
             # [integration_sample_rate]
-            expanded_time = (
-                time_next.unsqueeze(dim=-1) * time_multiplier
-            )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+            expanded_time = (time_next - time_next_start).unsqueeze(
+                dim=-1
+            ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate]
 
         expanded_hidden_state_at_t = self.state_decay(
             mu=mu, eta=eta, gamma=gamma, duration_t=expanded_time, num_dimension_prior_batch=num_dimension_prior_batch
@@ -361,7 +396,39 @@ class SAHP(nn.Module):
         expanded_integral_all_marks = approximate_integration(expanded_intensity_all_marks, expanded_time, dim=-2)
         # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
 
-        return expanded_integral_all_marks, expanded_intensity_all_marks, expanded_time
+        # integral offset
+        if expanded_time[..., 0].max() == 0:
+            integral_all_marks_from_zero_to_interval_start = torch.zeros_like(expanded_integral_all_marks)
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            zero_to_interval_start_time = (
+                expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
+            )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+            expanded_hidden_state_at_from_zero_to_interval_start = self.state_decay(
+                mu=mu,
+                eta=eta,
+                gamma=gamma,
+                duration_t=zero_to_interval_start_time,
+                num_dimension_prior_batch=num_dimension_prior_batch,
+            )
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, d_input]
+            expanded_intensity_from_zero_to_interval_start = self.intensity_layer(
+                expanded_hidden_state_at_from_zero_to_interval_start
+            )
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
+
+            integral_all_marks_from_zero_to_interval_start = approximate_integration(
+                expanded_intensity_from_zero_to_interval_start, zero_to_interval_start_time, dim=-2, only_integral=True
+            )
+            # [..., batch_size, seq_len, num_marks, num_marks]
+            integral_all_marks_from_zero_to_interval_start = integral_all_marks_from_zero_to_interval_start.unsqueeze(dim=-2)
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
+
+        return (
+            expanded_integral_all_marks + integral_all_marks_from_zero_to_interval_start,
+            expanded_intensity_all_marks,
+            expanded_time,
+        )
 
     def model_probe_function(
         self, time_history, time_next, marks_history, mask_history, mask_next, integration_sample_rate

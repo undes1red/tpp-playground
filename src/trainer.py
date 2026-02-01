@@ -299,6 +299,7 @@ class Trainer:
         # Write hyperparameters into the model dir.
         hyperparameters = vars(self.opt)
         hyperparameters["device"] = hyperparameters["device"].type
+        delattr(self.opt, 'dtype')
         write_yaml(
             {**hyperparameters, "checkpoint saved at": self.checkpoint_saved_steps},
             self.opt.save_model / self.output_checkpoint_folder,

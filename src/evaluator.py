@@ -3,6 +3,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Self
 
+import torch
+
 from src.toolbox.dataloader import prepare_dataloaders
 from src.toolbox.evaluation import basic_evaluation, basic_evaluation_loop, load_checkpoint, possible_checkpoint_detect
 from src.toolbox.misc import argument_check, get_logger, print_args, read_yaml
@@ -23,6 +25,8 @@ class Evaluator:
             Self: the created evaluator
         """
         self.opt = opt
+        self.device_type = 'cuda' if opt.cuda else 'cpu'
+        self.model_dtype = opt.dtype
         self.opt.replace_index = [""] if opt.replace else possible_checkpoint_detect(opt, opt.model_identifier)
         logger.info(f"Available replace_index: {self.opt.replace_index}.")
 
@@ -97,7 +101,9 @@ class Evaluator:
 
             # Fix module behaviours during evaluation.
             self.model.eval()
-            self.task()
+
+            with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+                self.task()
 
         self.finish_task()
 
