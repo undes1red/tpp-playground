@@ -64,7 +64,7 @@ class BasicTrainerArguments:
             "--n_worker",
             default=8,
             type=int,
-            help="The number of dataloader workers. For most datasets, multiprocessing might speed up the training procedure. But you should set it to lower value, even 0 \
+            help="The number of dataloader workers. For most datasets, multithreading might speed up the training procedure. But you should set it to lower value, even 0 \
                       if you meet 'received 0 items of ancdata' exception.",
         )
         self.parser.add_argument(

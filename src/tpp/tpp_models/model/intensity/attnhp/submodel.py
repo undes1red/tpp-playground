@@ -59,15 +59,9 @@ class AttNHP(nn.Module):
         custom_marks_history=False,
         num_dimension_prior_batch=0,
     ):
-        # calculate the integral
-        time_multiplier = torch.linspace(0, 1, self.integration_sample_rate, device=self.device)
-        expanded_time = (
-            time_next.unsqueeze(dim=-1) * time_multiplier
-        )  # [..., batch_size, seq_len, integration_sample_rate]
-
         hidden_state = self.attn_model(
             time_history,
-            expanded_time,
+            time_next,
             marks_history,
             mask_history,
             custom_marks_history=custom_marks_history,

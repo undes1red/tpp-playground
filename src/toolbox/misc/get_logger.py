@@ -63,7 +63,7 @@ def get_logger_logging(name=None, root=True):
         logger.parent = None
         logger.root = logger
 
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     if logger.hasHandlers():
         logger.handlers.clear()
     # create console handler and set level to debug

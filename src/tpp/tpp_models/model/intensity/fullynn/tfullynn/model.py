@@ -4,9 +4,8 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from src.toolbox.algorithms import approximate_integration
-from src.toolbox.metrics import evaluate_on_one_batch
-from src.toolbox.misc import argument_check, check_tensor, compile_model, pack_one_value_to_dict
+from src.toolbox.algorithms import approximate_integration, evaluate_on_one_batch
+from src.toolbox.misc import argument_check, check_tensor, compile_func, pack_one_value_to_dict
 from src.tpp.tpp_models.model.basic_tpp_model import BasicModel, memory_ceiling
 from src.tpp.tpp_models.model.utils import (
     BalancedSamplingFromDistributionMixin,
@@ -90,23 +89,35 @@ class TFullyNNModel(
         """
         super().__init__()
         self.device = device
-        self.compile_or_not = opt.compile
+        self.device_type = "cuda" if opt.cuda else "cpu"
+        self.model_dtype = opt.dtype
+        self.use_compile = opt.compile
+        self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
         self.start_time = opt.info_dict["t_0"]
         self.end_time = opt.info_dict["T"]
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-4
+        self.bisect_early_stop_threshold = 1e-5
         self.epsilon = 1e-20
         self.survival_loss_during_training = survival_loss_during_training
         self.max_step = 50
 
         self.model = TFullyNN(
-            training, d_intensity, self.num_marks, dropout, d_hidden, n_layers, n_head, d_qkv, mlp_layers, device
+            training,
+            self.use_compile,
+            self.compile_backend,
+            d_intensity,
+            self.num_marks,
+            dropout,
+            d_hidden,
+            n_layers,
+            n_head,
+            d_qkv,
+            mlp_layers,
+            device,
         )
-
-        self.model = compile_model(self.model, opt.compile, opt.compile_backend, fullgraph=False)
 
     def divide_history_and_next(self, input_data):
         """
@@ -305,16 +316,12 @@ class TFullyNNModel(
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
         results = evaluate_on_one_batch(
-            pred_mark,
-            marks_next,
-            mask_next_without_dummy,
-            ["acc", "macro-f1", "micro-f1"],
-            multiprocessing=True,
-            num_workers=4,
+            pred_mark, marks_next, mask_next_without_dummy, ["acc", "macro-f1", "micro-f1"], num_classes=self.num_marks
         )
-        acc = results["acc"].mean()
-        macro_f1 = results["macro-f1"].mean()
-        micro_f1 = results["micro-f1"].mean()
+
+        acc = results["acc"].mean().item()
+        macro_f1 = results["macro-f1"].mean().item()
+        micro_f1 = results["micro-f1"].mean().item()
 
         # preparing for multi-event training when needed
         integral_for_each_mark, intensity_for_each_mark = self.model(
@@ -347,6 +354,7 @@ class TFullyNNModel(
             the_number_of_marks,
         )
 
+    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def loss_function(
         self: Self,
         integral_all_marks: torch.Tensor,
@@ -406,15 +414,20 @@ class TFullyNNModel(
         mae_step: int,
         get_time_sample: bool = False,
         evaluation: bool = True,
+        resolution: int = 10,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        inf_val = mean + 10 * std
+
         pred_time = self.sample_time(
             sampling_approach="its",
             task="tm",
             time_history=time_history,
             marks_history=marks_history,
             mask_history=mask_history,
+            resolution=resolution,
             number_of_total_samples=sample_rate,
             step=mae_step,
+            inf_val=inf_val,
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len]
@@ -467,8 +480,10 @@ class TFullyNNModel(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
-            time_history, memory_ceiling, self.num_marks, mean, std
+        inf_val = mean + 10 * std
+        batch_size, seq_len = time_history.shape
+        resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
+            batch_size, seq_len, memory_ceiling, self.num_marks
         )
 
         mark_distribution = self.get_pm_next_event(
@@ -536,7 +551,7 @@ class TFullyNNModel(
             expanded_intensity_all_marks_to_inf,
             timestamp,
         ) = self.model.integral_intensity_time_next_2d(
-            time_history, time_next_inf, marks_history, mask_history, resolution_inf, mean, std
+            time_history, time_next_inf, marks_history, mask_history, mean, std, resolution=resolution_inf
         )
         # 2 * [batch_size, seq_len, resolution, num_marks]
         expanded_probability_inf = (
@@ -548,10 +563,10 @@ class TFullyNNModel(
         # [batch_size, seq_len, num_marks]
 
     def probability_time_next_2d(
-        self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
+        self, time_history, time_next, marks_history, mask_history, resolution, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
+            time_history, time_next, marks_history, mask_history, mean, std, resolution=resolution
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 
@@ -613,7 +628,7 @@ class TFullyNNModel(
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history, time_next, marks_history, mask_history, opt.resolution, mean, std
+            time_history, time_next, marks_history, mask_history, mean, std, resolution=opt.resolution
         )
         # 3 * [batch_size, seq_len, resolution, num_marks]
         check_tensor(expand_integral)
@@ -659,7 +674,7 @@ class TFullyNNModel(
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history, time_next, marks_history, mask_history, opt.resolution, mean, std
+            time_history, time_next, marks_history, mask_history, mean, std, resolution=opt.resolution
         )
         # 3 * [batch_size, seq_len, resolution, num_marks]
         check_tensor(expand_integral)
@@ -705,7 +720,7 @@ class TFullyNNModel(
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len]
 
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history, time_next, marks_history, mask_history, opt.resolution, mean, std
+            time_history, time_next, marks_history, mask_history, mean, std, resolution=opt.resolution
         )
         # 3 * [batch_size, seq_len, resolution, num_marks]
         check_tensor(expand_integral)
@@ -787,7 +802,7 @@ class TFullyNNModel(
         # [batch_size, seq_len, num_marks]
         pred_time = (pred_time_all_marks * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_marks]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2)
+        top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2, num_classes=self.num_marks)
         # [batch_size, num_marks]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
 
@@ -808,7 +823,7 @@ class TFullyNNModel(
 
         generate_debug_figure(data, opt)
 
-    def train_step(self, minibatch):
+    def train_step(self, minibatch, scaler):
         """
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -835,11 +850,12 @@ class TFullyNNModel(
         self.train()
 
         [time_seq, mark_seq, score, mask], (mean, std) = minibatch
-        loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
-            task_name="train", input_time=time_seq, input_marks=mark_seq, mask=mask, mean=mean, std=std
-        )
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
+                task_name="train", input_time=time_seq, input_marks=mark_seq, mask=mask, mean=mean, std=std
+            )
 
-        loss.backward()
+        scaler.scale(loss).backward()
 
         time_loss_without_dummy = time_loss_without_dummy.item()
         marks_loss = marks_loss.item()

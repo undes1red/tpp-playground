@@ -3,12 +3,13 @@ name = "tpp-playground"
 version = "1.0.0"
 description = "Main coderepo of MTPP models."
 readme = "README.md"
-requires-python = "==3.13.*"
+requires-python = "==3.14.*"
 
 [dependency-groups]
 base = [
-    "torch==2.9.1",
+    "torch==2.10.0",
     "torchvision",
+    "torchmetrics",
     "pyarrow",
     "flash_attn",
     "numpy",
@@ -31,13 +32,13 @@ base = [
 ]
 
 optional = [
-    "wandb",
+    # "wandb",
 ]
 
 llm = [
     "openai",
-    "vllm",
-    "flashinfer-python",
+    # "vllm",
+    # "flashinfer-python",
     "ninja"
 ]
 
@@ -47,6 +48,7 @@ llm = [
 default-groups = ["base", "optional", "llm"]
 no-build-isolation-package = ["flash_attn"]
 extra-build-variables = { "flash-attn" = { "MAX_JOBS" = "2", "NVCC_THREADS" = "4" } }
+python-preference = "only-managed"
 
 # Install pytorch from the official pytorch repo.
 [tool.uv.sources]

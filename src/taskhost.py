@@ -10,7 +10,6 @@ import torch
 
 from src.toolbox.misc import get_logger, version_check
 
-# The TaskHost executes tasks using pytorch.multiprocessing. Credits to the neural_stpp created by RTQ Chen from Facebook.
 logger = get_logger("TaskHost")
 
 

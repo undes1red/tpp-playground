@@ -10,7 +10,6 @@ from tqdm import tqdm
 
 from src.toolbox.dataloader import prepare_dataloaders
 from src.toolbox.list_operation import list_add, list_div
-from src.toolbox.metrics import Metric
 from src.toolbox.misc import (
     compile_func,
     cycle,
@@ -22,6 +21,7 @@ from src.toolbox.misc import (
     read_yaml,
     write_yaml,
 )
+from src.toolbox.modules import Metric
 from src.toolbox.optimizer import (
     generate_optimizer_scheduler,
     get_lr,

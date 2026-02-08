@@ -1,11 +1,8 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from einops import rearrange
-from scipy.stats import spearmanr
 
-from src.toolbox.algorithms import approximate_integration
-from src.toolbox.metrics import L1_distance_across_marks
+from src.toolbox.algorithms import approximate_integration, evaluate_on_one_batch
 from src.toolbox.misc import move_from_tensor_to_ndarray
 
 from .his_coder.transformers import TransformerTPP
@@ -491,48 +488,21 @@ class SAHP(nn.Module):
             expanded_integral_all_marks  # [batch_size, seq_len, integration_sample_rate, num_marks]
         )
 
-        expand_intensity = rearrange(expanded_intensity_all_marks, "b s r ne -> b (s r) ne")
-        # [batch_size, seq_len * integration_sample_rate, num_mark]
-        expand_integral = rearrange(expanded_integral_all_marks, "b s r ne -> b (s r) ne")
-        # [batch_size, seq_len * integration_sample_rate, num_mark]
+        probability_distribution = expanded_intensity_all_marks * torch.exp(-expanded_integral_all_marks.sum(dim=-1, keepdim=True))
+        # [batch_size, seq_len, integration_sample_rate, num_mark]
 
-        spearman_matrix = []
-        pearson_matrix = []
-        l1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) in enumerate(
-            zip(expand_intensity, expand_integral, mask_next, expanded_time)
-        ):
-            seq_len = mask_per_seq.sum()
-            probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
-            probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
+        results = evaluate_on_one_batch(
+            probability_distribution,
+            dim_input=-3,
+            mask=mask_next,
+            evaluate_func=["spearman_self", "pearson_self", "l1_self"],
+            additional_inputs=[
+                expanded_time,
+            ],
+        )
 
-            # rho: spearman coefficient
-            if self.num_marks == 1:
-                spearman_matrix_per_seq = np.array([[1.0]])
-            else:
-                spearman_matrix_per_seq = spearmanr(probability_distribution[: seq_len * integration_sample_rate])[0]
-                if self.num_marks == 2:
-                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
-
-            # r: pearson coefficient
-            pearson_matrix_per_seq = np.corrcoef(
-                probability_distribution[: seq_len * integration_sample_rate], rowvar=False
-            )
-            if self.num_marks == 1:
-                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), " -> () ()")
-
-            # L^1 metric
-            l1_matrix_per_seq = L1_distance_across_marks(
-                probability_distribution[: seq_len * integration_sample_rate],
-                time_next=expanded_time_per_seq[:seq_len],
-                has_flatten=True,
-            )
-            spearman_matrix.append(spearman_matrix_per_seq)
-            pearson_matrix.append(pearson_matrix_per_seq)
-            l1_matrix.append(l1_matrix_per_seq)
-
-        data["spearman_matrix"] = spearman_matrix
-        data["pearson_matrix"] = pearson_matrix
-        data["L1_matrix"] = l1_matrix
+        data["spearman_matrix"] = move_from_tensor_to_ndarray(results['spearman_self'])
+        data["pearson_matrix"] = move_from_tensor_to_ndarray(results['pearson_self'])
+        data["L1_matrix"] = move_from_tensor_to_ndarray(results['l1_self'])
 
         return data, expanded_time

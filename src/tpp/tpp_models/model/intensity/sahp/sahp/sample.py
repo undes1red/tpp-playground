@@ -155,7 +155,7 @@ def sampling_by_its_for_mt(
         # [sample_rate, batch_size, seq_len, num_marks]
 
         return integral_in_picked_interval + integral_offset.unsqueeze(dim=-1)
-        # [sample_rate, batch_size, seq_len, num_marks]
+        # [sample_rate, batch_size, seq_len, num_marks, resolution]
 
     def bisect_target(taus, probability_threshold):
         p_mt = evaluate_all_mark(taus)  # [sample_rate, batch_size, seq_len, num_marks, resolution]

@@ -7,11 +7,12 @@ import torch
 from einops import pack, rearrange, repeat
 from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 
-from src.toolbox.metrics import evaluate_on_one_batch
+from src.toolbox.algorithms import evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     break_batched_inputs_into_seqs,
     check_should_we_stop_sampling,
+    move_from_tensor_to_list,
     move_from_tensor_to_ndarray,
 )
 from src.tpp.tpp_models.resources import expand_true_probability
@@ -306,8 +307,18 @@ def pick_log_probability(log_probability, last_index, seq_len_x):
 """
 Mixins
 """
+
+
 class SeqGenTimeMarkMixin:
-    def sample_time_mark(self, time_history_for_sampling, marks_history_for_sampling, mean, std, end_sampling_requirement="time", **kwargs):
+    def sample_time_mark(
+        self,
+        time_history_for_sampling,
+        marks_history_for_sampling,
+        mean,
+        std,
+        end_sampling_requirement="time",
+        **kwargs,
+    ):
         """
         This function will sample x sequences by the learned probability distribution following the time-mark prediction procedure.
         Steps:
@@ -319,7 +330,7 @@ class SeqGenTimeMarkMixin:
             time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device=self.device)
             # [number_of_sampled_sequences, 1]
             marks_history_for_sampling = (
-                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int32) * self.num_marks
+                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int64) * self.num_marks
             )
             # [number_of_sampled_sequences, 1]
         else:
@@ -359,7 +370,15 @@ class SeqGenTimeMarkMixin:
 
 
 class SeqGenMarkTimeMixin:
-    def sample_mark_time(self, time_history_for_sampling, marks_history_for_sampling, mean, std, end_sampling_requirement="time", **kwargs):
+    def sample_mark_time(
+        self,
+        time_history_for_sampling,
+        marks_history_for_sampling,
+        mean,
+        std,
+        end_sampling_requirement="time",
+        **kwargs,
+    ):
         """
         This function will sample x sequences by the learned probability distribution following the time-mark prediction procedure.
         Steps:
@@ -371,7 +390,7 @@ class SeqGenMarkTimeMixin:
             time_history_for_sampling = torch.zeros((number_of_sampled_sequences, 1), device=self.device)
             # [number_of_sampled_sequences, 1]
             marks_history_for_sampling = (
-                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int32) * self.num_marks
+                torch.ones((number_of_sampled_sequences, 1), device=self.device, dtype=torch.int64) * self.num_marks
             )
             # [number_of_sampled_sequences, 1]
         else:
@@ -448,23 +467,19 @@ class SpearmanL1EvaluationMixin:
             time_next=time_next,
             marks_history=marks_history,
             mask_history=mask_history,
-            integration_sample_rate=opt.resolution,
+            resolution=opt.resolution,
             mean=mean,
-            std=std
+            std=std,
         )  # [batch_size, seq_len, resolution, num_marks] + [batch_size, seq_len, resolution]
         expand_probability = expand_probability.sum(dim=-1)  # [batch_size, seq_len, resolution]
         true_probability = expand_true_probability(time_next, input_intensity, opt)
         # [batch_size, seq_len, resolution] or batch_size * None
 
-        expand_probability, true_probability, timestamp = move_from_tensor_to_ndarray(
-            expand_probability, true_probability, timestamp
-        )
-        spearman = evaluate_on_one_batch(expand_probability, true_probability, mask_next, "spearman", -2, -2, -1)
-        l1 = evaluate_on_one_batch(
+        results = evaluate_on_one_batch(
             expand_probability,
             true_probability,
             mask_next,
-            "l1",
+            ["spearman", "l1"],
             -2,
             -2,
             -1,
@@ -473,7 +488,7 @@ class SpearmanL1EvaluationMixin:
             ],
         )
 
-        return spearman.tolist(), l1.tolist()
+        return move_from_tensor_to_list(results["spearman"], results["l1"])
 
 
 class NextEventPredictionTimeMarkMixin:
@@ -523,13 +538,19 @@ class NextEventPredictionTimeMarkMixin:
             std=std,
             sample_rate=self.sample_rate,
             mae_step=opt.mae_step,
-            resolution=opt.resolution
+            resolution=opt.resolution,
         )
         # [batch_size, seq_len] + [batch_size, seq_len, num_marks]
         mae = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
         mae = mae.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next,
+            ["acc", "macro-f1", "micro-f1"],
+            num_classes=opt.info_dict["num_marks"],
+        )
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]
@@ -601,7 +622,13 @@ class NextEventPredictionMarkTimeMixin:
         mae_e = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
         mae_e = mae_e.sum(dim=-1) / mask_next.sum(dim=-1)
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
-        results = evaluate_on_one_batch(pred_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(
+            pred_mark,
+            marks_next,
+            mask_next,
+            ["acc", "macro-f1", "micro-f1"],
+            num_classes=opt.info_dict["num_marks"],
+        )
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]
@@ -690,11 +717,19 @@ class GetWhichEventFirstMixin:
         )
         # [batch_size, seq_len, num_marks]
 
-        predicted_time, predicted_mark = pred_time_all_marks.min(dim=-1)  # [batch_size, seq_len] + [batch_size, seq_len]
+        predicted_time, predicted_mark = pred_time_all_marks.min(
+            dim=-1
+        )  # [batch_size, seq_len] + [batch_size, seq_len]
         maes = torch.abs(time_next - predicted_time) * mask_next  # [batch_size, seq_len]
         maes = maes.sum(dim=-1) / mask_next.sum(dim=-1)  # [batch_size]
 
-        results = evaluate_on_one_batch(predicted_mark, marks_next, mask_next, ["acc", "macro-f1", "micro-f1"])
+        results = evaluate_on_one_batch(
+            predicted_mark,
+            marks_next,
+            mask_next,
+            ["acc", "macro-f1", "micro-f1"],
+            num_classes=opt.info_dict["num_marks"],
+        )
         acc = results["acc"]
         macro_f1 = results["macro-f1"]
         micro_f1 = results["micro-f1"]

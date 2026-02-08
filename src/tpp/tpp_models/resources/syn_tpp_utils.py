@@ -322,11 +322,11 @@ def stationary_renewal_probability(time, intensity, opt, device):
 
     from scipy.stats import lognorm
 
-    time_multiplier = torch.linspace(0, 1, resolution, device=device)  # [resolution]
-    expand_time = time_multiplier * time.unsqueeze(-1)  # [batch_size, seq_len, resolution]
-    distribution_values = lognorm.pdf(move_from_tensor_to_ndarray(expand_time), s=s, scale=np.exp(mu))
+    time_multiplier = np.linspace(0, 1, resolution)  # [resolution]
+    expand_time = time_multiplier * move_from_tensor_to_ndarray(time.unsqueeze(dim=-1))  # [batch_size, seq_len, resolution]
+    distribution_values = lognorm.pdf(expand_time, s=s, scale=np.exp(mu))
     # [batch_size, seq_len, resolution]
-    return torch.from_numpy(distribution_values)  # [batch_size, seq_len, resolution]
+    return torch.from_numpy(distribution_values).to(device)  # [batch_size, seq_len, resolution]
 
 
 """

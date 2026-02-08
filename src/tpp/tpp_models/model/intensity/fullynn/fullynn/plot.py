@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.toolbox.metrics import L1_distance_between_two_funcs
+from src.toolbox.metrics.np.l1 import L1_distance_between_two_funcs
 from src.toolbox.misc import get_logger, move_from_tensor_to_ndarray, save_fig, stable_palette
 from src.tpp.tpp_models.model.utils import (
     draw_heatmap,
@@ -349,7 +349,7 @@ def generate_debug_figure(data, opt):
     # Part 6: plot for Top-K accuracy
     # Required plots: lineplot
     top_k = data["top_k"]  # [batch_size, num_marks - 1]
-    for idx, top_k_per_seq in enumerate(top_k):
+    for idx, top_k_per_seq in enumerate(move_from_tensor_to_ndarray(top_k)):
         data_top_k_per_seq = {
             "K": np.arange(1, max(num_marks, 2)),
             "Accuracy": top_k_per_seq,

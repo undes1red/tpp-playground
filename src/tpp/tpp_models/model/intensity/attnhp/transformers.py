@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from einops import rearrange, repeat
@@ -11,8 +12,6 @@ class TransformerTPP(nn.Module):
     def __init__(
         self,
         training,
-        m,
-        M,
         num_marks,
         device,
         d_input,
@@ -119,6 +118,37 @@ class Encoder(nn.Module):
         expanded_time = (
             time_next.unsqueeze(dim=-1) * time_multiplier
         )  # [..., batch_size, seq_len, integration_sample_rate]
+        expanded_time_emb = self.time_emb(expanded_time)
+        # [..., batch_size, seq_len, integration_sample_rate, d_input]
+
+        marks_history_emb = self.mark_emb(marks_history)
+        # [batch_size, seq_len, d_input]
+        time_history_emb = self.time_emb(time_history)
+        # [batch_size, seq_len, d_input]
+        history_emb = repeat(marks_history_emb + time_history_emb, "b s d -> b s r d", r=integration_sample_rate)
+        # [batch_size, seq_len, integration_sample_rate, d_input]
+
+        """
+        Flat the history and expanded_time_emb for attention.
+        """
+        history_emb = rearrange(history_emb, "b s r d -> (b r) s d")
+        # [batch_size * integration_sample_rate, seq_len, d_input]
+        expanded_time_emb = rearrange(expanded_time_emb, "... b s r d -> ... (b r) s d")
+        # [..., batch_size * integration_sample_rate, seq_len, d_input]
+
+        # handling dimension before batch_size.
+        if len(expanded_time_emb.shape) > 3:
+            additional_shape = expanded_time.shape[:-3]
+            numbers_before_batch_size = math.prod(additional_shape)
+            history_emb = repeat(history_emb, "b s d -> (d b) s d", d=numbers_before_batch_size)
+            # [... * batch_size * integration_sample_rate, seq_len, d_input]
+            einop = f"{' '.join([f'a{idx}' for idx in range(len(additional_shape))])} b ... -> ({' '.join([f'a{idx}' for idx in range(len(additional_shape))])} b) ..."
+            expanded_time = rearrange(
+                expanded_time, einop
+            )
+            # [... * batch_size * integration_sample_rate, seq_len, d_input]
+
+        
 
         sample_time = rearrange(
             time_next, "... b s sr -> ... sr () b s"

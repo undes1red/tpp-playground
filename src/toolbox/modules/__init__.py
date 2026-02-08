@@ -1,11 +1,14 @@
 from .activations import ScaledTanh, softplus_ext
 from .ffn import FFN
-from .llms.vllm_api import CustomOpenAIforVLLM
+from .metric import Metric
+
+# from .llms.vllm_api import CustomOpenAIforVLLM
 from .nonneg_mlp import NonNegLinear
 from .position_embedding import AttNHPTimeEmbedding, PositionalEmbedding, SAHPTimeEmbedding, THPTimeEmbedding
 from .transformer import FMHCA, FMHSA, SelfAttn, TransformerLayer, get_subsequent_mask
 
 __all__ = [
+    "Metric",
     # Transformers
     "FFN", "TransformerLayer", "get_subsequent_mask", "SelfAttn", "FMHSA", "FMHCA", 
     # positional embedding
@@ -17,5 +20,5 @@ __all__ = [
     # activations
     "ScaledTanh", "softplus_ext",
     # vllm-backed LLM loader.
-    "CustomOpenAIforVLLM"
+    # "CustomOpenAIforVLLM"
 ]

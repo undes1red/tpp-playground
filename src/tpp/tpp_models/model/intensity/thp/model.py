@@ -4,8 +4,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from src.toolbox.algorithms import approximate_integration
-from src.toolbox.metrics import evaluate_on_one_batch
+from src.toolbox.algorithms import approximate_integration, evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     check_tensor,
@@ -333,13 +332,12 @@ class THPWrapper(
             marks_next,
             mask_next_without_dummy,
             ["acc", "macro-f1", "micro-f1"],
-            multiprocessing=True,
-            num_workers=4,
+            num_classes=self.num_marks
         )
 
-        acc = results["acc"].mean()
-        macro_f1 = results["macro-f1"].mean()
-        micro_f1 = results["micro-f1"].mean()
+        acc = results["acc"].mean().item()
+        macro_f1 = results["macro-f1"].mean().item()
+        micro_f1 = results["micro-f1"].mean().item()
 
         integral_all_mark_time_next, intensity_all_mark_time_next = self.model(
             time_history, time_next, marks_history, mask_history
@@ -607,10 +605,10 @@ class THPWrapper(
 
     @torch.inference_mode()
     def probability_time_next_2d(
-        self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
+        self, time_history, time_next, marks_history, mask_history, resolution, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
-            time_history, time_next, marks_history, mask_history, integration_sample_rate
+            time_history, time_next, marks_history, mask_history, resolution
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 
@@ -863,7 +861,7 @@ class THPWrapper(
         # [batch_size, seq_len, num_marks]
         pred_time = (pred_time_all_marks * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_marks]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2)
+        top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2, num_classes=self.num_marks)
         # [batch_size, num_marks]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
 
