@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 from einops import rearrange
 
@@ -16,6 +15,7 @@ class TransformerLayer(nn.Module):
             n_head=n_head, d_input=d_input, d_qk=d_qk, d_v=d_v, device=self.device, dropout=dropout
         )
         self.ffn = FFN(d_input=d_input, d_hidden=d_hidden, device=self.device, dropout=dropout)
+        self.layer_norm = nn.RMSNorm(d_input, eps=1e-6, device=self.device)
 
     def forward(self, q, k=None, v=None, self_attn_mask=None, non_pad_mask=None):
         """
@@ -26,13 +26,22 @@ class TransformerLayer(nn.Module):
         Outputs:
         """
         if k is None and v is None:
+            residual = q
+            q = self.layer_norm(q)  # [batch_size, seq_len, n_head, d_qk]
             output, attn = self.attn(
                 q, q, q, mask=self_attn_mask
             )  # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+            output = residual + output
         else:
+            residual = q
+            q = self.layer_norm(q)  # [batch_size, seq_len, n_head, d_qk]
+            k = self.layer_norm(k)  # [batch_size, seq_len, n_head, d_qk]
+            v = self.layer_norm(v)  # [batch_size, seq_len, n_head, d_qk]
+
             output, attn = self.attn(
                 q, k, v, mask=self_attn_mask
             )  # [batch_size, seq_len, d_input] & [batch_size, n_head, seq_len, seq_len]
+            output = residual + output
 
         if non_pad_mask is not None:
             output *= rearrange(non_pad_mask, "... -> ... 1")  # [batch_size, seq_len, d_input]
@@ -74,12 +83,6 @@ class MultiheadAttention(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(self.dropout)
 
-        # layer normalization
-        self.layer_norm_for_q = nn.RMSNorm(self.d_input, eps=1e-6, device=self.device)
-        self.layer_norm_for_output = nn.RMSNorm(
-            self.d_input, eps=1e-6, device=self.device
-        )
-
     def forward(self, q, k, v, mask=None):
         """
         Args:
@@ -91,9 +94,6 @@ class MultiheadAttention(nn.Module):
         1. output: results of transformer layer. shape: [batch_size, seq_len, d_output]
         2. attn: self attention value. shape: [batch_size, n_head, seq_len, seq_len]
         """
-
-        residual = q
-        q = self.layer_norm_for_q(q)  # [batch_size, seq_len, n_head, d_qk]
 
         # preparing for q, k, and v.
         q = rearrange(self.w_q(q), "... (nh dq) -> ... nh dq", nh=self.n_head)
@@ -109,8 +109,5 @@ class MultiheadAttention(nn.Module):
         output = rearrange(output, "...  nh dv -> ... (nh dv)", nh=self.n_head)
         # [batch_size, seq_len, n_head * d_v]
         output = self.dropout(self.fc_attn_output(output))  # [batch_size, seq_len, d_output]
-        output += residual
-
-        output = self.layer_norm_for_output(output)  # [batch_size, seq_len, d_output]
 
         return output, attn

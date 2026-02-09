@@ -30,21 +30,31 @@ class AttNHPTimeEmbedding(nn.Module):
 
         return div_term.exp()
 
-    def forward(self, interval, dim_before_batch_size=0):
-        if len(interval) - 2 - dim_before_batch_size > 1:
-            raise ValueError('Unexpected dim found in interval.')
+    def forward(self, interval, resolution_dim=False):
+        event_time = interval[..., -1] if resolution_dim else interval  # [..., batch_size, seq_len]
 
-        # interval shape: [..., batch_size, seq_len, (integation_sample_rate)]
-        m = interval.min(dim=-1).values  # [..., batch_size]
-        M = interval.cumsum(dim=-1)[:, -1]  # [..., batch_size]
-        scaled_interval = interval.unsqueeze(dim=-1) * rearrange(
-            self.get_div_term(m, M), f"... b d -> ... b () {'()' if (len(interval) - 2 - dim_before_batch_size) == 1 else ''} d"
-        )  # [..., batch_size, seq_len, (integation_sample_rate), d_input]
+        # interval shape: [..., batch_size, seq_len]
+        m = torch.where(event_time == 0, torch.inf, event_time).min(dim=-1).values  # [..., batch_size]
+        M = event_time.cumsum(dim=-1)[..., -1]  # [..., batch_size]
+        scaled_interval = interval.unsqueeze(dim=-1) * \
+            rearrange(self.get_div_term(m, M), f'... b d -> ... b () {"()" if resolution_dim else ""} d')
+        # [..., d_input]
 
         return torch.sin(scaled_interval + self.offset)
 
 
 if __name__ == "__main__":
     time_encoder = AttNHPTimeEmbedding(16, "cpu")
-    time = torch.ones(16, 64) * 1
+    time = torch.ones(32, 64) * 1
     time_emb = time_encoder(time)
+    print(time_emb.shape)
+
+    time_encoder = AttNHPTimeEmbedding(16, "cpu")
+    time = torch.ones(32, 64, 100) * 1
+    time_emb_1 = time_encoder(time, resolution_dim=True)
+    print(time_emb.shape)
+
+    time_encoder = AttNHPTimeEmbedding(16, "cpu")
+    time = torch.ones(2, 32, 64, 100) * 1
+    time_emb_2 = time_encoder(time, resolution_dim=True)
+    print(time_emb.shape)

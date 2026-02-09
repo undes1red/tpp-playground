@@ -1,5 +1,4 @@
-import argparse
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import torch
 import torch.nn.functional as F
@@ -32,6 +31,9 @@ from .plot import (
 )
 from .sample import sample_time
 from .submodel import SAHP
+
+if TYPE_CHECKING:
+    import argparse
 
 
 class SAHPWrapper(
@@ -115,7 +117,6 @@ class SAHPWrapper(
 
         self.model = compile_model(self.model, self.use_compile, self.compile_backend)
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self: Self, input_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Extract the history and prediction sequences from the input sequence.
 
@@ -129,7 +130,6 @@ class SAHPWrapper(
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy events by altering the mask.
 

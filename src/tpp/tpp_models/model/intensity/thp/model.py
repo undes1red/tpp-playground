@@ -137,7 +137,6 @@ class THPWrapper(
 
         self.model = compile_model(self.model, opt.compile, opt.compile_backend)
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self, input_data):
         """
         Extract the history and prediction sequences from the input sequence.
@@ -158,7 +157,6 @@ class THPWrapper(
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy marks by altering the mask.
 

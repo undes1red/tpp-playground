@@ -92,7 +92,7 @@ class Encoder(nn.Module):
             mark_emb = event_type if custom_mark_history else self.event_emb(event_type)
         # [batch_size, seq_len, d_input]
         else:
-            mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
+            mark_emb = torch.zeros_like(time_emb)  # [batch_size, seq_len, d_input]
 
         output = time_emb + mark_emb + pos_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:

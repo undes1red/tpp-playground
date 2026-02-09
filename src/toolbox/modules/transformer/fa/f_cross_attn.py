@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange
-from flash_attn import flash_attn_qkvpacked_func
+from flash_attn import flash_attn_func
 
 from src.toolbox.modules.ffn import FFN
 
@@ -25,7 +25,7 @@ class FMHCA(nn.Module):
         Outputs:
         1. output: results of transformer layer. shape: [batch_size, seq_len, d_input]
         """
-        output = self.attn(q, k, v, mask=non_pad_mask)
+        output = self.attn(q, k, v)
         # [..., batch_size, seq_len, d_input]
 
         output = self.ffn(output)  # [..., batch_size, seq_len, d_input]
@@ -58,53 +58,40 @@ class FMHCALayer(nn.Module):
         self.fc_attn_output = nn.Linear(self.n_head * d_qkv, self.d_input, bias=True, device=self.device)
 
         # layer normalization
-        self.layer_norm_for_q = nn.RMSNorm(self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype())
-        self.layer_norm_for_output = nn.RMSNorm(
-            self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype()
-        )
+        self.layer_norm = nn.RMSNorm(self.d_input, eps=1e-6, device=self.device, dtype=torch.get_default_dtype())
 
-        if self.w_qkv.weight.dtype not in [torch.bfloat16, torch.float16]:
-            raise ValueError("Flash Attention only supports bfloat16 and float16.")
-
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v):
         """
         Args:
-        1. x: input tensor. shape: [..., batch_size, seq_len, d_input]
-        2. mask: the mask tensor used by self attention. shape: [..., batch_size, seq_len]
+        1. q, k, v: input tensor. shape: [batch_size, seq_len, d_input]
+        2. mask: the mask tensor used by self attention. shape: [batch_size, seq_len]
         Output:
-        1. output: results of transformer layer. shape: [..., batch_size, seq_len, d_input]
+        1. output: results of transformer layer. shape: [batch_size, seq_len, d_input]
         """
-        input_shape = x.shape[:-1]
 
-        residual = x
-        x = self.layer_norm_for_q(x)  # [..., batch_size, seq_len, d_input]
+        residual = q
+        q = self.layer_norm(q)  # [batch_size, seq_len, d_input]
+        k = self.layer_norm(k)  # [batch_size, seq_len, d_input]
+        v = self.layer_norm(v)  # [batch_size, seq_len, d_input]
 
-        if len(x.shape) > 3:
-            x = x.flatten(end_dim=-4)
-            # [(... * batch_size), seq_len, d_input]
+        q_ = self.w_q(q)  # [batch_size, seq_len, d_qkv * n_head]
+        k_ = self.w_k(k)  # [batch_size, seq_len, d_qkv * n_head]
+        v_ = self.w_v(v)  # [batch_size, seq_len, d_qkv * n_head]
 
-        qkv = self.w_qkv(x)  # [(... * batch_size), seq_len, d_qkv * n_head * 3]
-        qkv = rearrange(
-            qkv,
-            "... seq_len (nqkv nhead dqkv) -> ... seq_len nqkv nhead dqkv",
-            nqkv=3,
-            nhead=self.n_head,
-            dqkv=self.d_qkv,
-        )
-        # [(... * batch_size), seq_len, 3, n_head, d_qkv]
+        q_ = rearrange(q_, 'b s (head dqkv) -> b s head dqkv', head=self.n_head)
+        k_ = rearrange(k_, 'b s (head dqkv) -> b s head dqkv', head=self.n_head)
+        v_ = rearrange(v_, 'b s (head dqkv) -> b s head dqkv', head=self.n_head)
 
-        fa_output = flash_attn_qkvpacked_func(
-            qkv, self.dropout, causal=True, deterministic=True
-        )  # [..., nheads, d_qkv]
+        fa_output = flash_attn_func(
+            q, k, v, dropout_p=self.dropout, causal=True, deterministic=True
+        )  # [batch_size, seq_len, nheads, d_qkv]
         fa_output = rearrange(fa_output, "...  nh dqkv -> ... (nh dqkv)")
-        # [(... * batch_size), seq_len, n_head * d_qkv]
+        # [batch_size, seq_len, n_head * d_qkv]
 
-        fa_output = fa_output.view(*input_shape, -1)  # [..., batch_size, seq_len, n_head * d_qkv]
-        fa_output = self.fc_attn_output(fa_output)  # [..., batch_size, seq_len, d_input]
-        fa_output = fa_output * mask.unsqueeze(dim=-1)  # [..., batch_size, seq_len, d_input]
-        fa_output += residual
+        fa_output = self.fc_attn_output(fa_output)  # [batch_size, seq_len, d_input]
+        fa_output += residual # [batch_size, seq_len, d_input]
 
-        return self.layer_norm_for_output(fa_output)  # [..., batch_size, seq_len, d_output]
+        return fa_output  # [batch_size, seq_len, d_output]
 
 
 if __name__ == "__main__":
@@ -112,27 +99,27 @@ if __name__ == "__main__":
 
     torch.set_default_dtype(torch.bfloat16)
 
-    def test_fmhsa_layer_init():
+    def test_fmhca_layer_init():
         device = torch.device("cuda")
         n_head = 4
         d_input = 64
         d_qkv = 16
 
-        layer = FMHSALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.1)
+        layer = FMHCALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.1)
 
         assert layer.n_head == n_head
         assert layer.d_input == d_input
         assert layer.d_qkv == d_qkv
-        assert layer.w_qkv.out_features == d_qkv * n_head * 3
+        assert layer.w_q.out_features == d_qkv * n_head
 
-    def test_fmhsa_init():
+    def test_fmhca_init():
         device = torch.device("cuda")
         n_head = 4
         d_input = 64
         d_qkv = 16
         d_hidden = 128
 
-        model = FMHSA(
+        model = FMHCA(
             training=True,
             n_head=n_head,
             d_input=d_input,
@@ -141,13 +128,13 @@ if __name__ == "__main__":
             d_hidden=d_hidden,
             dropout=0.1,
         )
-        assert isinstance(model.attn, FMHSALayer)
+        assert isinstance(model.attn, FMHCALayer)
         assert model.attn.d_qkv == d_qkv
 
-    @patch("src.toolbox.modules.transformer.f_self_attn.flash_attn_varlen_qkvpacked_func")
-    def test_fmhsa_layer_forward(mock_flash_attn):
-        mock_flash_attn.side_effect = lambda qkv, cu_seqlens, max_seqlen, dropout, causal, deterministic: torch.randn(
-            qkv.shape[0], qkv.shape[2], qkv.shape[3], device=qkv.device
+    @patch("src.toolbox.modules.transformer.fa.f_cross_attn.flash_attn_func")
+    def test_fmhca_layer_forward(mock_flash_attn):
+        mock_flash_attn.side_effect = lambda q, k, v, dropout_p, causal, deterministic: torch.randn(
+            q.shape[0], q.shape[1], q.shape[2], q.shape[3], device=q.device
         )
 
         device = torch.device("cuda")
@@ -157,19 +144,20 @@ if __name__ == "__main__":
         d_input = 64
         d_qkv = 16
 
-        layer = FMHSALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.0)
+        layer = FMHCALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.0)
 
-        x = torch.randn(batch_size, seq_len, d_input, device=device)
-        mask = torch.ones(batch_size, seq_len, device=device)
+        q = torch.randn(batch_size, seq_len, d_input, device=device)
+        k = torch.randn(batch_size, seq_len, d_input, device=device)
+        v = torch.randn(batch_size, seq_len, d_input, device=device)
 
-        output = layer(x, mask=mask)
+        output = layer(q, k, v)
 
         assert output.shape == (batch_size, seq_len, d_input)
 
-    @patch("src.toolbox.modules.transformer.f_self_attn.flash_attn_varlen_qkvpacked_func")
-    def test_fmhsa_forward(mock_flash_attn):
-        mock_flash_attn.side_effect = lambda qkv, cu_seqlens, max_seqlen, dropout, causal, deterministic: torch.randn(
-            qkv.shape[0], qkv.shape[2], qkv.shape[3], device=qkv.device
+    @patch("src.toolbox.modules.transformer.fa.f_cross_attn.flash_attn_func")
+    def test_fmhca_forward(mock_flash_attn):
+        mock_flash_attn.side_effect = lambda q, k, v, dropout_p, causal, deterministic: torch.randn(
+            q.shape[0], q.shape[1], q.shape[2], q.shape[3], device=q.device
         )
 
         device = torch.device("cuda")
@@ -180,7 +168,7 @@ if __name__ == "__main__":
         d_qkv = 16
         d_hidden = 128
 
-        model = FMHSA(
+        model = FMHCA(
             training=True,
             n_head=n_head,
             d_input=d_input,
@@ -190,17 +178,19 @@ if __name__ == "__main__":
             dropout=0.1,
         )
 
-        x = torch.randn(batch_size, seq_len, d_input, device=device)
+        q = torch.randn(batch_size, seq_len, d_input, device=device)
+        k = torch.randn(batch_size, seq_len, d_input, device=device)
+        v = torch.randn(batch_size, seq_len, d_input, device=device)
         non_pad_mask = torch.ones(batch_size, seq_len, device=device)
 
-        output = model(x, non_pad_mask=non_pad_mask)
+        output = model(q, k, v, non_pad_mask=non_pad_mask)
 
         assert output.shape == (batch_size, seq_len, d_input)
 
-    @patch("src.toolbox.modules.transformer.f_self_attn.flash_attn_varlen_qkvpacked_func")
-    def test_fmhsa_with_masking(mock_flash_attn):
-        mock_flash_attn.side_effect = lambda qkv, cu_seqlens, max_seqlen, dropout, causal, deterministic: torch.randn(
-            qkv.shape[0], qkv.shape[2], qkv.shape[3], device=qkv.device
+    @patch("src.toolbox.modules.transformer.fa.f_cross_attn.flash_attn_func")
+    def test_fmhca_with_masking(mock_flash_attn):
+        mock_flash_attn.side_effect = lambda q, k, v, dropout_p, causal, deterministic: torch.randn(
+            q.shape[0], q.shape[1], q.shape[2], q.shape[3], device=q.device
         )
 
         device = torch.device("cuda")
@@ -211,7 +201,7 @@ if __name__ == "__main__":
         d_qkv = 16
         d_hidden = 128
 
-        model = FMHSA(
+        model = FMHCA(
             training=True,
             n_head=n_head,
             d_input=d_input,
@@ -221,21 +211,23 @@ if __name__ == "__main__":
             dropout=0.1,
         )
 
-        x = torch.randn(batch_size, seq_len, d_input, device=device)
+        q = torch.randn(batch_size, seq_len, d_input, device=device)
+        k = torch.randn(batch_size, seq_len, d_input, device=device)
+        v = torch.randn(batch_size, seq_len, d_input, device=device)
         # Mask out the last 5 elements of the second sequence
         non_pad_mask = torch.ones(batch_size, seq_len, device=device)
         non_pad_mask[1, 5:] = 0
 
-        output = model(x, non_pad_mask=non_pad_mask)
+        output = model(q, k, v, non_pad_mask=non_pad_mask)
 
         assert output.shape == (batch_size, seq_len, d_input)
         # Check if masked positions are zeroed out
         assert torch.all(output[1, 5:] == 0)
 
-    @patch("src.toolbox.modules.transformer.f_self_attn.flash_attn_varlen_qkvpacked_func")
-    def test_fmhsa_high_dim(mock_flash_attn):
-        mock_flash_attn.side_effect = lambda qkv, cu_seqlens, max_seqlen, dropout, causal, deterministic: torch.randn(
-            qkv.shape[0], qkv.shape[2], qkv.shape[3], device=qkv.device
+    @patch("src.toolbox.modules.transformer.fa.f_cross_attn.flash_attn_func")
+    def test_fmhca_high_dim(mock_flash_attn):
+        mock_flash_attn.side_effect = lambda q, k, v, dropout_p, causal, deterministic: torch.randn(
+            q.shape[0], q.shape[1], q.shape[2], q.shape[3], device=q.device
         )
 
         device = torch.device("cuda")
@@ -247,7 +239,7 @@ if __name__ == "__main__":
         d_qkv = 16
         d_hidden = 128
 
-        model = FMHSA(
+        model = FMHCA(
             training=True,
             n_head=n_head,
             d_input=d_input,
@@ -257,17 +249,19 @@ if __name__ == "__main__":
             dropout=0.1,
         )
 
-        x = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
+        q = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
+        k = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
+        v = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
         non_pad_mask = torch.ones(extra_dim, batch_size, seq_len, device=device)
 
-        output = model(x, non_pad_mask=non_pad_mask)
+        output = model(q, k, v, non_pad_mask=non_pad_mask)
 
         assert output.shape == (extra_dim, batch_size, seq_len, d_input)
 
-    @patch("src.toolbox.modules.transformer.f_self_attn.flash_attn_varlen_qkvpacked_func")
-    def test_fmhsa_layer_high_dim(mock_flash_attn):
-        mock_flash_attn.side_effect = lambda qkv, cu_seqlens, max_seqlen, dropout, causal, deterministic: torch.randn(
-            qkv.shape[0], qkv.shape[2], qkv.shape[3], device=qkv.device
+    @patch("src.toolbox.modules.transformer.fa.f_cross_attn.flash_attn_func")
+    def test_fmhca_layer_high_dim(mock_flash_attn):
+        mock_flash_attn.side_effect = lambda q, k, v, dropout_p, causal, deterministic: torch.randn(
+            q.shape[0], q.shape[1], q.shape[2], q.shape[3], device=q.device
         )
 
         device = torch.device("cuda")
@@ -278,21 +272,22 @@ if __name__ == "__main__":
         d_input = 64
         d_qkv = 16
 
-        layer = FMHSALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.0)
+        layer = FMHCALayer(training=True, n_head=n_head, d_input=d_input, d_qkv=d_qkv, device=device, dropout=0.0)
 
-        x = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
-        mask = torch.ones(extra_dim, batch_size, seq_len, device=device)
+        q = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
+        k = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
+        v = torch.randn(extra_dim, batch_size, seq_len, d_input, device=device)
 
-        output = layer(x, mask=mask)
+        output = layer(q, k, v)
 
         assert output.shape == (extra_dim, batch_size, seq_len, d_input)
 
     print("Running tests...")
-    test_fmhsa_layer_init()
-    test_fmhsa_init()
-    test_fmhsa_layer_forward()
-    test_fmhsa_layer_high_dim()
-    test_fmhsa_forward()
-    test_fmhsa_with_masking()
-    test_fmhsa_high_dim()
+    test_fmhca_layer_init()
+    test_fmhca_init()
+    test_fmhca_layer_forward()
+    test_fmhca_layer_high_dim()
+    test_fmhca_forward()
+    test_fmhca_with_masking()
+    test_fmhca_high_dim()
     print("All tests passed!")
