@@ -4,7 +4,7 @@ from einops import rearrange, reduce, repeat
 
 from src.toolbox.transformer import TransformerLayer
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 
 
 class TransEncoder(nn.Module):
@@ -47,7 +47,7 @@ class TransEncoder(nn.Module):
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
         _, seq_len = time_history.shape
         
-        self_attn_mask_subseq = get_subsequent_mask(events_history)            # [batch_size, seq_len, seq_len]
+        self_attn_mask_subseq = get_causal_mask(events_history)            # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
                                                                                # [batch_size, seq_len]
         self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s1 s', s1 = seq_len)

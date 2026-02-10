@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-from einops import rearrange
 
-from src.toolbox.modules import PositionalEmbedding, THPTimeEmbedding, TransformerLayer, get_subsequent_mask
+from src.toolbox.modules import SMHSA, PositionalEmbedding, THPTimeEmbedding
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
+    def __init__(self, training, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
         """
         This function builds a Transformer encoder.
 
@@ -44,12 +43,12 @@ class Encoder(nn.Module):
 
         self.layer_stack = nn.ModuleList(
             [
-                TransformerLayer(
+                SMHSA(
+                    training=training,
                     d_input=d_input,
                     d_hidden=d_hidden,
                     n_head=n_head,
-                    d_qk=d_qkv,
-                    d_v=d_qkv,
+                    d_qkv=d_qkv,
                     dropout=dropout,
                     device=self.device,
                 )
@@ -78,13 +77,7 @@ class Encoder(nn.Module):
         """
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
-        seq_len = event_type.shape[-1]
-        self_attn_mask_subseq = get_subsequent_mask(seq_len, device=self.device)
-        # [batch_size, seq_len, seq_len]
-        self_attn_mask_keypad = rearrange(non_pad_mask, "b s -> b () s")  # [batch_size, seq_len, seq_len]
-        self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq  # [batch_size, seq_len, seq_len]
 
-        # Time Embedding
         # Time Embedding
         pos_emb = self.position_emb(event_time)  # [batch_size, seq_len, d_input]
         time_emb = self.time_emb(event_time)  # [batch_size, seq_len, d_input]
@@ -94,10 +87,10 @@ class Encoder(nn.Module):
         else:
             mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = pos_emb + time_emb + mark_emb  # [batch_size, seq_len, d_input]
+        output = time_emb + mark_emb + pos_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
-            output, _ = enc_layer(
-                output, non_pad_mask=non_pad_mask, self_attn_mask=self_attn_mask
+            output = enc_layer(
+                output, non_pad_mask=non_pad_mask,
             )  # [batch_size, seq_len, d_input]
         return output
 
@@ -130,9 +123,9 @@ class TransformerTPP(nn.Module):
         super().__init__()
         self.device = device
         self.num_marks = num_marks if num_marks > 0 else 1
-        dropout = dropout if training else 0
 
         self.encoder = Encoder(
+            training=training,
             num_marks=self.num_marks,
             d_input=d_input,
             d_hidden=d_hidden,

@@ -7,7 +7,7 @@ from transformers import AutoConfig, AutoTokenizer, AutoModel
 from einops import rearrange
 
 from src.toolbox.transformer import TransformerLayer
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 
 # from src.toolbox.llms import OllamaToken2Token
 from src.toolbox.llms.huggingface import LangChainEmbedding, LangChainToken2Token
@@ -78,7 +78,7 @@ class SeqRetriever(nn.Module):
     
     def get_token_score(self, events_history, time_history, mask_history):
         seq_len = events_history.shape[-1]
-        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device)
+        self_attn_mask_subseq = get_causal_mask(seq_len, device = self.device)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = rearrange(mask_history, 'b s -> b () s')       # [batch_size, seq_len, seq_len]
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, seq_len, seq_len]

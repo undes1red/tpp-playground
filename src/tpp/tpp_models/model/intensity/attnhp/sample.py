@@ -186,7 +186,7 @@ def sampling_by_its_for_mt(
 
 
 def sampling_by_its_for_tm(
-    self, time_history, marks_history, mask_history, resolution, number_of_total_samples, step, inf_val, mean, std
+    self, time_history, marks_history, mask_history, mask_next, resolution, number_of_total_samples, step, inf_val, mean, std
 ):
     sample_rate_list = step_split(number_of_total_samples, step)
 
@@ -205,6 +205,7 @@ def sampling_by_its_for_tm(
             taus,
             marks_history,
             mask_history,
+            mask_next,
             resolution=resolution,
             time_next_with_resolution_dim=True,
         )

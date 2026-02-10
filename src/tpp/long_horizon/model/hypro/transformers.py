@@ -4,7 +4,7 @@ from einops import rearrange
 
 from src.toolbox.transformer import TransformerLayer
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 
 
 class Encoder(nn.Module):
@@ -42,7 +42,7 @@ class Encoder(nn.Module):
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
         seq_len = event_type.shape[-1]
-        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device).unsqueeze(dim = -3)
+        self_attn_mask_subseq = get_causal_mask(seq_len, device = self.device).unsqueeze(dim = -3)
                                                                                # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]
         self_attn_mask_keypad = rearrange(non_pad_mask, '... s -> ... () s')   # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, 1 + number_of_negative_samples, seq_len, seq_len]

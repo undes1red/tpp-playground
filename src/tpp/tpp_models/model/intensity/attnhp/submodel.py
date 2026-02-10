@@ -51,16 +51,20 @@ class AttNHP(nn.Module):
         time_next,
         marks_history,
         mask_history,
+        mask_next,
         custom_marks_history=False,
     ):
         # calculate the integral
         time_multiplier = torch.linspace(0, 1, self.resolution, device=self.device)
-        expanded_time = (
-            time_next.unsqueeze(dim=-1) * time_multiplier
-        )  # [..., batch_size, seq_len, resolution]
+        expanded_time = time_next.unsqueeze(dim=-1) * time_multiplier  # [..., batch_size, seq_len, resolution]
 
         hidden_state = self.attn_model(
-            time_history, expanded_time, marks_history, custom_marks_history=custom_marks_history
+            time_history,
+            expanded_time,
+            marks_history,
+            mask_history,
+            mask_next,
+            custom_marks_history=custom_marks_history,
         )
         # [..., batch_size, seq_len, resolution, num_marks, d_input]
 
@@ -81,6 +85,7 @@ class AttNHP(nn.Module):
         time_next,
         marks_history,
         mask_history,
+        mask_next,
         resolution,
         time_next_start=None,
         time_next_with_resolution_dim=False,
@@ -98,7 +103,7 @@ class AttNHP(nn.Module):
             ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
             # [..., batch_size, seq_len, resolution]
 
-        hidden_state = self.attn_model(time_history, expanded_time, marks_history)
+        hidden_state = self.attn_model(time_history, expanded_time, marks_history, mask_history, mask_next)
         # [..., batch_size, seq_len, resolution, num_marks, d_input]
 
         intensity_all_marks = self.intensity_layer(hidden_state).squeeze(dim=-1)
@@ -114,7 +119,9 @@ class AttNHP(nn.Module):
             zero_to_interval_start_time = (
                 expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
             )  # [..., batch_size, seq_len, resolution]
-            hidden_state = self.attn_model(time_history, zero_to_interval_start_time, marks_history)
+            hidden_state = self.attn_model(
+                time_history, zero_to_interval_start_time, marks_history, mask_history, mask_next
+            )
             # [..., batch_size, seq_len, resolution, num_marks, d_input]
 
             intensity_all_marks = self.intensity_layer(hidden_state).squeeze(dim=-1)
@@ -158,7 +165,7 @@ class AttNHP(nn.Module):
             ) * time_multiplier + time_next_start.unsqueeze(dim=-1)
             # [..., batch_size, seq_len, num_marks, resolution]
 
-        hidden_state = self.attn_model(time_history, expanded_time, marks_history)
+        hidden_state = self.attn_model(time_history, expanded_time, marks_history, mask_history)
         # [..., batch_size, seq_len, num_marks, resolution, num_marks, d_input]
         intensity_all_marks = self.intensity_layer(hidden_state).squeeze(dim=-1)
         # [..., batch_size, seq_len, num_marks, resolution, num_marks]
@@ -173,7 +180,7 @@ class AttNHP(nn.Module):
             zero_to_interval_start_time = (
                 expanded_time[..., 0].unsqueeze(dim=-1) * time_multiplier
             )  # [..., batch_size, seq_len, num_marks, resolution]
-            hidden_state = self.attn_model(time_history, zero_to_interval_start_time, marks_history)
+            hidden_state = self.attn_model(time_history, zero_to_interval_start_time, marks_history, mask_history)
             # [..., batch_size, seq_len, num_marks, resolution, num_marks, d_input]
             expanded_intensity_from_zero_to_interval_start = self.intensity_layer(hidden_state).squeeze(dim=-1)
             # [..., batch_size, seq_len, num_marks, resolution, num_marks]
@@ -189,14 +196,12 @@ class AttNHP(nn.Module):
 
         return integral_all_marks + integral_all_marks_from_zero_to_interval_start, intensity_all_marks, expanded_time
 
-    def model_probe_function(
-        self, time_history, time_next, marks_history, mask_history, mask_next, resolution
-    ):
+    def model_probe_function(self, time_history, time_next, marks_history, mask_history, mask_next, resolution):
         # calculate the integral
         time_multiplier = torch.linspace(0, 1, resolution, device=self.device)
         expanded_time = time_next.unsqueeze(dim=-1) * time_multiplier  # [batch_size, seq_len, resolution]
 
-        hidden_state = self.attn_model(time_history, expanded_time, marks_history)
+        hidden_state = self.attn_model(time_history, expanded_time, marks_history, mask_history)
         # [batch_size, seq_len, resolution, num_marks, d_input]
         expanded_intensity_all_marks = self.intensity_layer(hidden_state).squeeze(dim=-1)
         # [batch_size, seq_len, resolution, num_marks]

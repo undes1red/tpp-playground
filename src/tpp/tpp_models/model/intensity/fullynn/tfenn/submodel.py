@@ -6,7 +6,7 @@ from src.toolbox.algorithms import evaluate_on_one_batch
 from src.toolbox.misc import check_tensor, compile_model, move_from_tensor_to_ndarray
 from src.toolbox.modules import NonNegLinear
 
-from .his_coder.transformers import TransformerTPP
+from .his_coder.transformers_old import TransformerTPP
 
 
 class TFENN(nn.Module):

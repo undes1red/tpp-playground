@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
+from einops import rearrange
 
-from src.toolbox.modules import FMHSA, PositionalEmbedding, SAHPTimeEmbedding
+from src.toolbox.modules import PositionalEmbedding, TransformerLayer, get_causal_mask
 
 
 class Encoder(nn.Module):
-    def __init__(self, training, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
+    def __init__(self, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
         """
         This function builds a Transformer encoder.
 
@@ -36,19 +37,18 @@ class Encoder(nn.Module):
 
         # position vector, used for temporal encoding
         self.position_emb = PositionalEmbedding(d_input, max_len=4096, device=self.device)
-        self.time_emb = SAHPTimeEmbedding(d_input, device=self.device)
 
         # event type embedding
         self.event_emb = nn.Embedding(num_marks + 1, d_input, padding_idx=num_marks, device=self.device)
 
         self.layer_stack = nn.ModuleList(
             [
-                FMHSA(
-                    training=training,
+                TransformerLayer(
                     d_input=d_input,
                     d_hidden=d_hidden,
                     n_head=n_head,
-                    d_qkv=d_qkv,
+                    d_qk=d_qkv,
+                    d_v=d_qkv,
                     dropout=dropout,
                     device=self.device,
                 )
@@ -56,13 +56,13 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, event_time, event_type, non_pad_mask, custom_mark_history):
+    def forward(self, event_time_emb, event_type, non_pad_mask):
         """
         Encode the input continuous-time event stream using Transformer.
 
         ### Args
-          * ```torch.tensor``` event_time
-            shape: ```[batch_size, seq_len]```
+          * ```torch.tensor``` event_time_emb
+            shape: ```[batch_size, seq_len, d_input]```
             The length of all time intervals between two adjacent mark.
           * ```torch.tensor``` event_type
             shape: ```[batch_size, seq_len]```
@@ -75,18 +75,15 @@ class Encoder(nn.Module):
               shape: ```[batch_size, seq_len, d_input]```
               The representation of the original input.
         """
-
         # Time Embedding
-        pos_emb = self.position_emb(event_time)  # [batch_size, seq_len, d_input]
-        time_emb = self.time_emb(event_time)  # [batch_size, seq_len, d_input]
+        pos_emb = self.position_emb(event_type)  # [batch_size, seq_len, d_input]
 
         if event_type is not None:
-            mark_emb = event_type if custom_mark_history else self.event_emb(event_type)
-        # [batch_size, seq_len, d_input]
+            mark_emb = self.event_emb(event_type)  # [batch_size, seq_len, d_input]
         else:
-            mark_emb = torch.zeros_like(time_emb, device=self.device)  # [batch_size, seq_len, d_input]
+            mark_emb = torch.zeros_like(event_time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = pos_emb + time_emb + mark_emb  # [batch_size, seq_len, d_input]
+        output = pos_emb + event_time_emb + mark_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
             output = enc_layer(
                 output, non_pad_mask=non_pad_mask
@@ -122,9 +119,9 @@ class TransformerTPP(nn.Module):
         super().__init__()
         self.device = device
         self.num_marks = num_marks if num_marks > 0 else 1
+        dropout = dropout if training else 0
 
         self.encoder = Encoder(
-            training=training,
             num_marks=self.num_marks,
             d_input=d_input,
             d_hidden=d_hidden,
@@ -135,7 +132,7 @@ class TransformerTPP(nn.Module):
             device=self.device,
         )
 
-    def forward(self, event_time, event_type, non_pad_mask, custom_marks_history=False):
+    def forward(self, event_time_emb, event_type, non_pad_mask):
         """
         Encode the input continuous-time event stream using Transformer.
 
@@ -154,21 +151,4 @@ class TransformerTPP(nn.Module):
               shape: ```[batch_size, seq_len, d_input]```
               The representation of the original input.
         """
-        return self.encoder(event_time, event_type, non_pad_mask, custom_marks_history)
-        # [batch_size, seq_len, d_input]
-
-    def get_event_embedding(self, input_event):
-        """
-        Convert the inputted event marks into embeddings
-
-        ### Args
-          * ```torch.tensor``` input_event
-            shape: ```[batch_size, seq_len]```
-            The mark of observed mark.
-
-        ### Outputs
-            * ```torch.tensor```
-              shape: ```[batch_size, seq_len, d_input]```
-              The representation of marks.
-        """
-        return self.encoder.get_event_embedding(input_event)  # [batch_size, seq_len, d_input]
+        return self.encoder(event_time_emb, event_type, non_pad_mask)  # [batch_size, seq_len, d_input]

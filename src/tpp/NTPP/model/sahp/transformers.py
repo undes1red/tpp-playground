@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange
 
 from src.toolbox.transformer import TransformerLayer
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
@@ -168,7 +168,7 @@ class Encoder(nn.Module):
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
         seq_len = events_history.shape[-1]
-        self_attn_mask_subseq = get_subsequent_mask(seq_len, device = self.device)
+        self_attn_mask_subseq = get_causal_mask(seq_len, device = self.device)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = rearrange(non_pad_mask, 'b s -> b () s')       # [batch_size, seq_len, seq_len]
         self_attn_mask = self_attn_mask_keypad & self_attn_mask_subseq         # [batch_size, seq_len, seq_len]

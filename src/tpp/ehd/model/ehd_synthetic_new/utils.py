@@ -1,7 +1,7 @@
 import torch
 
 
-def get_subsequent_mask(seq):
+def get_causal_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
 
     sz_b, len_s = seq.size()

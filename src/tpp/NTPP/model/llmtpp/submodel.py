@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 
 from src.toolbox.metrics import L1_distance_across_events
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 
 from transformers import AutoConfig
 from einops import rearrange, repeat, reduce, pack, unpack

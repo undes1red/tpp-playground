@@ -75,7 +75,7 @@ class Encoder_ST(nn.Module):
         # slf_attn_mask is where we cannot look, i.e., the future and the padding
         _, seq_len = event_time.shape[:2]
 
-        self_attn_mask_subseq = get_subsequent_mask(event_loc)                 # [batch_size, seq_len, seq_len]
+        self_attn_mask_subseq = get_causal_mask(event_loc)                 # [batch_size, seq_len, seq_len]
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
                                                                                # [batch_size, seq_len]
         self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s_1 s', s_1 = seq_len)

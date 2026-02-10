@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
+from einops import rearrange
 
-from src.toolbox.modules import FMHSA, PositionalEmbedding
+from src.toolbox.modules import PositionalEmbedding, TransformerLayer, get_causal_mask
 
 
 class Encoder(nn.Module):
-    def __init__(self, training, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
+    def __init__(self, num_marks, d_input, d_hidden, n_layers, n_head, d_qkv, dropout, device):
         """
         This function builds a Transformer encoder.
 
@@ -42,12 +43,12 @@ class Encoder(nn.Module):
 
         self.layer_stack = nn.ModuleList(
             [
-                FMHSA(
-                    training=training,
+                TransformerLayer(
                     d_input=d_input,
                     d_hidden=d_hidden,
                     n_head=n_head,
-                    d_qkv=d_qkv,
+                    d_qk=d_qkv,
+                    d_v=d_qkv,
                     dropout=dropout,
                     device=self.device,
                 )
@@ -74,9 +75,6 @@ class Encoder(nn.Module):
               shape: ```[batch_size, seq_len, d_input]```
               The representation of the original input.
         """
-        # prepare attention masks
-        # self_attn_mask is where we cannot look, i.e., the future and the padding
-
         # Time Embedding
         pos_emb = self.position_emb(event_type)  # [batch_size, seq_len, d_input]
 
@@ -85,10 +83,10 @@ class Encoder(nn.Module):
         else:
             mark_emb = torch.zeros_like(event_time_emb, device=self.device)  # [batch_size, seq_len, d_input]
 
-        output = event_time_emb + mark_emb + pos_emb  # [batch_size, seq_len, d_input]
+        output = pos_emb + event_time_emb + mark_emb  # [batch_size, seq_len, d_input]
         for enc_layer in self.layer_stack:
-            output = enc_layer(
-                output, non_pad_mask=non_pad_mask,
+            output, _ = enc_layer(
+                output, non_pad_mask=non_pad_mask
             )  # [batch_size, seq_len, d_input]
         return output
 
@@ -121,9 +119,9 @@ class TransformerTPP(nn.Module):
         super().__init__()
         self.device = device
         self.num_marks = num_marks if num_marks > 0 else 1
+        dropout = dropout if training else 0
 
         self.encoder = Encoder(
-            training=training,
             num_marks=self.num_marks,
             d_input=d_input,
             d_hidden=d_hidden,

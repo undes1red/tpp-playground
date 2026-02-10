@@ -11,7 +11,7 @@ def get_attn_key_pad_mask(seq_k, seq_q, padding = 0):
     return padding_mask
 
 
-def get_subsequent_mask_original(seq, dim=2):
+def get_causal_mask_original(seq, dim=2):
     """ For masking out the subsequent info, i.e., masked self-attention. """
 
     sz_b, len_s = seq.size()[:2]
@@ -21,7 +21,7 @@ def get_subsequent_mask_original(seq, dim=2):
     return subsequent_mask
 
 
-def get_subsequent_mask(seq):
+def get_causal_mask(seq):
     """ For masking out the subsequent info, i.e., masked self-attention. """
 
     sz_b, len_s = seq.size()[:2]

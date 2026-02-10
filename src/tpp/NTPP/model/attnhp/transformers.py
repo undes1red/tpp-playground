@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import rearrange, repeat
 
 from src.toolbox.transformer import TransformerLayer
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 from src.toolbox.position_embedding import BiasedPositionalEmbedding
 
 
@@ -115,7 +115,7 @@ class Encoder(nn.Module):
         2. each event in history only sees eariler events. It should not know the existence of sample_event.
         3. padding events and EOS are invisible to history_events and sample_events.
         '''
-        self_attn_mask_from_history_to_history = get_subsequent_mask(seq_len, device = self.device)
+        self_attn_mask_from_history_to_history = get_causal_mask(seq_len, device = self.device)
                                                                                # [batch_size, seq_len, seq_len]
         self_attn_mask_from_history_to_sample = torch.zeros_like(self_attn_mask_from_history_to_history)
                                                                                # [batch_size, seq_len, seq_len]

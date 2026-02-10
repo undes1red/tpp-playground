@@ -87,7 +87,7 @@ class Encoder(nn.Module):
         # prepare attention masks
         # self_attn_mask is where we cannot look, i.e., the future and the padding
         _, seq_len = events_history.shape[:2]
-        self_attn_mask_subseq = get_subsequent_mask(time_history)
+        self_attn_mask_subseq = get_causal_mask(time_history)
         self_attn_mask_keypad = torch.ones_like(non_pad_mask, device = self.device) - non_pad_mask
                                                                                # [batch_size, seq_len]
         self_attn_mask_keypad = repeat(self_attn_mask_keypad, 'b s -> b s_1 s', s_1 = seq_len)

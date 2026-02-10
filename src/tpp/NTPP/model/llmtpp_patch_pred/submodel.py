@@ -6,7 +6,7 @@ import re
 import math
 
 from src.toolbox.metrics import L1_distance_across_events
-from src.toolbox.subsequent_mask import get_subsequent_mask
+from src.toolbox.subsequent_mask import get_causal_mask
 
 from einops import rearrange, repeat, reduce, pack, unpack
 from scipy.stats import spearmanr

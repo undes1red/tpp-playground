@@ -5,12 +5,12 @@ from .metric import Metric
 # from .llms.vllm_api import CustomOpenAIforVLLM
 from .nonneg_mlp import NonNegLinear
 from .position_embedding import AttNHPTimeEmbedding, PositionalEmbedding, SAHPTimeEmbedding, THPTimeEmbedding
-from .transformer import FMHCA, FMHSA, SelfAttn, TransformerLayer, get_subsequent_mask
+from .transformer import FMHSA, SMHSA, TransformerLayer, get_causal_mask
 
 __all__ = [
     "Metric",
     # Transformers
-    "FFN", "TransformerLayer", "get_subsequent_mask", "SelfAttn", "FMHSA", "FMHCA", 
+    "FFN", "TransformerLayer", "get_causal_mask", "SelfAttn", "FMHSA", "FMHCA", "SMHSA",
     # positional embedding
     "PositionalEmbedding",
     # Time embedding

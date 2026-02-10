@@ -177,6 +177,7 @@ class AttNHPWrapper(
     """
     Functions for model training.
     """
+
     def train_procedure(self, time, marks, mask, mean, std):
         """
         Check if marks data is present.
@@ -190,7 +191,9 @@ class AttNHPWrapper(
         marks_history, marks_next = self.divide_history_and_next(marks)  # [batch_size, seq_len] * 2
         mask_history, mask_next = self.divide_history_and_next(mask)  # [batch_size, seq_len] * 2
 
-        integral_all_marks, intensity_all_marks = self.model(time_history, time_next, marks_history, mask_history)
+        integral_all_marks, intensity_all_marks = self.model(
+            time_history, time_next, marks_history, mask_history, mask_next
+        )
         # 2 * [..., batch_size, seq_len, num_marks]
 
         mask_next_without_dummy = self.remove_dummy_events_from_mask(mask_next)  # [batch_size, seq_len]
@@ -221,6 +224,7 @@ class AttNHPWrapper(
     """
     Functions for model evaluation
     """
+
     @torch.inference_mode()
     def evaluate_procedure(self, time, marks, mask, mean, std):
         """
@@ -245,6 +249,7 @@ class AttNHPWrapper(
             time_next,
             marks_history,
             mask_history,
+            mask_next,
             mean=mean,
             std=std,
             sample_rate=self.sample_rate,
@@ -265,7 +270,7 @@ class AttNHPWrapper(
         micro_f1 = results["micro-f1"].mean().item()
 
         integral_all_marks_time_next, intensity_all_marks_time_next = self.model(
-            time_history, time_next, marks_history, mask_history
+            time_history, time_next, marks_history, mask_history, mask_next
         )
         # 2 * [batch_size, seq_len, num_marks]
 
@@ -334,6 +339,7 @@ class AttNHPWrapper(
         time_next: torch.Tensor,
         marks_history: torch.Tensor,
         mask_history: torch.Tensor,
+        mask_next: torch.Tensor,
         mean: float,
         std: float,
         sample_rate: int,
@@ -371,6 +377,7 @@ class AttNHPWrapper(
             time_history=time_history,
             marks_history=marks_history,
             mask_history=mask_history,
+            mask_next=mask_next,
             resolution=self.resolution if resolution is None else resolution,
             number_of_total_samples=sample_rate,
             step=mae_step,
@@ -383,10 +390,10 @@ class AttNHPWrapper(
             pred_time = pred_time.mean(dim=0)  # [batch_size, seq_len]
 
         if evaluation:
-            _, intensity_all_marks = self.model(time_history, time_next, marks_history, mask_history)
+            _, intensity_all_marks = self.model(time_history, time_next, marks_history, mask_history, mask_next)
             # [batch_size, seq_len, num_marks]
         else:
-            _, intensity_all_marks = self.model(time_history, pred_time, marks_history, mask_history)
+            _, intensity_all_marks = self.model(time_history, pred_time, marks_history, mask_history, mask_next)
             # [batch_size, seq_len, num_marks]
 
         mark_distribution = intensity_all_marks / intensity_all_marks.sum(dim=-1, keepdim=True)
@@ -740,7 +747,9 @@ class AttNHPWrapper(
         # [batch_size, seq_len, num_marks]
         pred_time = (pred_time_all_marks * marks_next_mask).sum(dim=-1)  # [batch_size, seq_len, num_marks]
         maes_ptm = torch.abs(pred_time - time_next) * mask_next  # [batch_size, seq_len]
-        top_k = evaluate_on_one_batch(mark_dist, marks_next, mask_next, "top_k", dim_input=-2, num_classes=self.num_marks)
+        top_k = evaluate_on_one_batch(
+            mark_dist, marks_next, mask_next, "top_k", dim_input=-2, num_classes=self.num_marks
+        )
         # [batch_size, num_marks]
         probability_sum = mark_dist.sum(dim=-1)  # [batch_size, seq_len]
 
@@ -798,9 +807,7 @@ class AttNHPWrapper(
                 macro_f1,
                 micro_f1,
                 the_number_of_marks,
-            ) = self.forward(
-                "evaluate", time, marks, mask, mean, std
-            )
+            ) = self.forward("evaluate", time, marks, mask, mean, std)
 
         time_loss = time_loss.item() / the_number_of_marks
         loss_survival = loss_survival.item()
