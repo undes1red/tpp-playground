@@ -1,12 +1,10 @@
-import argparse
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import torch
 import torch.nn.functional as F
 from einops import rearrange
 
-from src.toolbox.algorithms import approximate_integration
-from src.toolbox.metrics import evaluate_on_one_batch
+from src.toolbox.algorithms import approximate_integration, evaluate_on_one_batch
 from src.toolbox.misc import (
     argument_check,
     check_tensor,
@@ -32,6 +30,9 @@ from .plot import (
 )
 from .sample import sample_time
 from .submodel import NaiveModule
+
+if TYPE_CHECKING:
+    import argparse
 
 
 class NaiveMTPPWrapper(
@@ -87,6 +88,8 @@ class NaiveMTPPWrapper(
         """
         super().__init__()
         self.device = device
+        self.device_type = "cuda" if opt.cuda else "cpu"
+        self.model_dtype = opt.dtype
         self.use_compile = opt.compile
         self.compile_backend = opt.compile_backend
         self.num_marks = opt.info_dict["num_marks"]
@@ -98,14 +101,13 @@ class NaiveMTPPWrapper(
         self.sample_rate = sample_rate
         self.mae_step = mae_step
         self.mae_e_step = mae_e_step
-        self.bisect_early_stop_threshold = 1e-4
+        self.bisect_early_stop_threshold = 1e-5
         self.max_step = 50
 
         self.model = NaiveModule(device=device, num_marks=self.num_marks, process_name=process_name)
 
         self.model = compile_model(self.model, opt.compile, opt.compile_backend)
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def divide_history_and_next(self, input_data):
         """
         Extract the history and prediction sequences from the input sequence.
@@ -126,7 +128,6 @@ class NaiveMTPPWrapper(
         input_history, input_next = input_data[:, :-1].clone(), input_data[:, 1:].clone()
         return input_history, input_next
 
-    @compile_func(compile_or_not="use_compile", backend="compile_backend", fullgraph=True)
     def remove_dummy_events_from_mask(self: Self, mask: torch.Tensor) -> torch.Tensor:
         """Remove the dummy events by altering the mask.
 
@@ -179,7 +180,7 @@ class NaiveMTPPWrapper(
               Time sequence for training.
             * ```torch.tensor``` marks
               shape: ```[batch_size, seq_len + 1]```
-              Event sequence for training.
+              Mark sequence for training.
             * ```torch.tensor``` mask
               shape: ```[batch_size,, seq_len + 1]```
               Mask sequence. Events whose corresponding mask is 0 are dummy marks.
@@ -248,7 +249,7 @@ class NaiveMTPPWrapper(
               Time sequencalculatesce for training.
             * ```torch.tensor``` marks
               shape: ```[batch_size, seq_len + 1]```
-              Event sequence for training.
+              Mark sequence for training.
             * ```torch.tensor``` mask
               shape: ```[batch_size,, seq_len + 1]```
               Mask sequence. Events whose corresponding mask is 0 are dummy marks.
@@ -297,12 +298,7 @@ class NaiveMTPPWrapper(
 
         pred_mark = mark_dist.argmax(dim=-1)  # [batch_size, seq_len]
         results = evaluate_on_one_batch(
-            pred_mark,
-            marks_next,
-            mask_next_without_dummy,
-            ["acc", "macro-f1", "micro-f1"],
-            multiprocessing=True,
-            num_workers=4,
+            pred_mark, marks_next, mask_next_without_dummy, ["acc", "macro-f1", "micro-f1"], num_classes=self.num_marks
         )
         acc = results["acc"].mean()
         macro_f1 = results["macro-f1"].mean()
@@ -375,7 +371,7 @@ class NaiveMTPPWrapper(
 
         mtpp_loss = torch.sum(nll * mask_next)
 
-        # Event loss function. Only for evaluation, do not use this loss as a part of the training loss.
+        # Mark loss function. Only for evaluation, do not use this loss as a part of the training loss.
         marks_prediction_probability = torch.log(intensity_all_marks + self.epsilon)
         # [batch_size, seq_len, num_marks]
         marks_prediction_probability = F.softmax(marks_prediction_probability, dim=-1)
@@ -403,6 +399,7 @@ class NaiveMTPPWrapper(
         mask_history: torch.Tensor = None,
         get_time_sample: bool = False,
         evaluation: bool = True,
+        resolution: int = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate the next mark prediction from the NaiveMTPP by MAE and F1.
         This function first predict the time of the next mark then the mark of the next mark given the TRUE time.
@@ -426,13 +423,16 @@ class NaiveMTPPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
+        inf_val = mean + 10 * std
         pred_time = self.sample_time(
             sampling_approach="its",
             task="tm",
             time_history=time_history,
             marks_history=marks_history,
+            resolution=self.integration_sample_rate if resolution is None else resolution,
             number_of_total_samples=sample_rate,
             step=mae_step,
+            inf_val=inf_val,
             mean=mean,
             std=std,
         )  # [sample_rate, batch_size, seq_len]
@@ -486,11 +486,13 @@ class NaiveMTPPWrapper(
         Returns:
             tuple[torch.Tensor, torch.Tensor]: predicted time and mark distribution
         """
-        inf_val, resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
-            time_history, memory_ceiling, self.num_marks, mean, std
+        inf_val = mean + 10 * std
+        batch_size, seq_len = time_history.shape
+        resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
+            batch_size, seq_len, memory_ceiling, self.num_marks
         )
 
-        mark_distribution = self.get_pm_next_event(time_history, marks_history, inf_val, resolution_inf, mean, std)
+        mark_distribution = self.get_pm_next_mark(time_history, marks_history, inf_val, resolution_inf, mean, std)
         # [batch_size, seq_len, num_marks]
 
         tau_sampled_all_mark = self.sample_time(
@@ -522,7 +524,7 @@ class NaiveMTPPWrapper(
         return pred_time, mark_distribution
 
     @torch.inference_mode()
-    def get_pm_next_event(
+    def get_pm_next_mark(
         self: Self,
         time_history: torch.Tensor,
         marks_history: torch.Tensor,
@@ -563,13 +565,13 @@ class NaiveMTPPWrapper(
 
     @torch.inference_mode()
     def probability_time_next_2d(
-        self, time_history, time_next, marks_history, mask_history, integration_sample_rate, mean, std
+        self, time_history, time_next, marks_history, mask_history, resolution, mean, std
     ):
         expand_integral, expand_intensity, timestamp = self.model.integral_intensity_time_next_2d(
             time_history,
             time_next,
             marks_history,
-            integration_sample_rate,
+            resolution,
         )
         return expand_intensity * torch.exp(-expand_integral.sum(dim=-1, keepdim=True)), timestamp
 
@@ -837,7 +839,7 @@ class NaiveMTPPWrapper(
 
         generate_debug_figure(data, opt)
 
-    def train_step(self, minibatch):
+    def train_step(self, minibatch, scaler):
         """
         This function unpacks the minibatch, calls the train_procedure() to calculate the loss, and do the backpropagation.
 
@@ -868,11 +870,13 @@ class NaiveMTPPWrapper(
         (time, marks, score, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         )
-        loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
-            "train", time, marks, mask, mean=mean, std=std
-        )
 
-        loss.backward()
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            loss, time_loss_without_dummy, marks_loss, the_number_of_marks = self.forward(
+                "train", time, marks, mask, mean, std
+            )
+
+        scaler.scale(loss).backward()
 
         time_loss_without_dummy = time_loss_without_dummy.item()
         marks_loss = marks_loss.item()
@@ -914,9 +918,11 @@ class NaiveMTPPWrapper(
         (time, marks, score, mask), (mean, std) = (
             minibatch  # 3 * [batch_size, seq_len + 1, 1] & [batch_size, seq_len, 1]
         )
-        time_loss, loss_survival, marks_loss, mae, acc, macro_f1, micro_f1, the_number_of_marks = self.forward(
-            "evaluate", time, marks, mask, mean=mean, std=std
-        )
+
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            time_loss, loss_survival, marks_loss, mae, acc, macro_f1, micro_f1, the_number_of_marks = self.forward(
+                "evaluate", time, marks, mask, mean=mean, std=std
+            )
 
         time_loss = time_loss.item()
         loss_survival = loss_survival.item()

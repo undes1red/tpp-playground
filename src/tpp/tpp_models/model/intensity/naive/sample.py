@@ -153,7 +153,7 @@ def sampling_by_its_for_mt(
 
 
 def sampling_by_its_for_tm(
-    self, time_history, marks_history, number_of_total_samples, step, mean, std
+    self, time_history, marks_history, resolution, number_of_total_samples, step, inf_val, mean, std
 ):
     sample_rate_list = step_split(number_of_total_samples, step)
 
@@ -164,23 +164,43 @@ def sampling_by_its_for_tm(
         2. marks: the sequence containing information about marks. shape: [batch_size, seq_len + 1]
         3. mask: the padding mask introduced by the dataloader. shape: [batch_size, seq_len + 1]
         """
+
         (
             expanded_integral_all_marks,
             _,
-        ) = self.model(time_history, taus, marks_history)
-        # [sample_rate, batch_size, seq_len, num_marks]
-        expanded_integral = expanded_integral_all_marks.sum(dim=-1)  # [sample_rate, batch_size, seq_len]
+            _,
+        ) = self.model.integral_intensity_time_next_2d(
+            time_history,
+            taus,
+            marks_history,
+            integration_sample_rate=resolution,
+            time_next_with_resolution_dim=True,
+        )
+        # [sample_rate, batch_size, seq_len, integration_sample_rate, num_marks]
+
+        expanded_integral = expanded_integral_all_marks.sum(
+            dim=-1
+        )  # [sample_rate, batch_size, seq_len, integration_sample_rate]
 
         return expanded_integral + torch.log(1 - probability_threshold)
 
     tau_pred = []
     for sub_sample_rate in sample_rate_list:
-        probability_threshold = torch.zeros((sub_sample_rate, *time_history.shape), device=self.device)
-        # [sample_rate, batch_size, seq_len]
+        probability_threshold = torch.zeros((*time_history.shape, sub_sample_rate), device=self.device)
+        # [batch_size, seq_len, sample_rate]
         torch.nn.init.uniform_(probability_threshold, a=its_lower_bound, b=its_upper_bound)
+        # [batch_size, seq_len, sample_rate]
+        probability_threshold = rearrange(probability_threshold, "b sl sr -> sr b sl")
         # [sample_rate, batch_size, seq_len]
         tau_pred.append(
-            bisection(self.max_step, self.bisect_early_stop_threshold, bisect_target, probability_threshold)
+            bisection(
+                self.max_step,
+                self.bisect_early_stop_threshold,
+                bisect_target,
+                probability_threshold,
+                resolution=resolution,
+                r_val=inf_val,
+            )
         )
         # [sample_rate, batch_size, seq_len]
     return torch.cat(tau_pred, dim=0)  # [sample_rate, batch_size, seq_len]

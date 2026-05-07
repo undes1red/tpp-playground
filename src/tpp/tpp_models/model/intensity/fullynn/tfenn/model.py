@@ -909,9 +909,11 @@ class TFENNModel(
         self.eval()
 
         [time_seq, mark_seq, score, mask], (mean, std) = minibatch
-        time_loss, loss_survival, marks_loss, mae, acc, macro_f1, micro_f1, the_number_of_marks = self.forward(
-            task_name="evaluate", input_time=time_seq, input_marks=mark_seq, mask=mask, mean=mean, std=std
-        )
+
+        with torch.autocast(device_type=self.device_type, dtype=self.model_dtype):
+            time_loss, loss_survival, marks_loss, mae, acc, macro_f1, micro_f1, the_number_of_marks = self.forward(
+                task_name="evaluate", input_time=time_seq, input_marks=mark_seq, mask=mask, mean=mean, std=std
+            )
 
         time_loss = time_loss.item()
         loss_survival = loss_survival.item()

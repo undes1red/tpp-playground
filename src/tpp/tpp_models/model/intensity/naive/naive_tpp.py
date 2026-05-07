@@ -319,7 +319,10 @@ class Hawkes(nn.Module):
         # confirm that the last dimension is integration_sample_rate
         if time_next.shape[-1] != integration_sample_rate:
             raise ValueError(f"Expect the last dim of time_next being {integration_sample_rate}, but got {time_next.shape[-1]}.")
-        # shape of time_next: [batch_size, seq_len, integration_sample_rate]
+        # shape of time_next: [..., batch_size, seq_len, integration_sample_rate]
+        # we will append zero to time_next for calculating the integral.
+        time_next = torch.nn.functional.pad(time_next, (1, 0), mode='constant', value=0)
+        # [..., batch_size, seq_len, integration_sample_rate]
 
         batch_size, seq_len = marks_history.shape
 
@@ -330,28 +333,29 @@ class Hawkes(nn.Module):
         time_scaling_factors = F.softplus(self.time_scaling_factors)
 
         # calculating t_i - t_j.
-        absolute_history_time = torch.cumsum(time_history, dim=-1)  # [batch_size, seq_len]
-        time_next_offset_to_abs_time, _ = pack(
-            (torch.zeros(batch_size, 1, device=self.device), time_next[:, :-1, -1]), "b *"
-        )
+        absolute_history_time = torch.cumsum(time_history, dim=-1)
         # [batch_size, seq_len]
-        time_next_offset_to_abs_time = time_next_offset_to_abs_time.cumsum(dim=-1).unsqueeze(dim=-1)
-        # [batch_size, seq_len, 1]
-        absolute_next_time = time_next_offset_to_abs_time + time_next  # [batch_size, seq_len, integration_sample_rate]
+        absolute_next_time = absolute_history_time.unsqueeze(dim=-1) + time_next
+        # [..., batch_size, seq_len, integration_sample_rate]
+
         a = rearrange(absolute_history_time, "b s -> b () () s")  # [batch_size, 1, 1, seq_len]
-        b = absolute_next_time.unsqueeze(dim=-1)  # [batch_size, seq_len, integration_sample_rate, 1]
-        time_interval_matrix = (b - a).unsqueeze(dim=-2)  # [batch_size, seq_len, integration_sample_rate, 1, seq_len]
-        # We replace all negative values in time_interal_matrix with a fixed value as some of them might introduce infinity to exp_b_m_t.
-        # This action is safe because these negative values are t_i - t_j with i < j, while intensity and integral calculation only counts t_i - t_j with i >= j.
-        time_interval_matrix = time_interval_matrix.clamp(
-            min=-1
-        )  # [batch_size, seq_len, integration_sample_rate, 1, seq_len]
+        b = absolute_next_time.unsqueeze(dim=-1)  # [..., batch_size, seq_len, integration_sample_rate, 1]
+        time_interval_matrix = (b - a).unsqueeze(dim=-2)  # [..., batch_size, seq_len, integration_sample_rate, 1, seq_len]
+        # Values in time_interval_matrix are the distance of timestamp in b to all historical events in a.
+        # i, j, k, 1, seq_len -> For event in time_next at [i, j, k]. Its gap to all historical events in a.
+        # So the mask should be a lower triangular matrix.
+        time_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device)).T
+        # [seq_len, seq_len]
+        time_mask = rearrange(time_mask, "sl1 sl2 -> sl1 () () sl2")
+        # [seq_len, 1, 1, seq_len]
+        time_interval_matrix = time_interval_matrix * time_mask
+        # [..., batch_size, seq_len, integration_sample_rate, 1, seq_len]
 
         if marks_history[..., 1:].numel() == 0:
-            return self.base_intensity * time_next.unsqueeze(dim=-1), self.base_intensity * torch.ones_like(
-                time_next.unsqueeze(dim=-1)
+            return self.base_intensity * time_next[..., 1:].unsqueeze(dim=-1), self.base_intensity * torch.ones_like(
+                time_next[..., 1:].unsqueeze(dim=-1)
             )
-            # [batch_size, seq_len, integration_sample_rate, num_marks] * 2
+            # [..., batch_size, seq_len, integration_sample_rate, num_marks] * 2
 
         # gathering \\alpha_{m_i, m}
         gather_index = repeat(marks_history, "b s -> b ne s", ne=self.num_marks)
@@ -361,18 +365,18 @@ class Hawkes(nn.Module):
         alpha = rearrange(alpha, "b ne sl -> b () () ne sl")  # [batch_size, 1, 1, num_marks, seq_len]
         # exp(-b_m(t_i - t_j))
         exp_b_m_t = torch.exp(-time_scaling_factors.unsqueeze(dim=-1) * time_interval_matrix)
-        # [batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
+        # [..., batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
 
         # compute the intensity function.
         # \\lambda(m, t) = \\mu + \sum_{e = (m_i, t_i) \\in \\history}{a_{m_i, m} * b_m * exp(-b_m(t - t_i))}.
         history_influence = alpha * time_scaling_factors.unsqueeze(dim=-1) * exp_b_m_t
-        # [batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
-        history_influence_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device), diagonal=0).T
+        # [..., batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
+        history_influence_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device)).T
         # [seq_len, seq_len]
         history_influence_mask = rearrange(history_influence_mask, "sl1 sl2 -> sl1 () () sl2")
         # [seq_len, 1, 1, seq_len]
         history_part = (history_influence * history_influence_mask).sum(dim=-1)
-        # [batch_size, seq_len, integration_sample_rate, num_marks]
+        # [..., batch_size, seq_len, integration_sample_rate, num_marks]
 
         einop = f"... -> {'() ' * (len(history_part.shape) - 1)}..."
         base_intensity = rearrange(base_intensity, einop)  # [batch_size, seq_len, integration_sample_rate, num_marks]
@@ -383,17 +387,17 @@ class Hawkes(nn.Module):
         # When t = t_l, \\Lambda(t) = 0.
         interval = (
             exp_b_m_t[..., 0:1, :, :] - exp_b_m_t
-        )  # [batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
+        )  # [..., batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
         interval = (
             interval * alpha
-        ) * history_influence_mask  # [batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
+        ) * history_influence_mask  # [..., batch_size, seq_len, integration_sample_rate, num_marks, seq_len]
 
-        interval = interval.sum(dim=-1)  # [batch_size, seq_len, integration_sample_rate, num_marks]
+        interval = interval.sum(dim=-1)  # [..., batch_size, seq_len, integration_sample_rate, num_marks]
         base_intensity_integral = time_next.unsqueeze(dim=-1) * base_intensity
-        # [batch_size, seq_len, integration_sample_rate, num_marks]
-        integral = interval + base_intensity_integral  # [batch_size, seq_len, integration_sample_rate, num_marks]
+        # [..., batch_size, seq_len, integration_sample_rate, num_marks]
+        integral = interval + base_intensity_integral  # [..., batch_size, seq_len, integration_sample_rate, num_marks]
 
-        return integral, intensity
+        return integral[..., 1:, :], intensity[..., 1:, :]
 
     def forward_time_next_3d(self, time_history, time_next, marks_history, integration_sample_rate):
         """
@@ -426,6 +430,11 @@ class Hawkes(nn.Module):
         if time_next.shape[-1] != integration_sample_rate:
             raise ValueError(f"Expect the last dim of time_next being {integration_sample_rate}, but got {time_next.shape[-1]}.")
         # shape of time_next: [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        # we will append zero to time_next for calculating the integral.
+        print(time_next.shape)
+
+        time_next = torch.nn.functional.pad(time_next, (1, 0), mode='constant', value=0)
+        # [..., batch_size, seq_len, num_marks, integration_sample_rate]
 
         batch_size, seq_len = marks_history.shape
 
@@ -437,6 +446,12 @@ class Hawkes(nn.Module):
 
         # calculating t_i - t_j.
         absolute_history_time = torch.cumsum(time_history, dim=-1)  # [batch_size, seq_len]
+        print(absolute_history_time.shape)
+        print(time_next.shape)
+        absolute_next_time = rearrange(absolute_history_time, '... -> ... () ()') + time_next
+        # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+
+        '''
         time_next_offset_to_abs_time = torch.concat(
             (torch.zeros(*time_next.shape[:-3], 1, self.num_marks, device=self.device), time_next[..., :-1, :, -1]),
             dim=-2,
@@ -447,20 +462,31 @@ class Hawkes(nn.Module):
         absolute_next_time = (
             time_next_offset_to_abs_time + time_next
         )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        '''
+
         a = rearrange(absolute_history_time, "b s -> b () () () s")  # [batch_size, 1, 1, 1, seq_len]
         b = absolute_next_time.unsqueeze(dim=-1)  # [..., batch_size, seq_len, num_marks, integration_sample_rate, 1]
         time_interval_matrix = (b - a).unsqueeze(
             dim=-2
         )  # [..., batch_size, seq_len, num_marks, integration_sample_rate, 1, seq_len]
+        time_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device)).T
+        # [seq_len, seq_len]
+        time_mask = rearrange(time_mask, "sl1 sl2 -> sl1 () () () sl2")
+        # [seq_len, 1, 1, 1, seq_len]
+        time_interval_matrix = time_interval_matrix * time_mask
+        # [..., batch_size, seq_len, num_marks, integration_sample_rate, 1, seq_len]
+
+        '''
         # We replace all negative values in time_interal_matrix with a fixed value as some of them might introduce infinity to exp_b_m_t.
         # This action is safe because these negative values are t_i - t_j with i < j, while intensity and integral calculation only counts t_i - t_j with i >= j.
         time_interval_matrix = time_interval_matrix.clamp(
             min=-1
         )  # [..., batch_size, seq_len, num_marks, integration_sample_rate, 1, seq_len]
+        '''
 
         if marks_history[..., 1:].numel() == 0:
-            return self.base_intensity * time_next.unsqueeze(dim=-1), self.base_intensity * torch.ones_like(
-                time_next.unsqueeze(dim=-1)
+            return self.base_intensity * time_next[..., 1:].unsqueeze(dim=-1), self.base_intensity * torch.ones_like(
+                time_next[..., 1:].unsqueeze(dim=-1)
             )
             # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks] * 2
 
@@ -478,7 +504,7 @@ class Hawkes(nn.Module):
         # \\lambda(m, t) = \\mu + \sum_{e = (m_i, t_i) \\in \\history}{a_{m_i, m} * b_m * exp(-b_m(t - t_i))}.
         history_influence = alpha * time_scaling_factors.unsqueeze(dim=-1) * exp_b_m_t
         # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks, seq_len]
-        history_influence_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device), diagonal=0).T
+        history_influence_mask = torch.triu(torch.ones(seq_len, seq_len, device=self.device)).T
         # [seq_len, seq_len]
         history_influence_mask = rearrange(history_influence_mask, "sl1 sl2 -> sl1 () () () sl2")
         # [seq_len, 1, 1, 1, seq_len]
@@ -510,7 +536,7 @@ class Hawkes(nn.Module):
             interval + base_intensity_integral
         )  # [..., batch_size, seq_len, num_marks, integration_sample_rate, num_marks]
 
-        return integral, intensity
+        return integral[..., 1:, :], intensity[..., 1:, :]
 
     def get_model_parameter(self):
         """

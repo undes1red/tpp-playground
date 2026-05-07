@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.toolbox.metrics import L1_distance_between_two_funcs
+from src.toolbox.metrics.np.l1 import L1_distance_between_two_funcs
 from src.toolbox.misc import get_logger, move_from_tensor_to_ndarray, save_fig, stable_palette
 from src.tpp.tpp_models.model.utils import (
     draw_heatmap,

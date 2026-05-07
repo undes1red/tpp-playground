@@ -14,7 +14,7 @@ from scipy.stats import lognorm
 ### homogeneous possion process
 ######################################################
 def generate_poisson(n):
-    tau = np.random.exponential(scale = 4/3, size=n)
+    tau = np.random.exponential(scale = 1, size=n)
     T = tau.cumsum()
     intensity = np.ones_like(T)
     return T, tau, intensity

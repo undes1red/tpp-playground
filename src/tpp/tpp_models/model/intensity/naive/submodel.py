@@ -1,10 +1,7 @@
-import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
-from scipy.stats import spearmanr
 
-from src.toolbox.metrics import L1_distance_across_marks
+from src.toolbox.algorithms import evaluate_on_one_batch
 from src.toolbox.misc import move_from_tensor_to_ndarray
 
 from . import naive_tpp
@@ -54,7 +51,9 @@ class NaiveModule(nn.Module):
 
         return integral, intensity
 
-    def integral_intensity_time_next_2d(self, time_history, time_next, marks_history, integration_sample_rate):
+    def integral_intensity_time_next_2d(
+        self, time_history, time_next, marks_history, integration_sample_rate, time_next_with_resolution_dim=False
+    ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks share the sampled timestmaps, so the dimension of time_next does not include num_mark.
@@ -83,8 +82,13 @@ class NaiveModule(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         """
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        expanded_time = time_next.unsqueeze(dim=-1) * time_multiplier  # [batch_size, seq_len, integration_sample_rate]
+        if time_next_with_resolution_dim:
+            expanded_time = time_next  # [batch_size, seq_len, integration_sample_rate]
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            expanded_time = (
+                time_next.unsqueeze(dim=-1) * time_multiplier
+            )  # [batch_size, seq_len, integration_sample_rate]
 
         expanded_integral_all_marks, expanded_intensity_all_marks = self.naive_tpp.forward_time_next_2d(
             time_history, expanded_time, marks_history, integration_sample_rate
@@ -93,7 +97,9 @@ class NaiveModule(nn.Module):
 
         return expanded_integral_all_marks, expanded_intensity_all_marks, expanded_time
 
-    def integral_intensity_time_next_3d(self, time_history, time_next, marks_history, integration_sample_rate):
+    def integral_intensity_time_next_3d(
+        self, time_history, time_next, marks_history, integration_sample_rate, time_next_with_resolution_dim=False
+    ):
         """
         Probe the value of the intensity function and its integral at sampled timestamps.
         In this function, all marks can have their sampled timestmaps, so the dimension of time_next is ```[..., batch_size, seq_len, num_marks]```.
@@ -123,10 +129,14 @@ class NaiveModule(nn.Module):
               shape: ```[..., batch_size, seq_len, resolution]```
               The value of sampled times.
         """
-        time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
-        expanded_time = (
-            time_next.unsqueeze(dim=-1) * time_multiplier
-        )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        if time_next_with_resolution_dim:
+            expanded_time = time_next
+            # [..., batch_size, seq_len, num_marks, integration_sample_rate]
+        else:
+            time_multiplier = torch.linspace(0, 1, integration_sample_rate, device=self.device)
+            expanded_time = (
+                time_next.unsqueeze(dim=-1) * time_multiplier
+            )  # [..., batch_size, seq_len, num_marks, integration_sample_rate]
 
         expanded_integral_all_marks, expanded_intensity_all_marks = self.naive_tpp.forward_time_next_3d(
             time_history, expanded_time, marks_history, integration_sample_rate
@@ -180,48 +190,24 @@ class NaiveModule(nn.Module):
             expanded_integral_all_marks  # [batch_size, seq_len, integration_sample_rate, num_marks]
         )
 
-        expand_intensity = rearrange(expanded_intensity_all_marks, "b s r ne -> b (s r) ne")
-        # [batch_size, seq_len * integration_sample_rate, num_mark]
-        expand_integral = rearrange(expanded_integral_all_marks, "b s r ne -> b (s r) ne")
-        # [batch_size, seq_len * integration_sample_rate, num_mark]
-        spearman_matrix = []
-        pearson_matrix = []
-        l1_matrix = []
-        for idx, (expand_intensity_per_seq, expand_integral_per_seq, mask_per_seq, expanded_time_per_seq) in enumerate(
-            zip(expand_intensity, expand_integral, mask_next, expanded_time)
-        ):
-            seq_len = mask_per_seq.sum()
-            probability_distribution = expand_intensity_per_seq * torch.exp(-expand_integral_per_seq)
-            probability_distribution = move_from_tensor_to_ndarray(probability_distribution)
+        probability_distribution = expanded_intensity_all_marks * torch.exp(
+            -expanded_integral_all_marks.sum(dim=-1, keepdim=True)
+        )
+        # [batch_size, seq_len, integration_sample_rate, num_mark]
 
-            # rho: spearman coefficient
-            if self.num_marks == 1:
-                spearman_matrix_per_seq = np.array([[1.0]])
-            else:
-                spearman_matrix_per_seq = spearmanr(probability_distribution[: seq_len * integration_sample_rate])[0]
-                if self.num_marks == 2:
-                    spearman_matrix_per_seq = np.array([[1, spearman_matrix_per_seq], [spearman_matrix_per_seq, 1]])
+        results = evaluate_on_one_batch(
+            probability_distribution,
+            dim_input=-3,
+            mask=mask_next,
+            evaluate_func=["spearman_self", "pearson_self", "l1_self"],
+            additional_inputs=[
+                expanded_time,
+            ],
+        )
 
-            # r: pearson coefficient
-            pearson_matrix_per_seq = np.corrcoef(
-                probability_distribution[: seq_len * integration_sample_rate], rowvar=False
-            )
-            if self.num_marks == 1:
-                pearson_matrix_per_seq = rearrange(np.array(pearson_matrix_per_seq), " -> () ()")
-
-            # L^1 metric
-            l1_matrix_per_seq = L1_distance_across_marks(
-                probability_distribution[: seq_len * integration_sample_rate],
-                time_next=expanded_time_per_seq[:seq_len],
-                has_flatten=True,
-            )
-            spearman_matrix.append(spearman_matrix_per_seq)
-            pearson_matrix.append(pearson_matrix_per_seq)
-            l1_matrix.append(l1_matrix_per_seq)
-
-        data["spearman_matrix"] = spearman_matrix
-        data["pearson_matrix"] = pearson_matrix
-        data["L1_matrix"] = l1_matrix
+        data["spearman_matrix"] = move_from_tensor_to_ndarray(results["spearman_self"])
+        data["pearson_matrix"] = move_from_tensor_to_ndarray(results["pearson_self"])
+        data["L1_matrix"] = move_from_tensor_to_ndarray(results["l1_self"])
         data["model_parameter"] = self.naive_tpp.get_model_parameter()
 
         return data, expanded_time

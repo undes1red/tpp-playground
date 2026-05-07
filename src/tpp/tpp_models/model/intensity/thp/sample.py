@@ -175,7 +175,7 @@ def sampling_by_its_for_mt(
                 self.bisect_early_stop_threshold,
                 bisect_target,
                 probability_threshold,
-                resolution=100,
+                resolution=resolution,
                 r_val=inf_val,
             )
         )

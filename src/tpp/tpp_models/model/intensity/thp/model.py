@@ -527,6 +527,7 @@ class THPWrapper(
         resolution_inf, resolution_between_marks = decide_resolution_inf_and_resolution_between_events(
             batch_size, seq_len, memory_ceiling, self.num_marks
         )
+
         mark_distribution = self.get_pm_next_mark(time_history, marks_history, mask_history, inf_val, resolution_inf)
         # [batch_size, seq_len, num_marks]
 
